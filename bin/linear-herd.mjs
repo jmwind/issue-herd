@@ -315,6 +315,8 @@ class LinearHerd {
       run.workDir = workDir;
       // Settle the branch before the brief is rendered and before Linear is told: both quote it.
       this.settleBranch(key, run, rule, workDir);
+      // Now that the worktree exists, give it a herdr workspace of its own so the sidebar shows its branch.
+      await this.adoptWorktree(key, run, rule, workDir, label);
       run.dir = path.join(workDir, '.linear-herd', 'state', 'runs', key);
       run.resultPath = path.join(run.dir, 'result.json');
       fs.mkdirSync(run.dir, { recursive: true });
@@ -333,7 +335,7 @@ class LinearHerd {
       // 5. tell Linear
       if (this.linear && rule.onPickup.comment) {
         const host = os.hostname();
-        await this.linear.comment(issue.id, `🐑 **linear-herd** picked this up on \`${host}\` · herdr workspace \`${ws.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`);
+        await this.linear.comment(issue.id, `🐑 **linear-herd** picked this up on \`${host}\` · herdr workspace \`${run.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`);
       }
       if (this.linear && rule.onPickup.assignToMe) { try { await this.linear.assign(issue, (await this.linear.me()).id); } catch (e) { log(`${key}: assign failed: ${e.message}`); } }
       if (this.linear && rule.onPickup.state) { try { await this.linear.setState(issue, rule.onPickup.state); } catch (e) { log(`${key}: state failed: ${e.message}`); } }
@@ -389,6 +391,37 @@ class LinearHerd {
     else if (action === 'detached') log(`${key}: ${workDir} is on a detached HEAD; the brief will not name a branch`);
     else log(`${key}: branch ${branch}`);
     return branch;
+  }
+
+  /**
+   * In "claude" mode the herdr workspace is created at the repo root *before* Claude makes its
+   * worktree, so herdr's sidebar shows the repo's branch (main), not the run's. Once the worktree
+   * exists and its branch is settled, re-home the run: open the checkout as a herdr worktree
+   * workspace (herdr then shows the real branch and groups it under the repo), move Claude's pane
+   * into it, and drop the placeholder. If the user already opened that checkout themselves (herdr's
+   * New button does this), Claude joins their workspace as a second tab and their shell is kept.
+   * Best effort: a run left in the placeholder workspace is still a perfectly good run.
+   */
+  async adoptWorktree(key, run, rule, workDir, label) {
+    if (rule.worktree !== 'claude' || path.resolve(workDir) === path.resolve(rule.repo)) return;
+    const placeholder = { workspaceId: run.workspaceId, paneId: run.paneId };
+    try {
+      const wt = await this.herdr.openWorktree({ cwd: rule.repo, path: workDir, label });
+      if (!wt.workspaceId || wt.workspaceId === placeholder.workspaceId) return;
+      const moved = await this.herdr.movePaneToWorkspace(placeholder.paneId, wt.workspaceId);
+      if (!moved.changed) { log(`${key}: herdr did not move pane ${placeholder.paneId}; staying in workspace ${placeholder.workspaceId}`); return; }
+      Object.assign(run, { workspaceId: wt.workspaceId, tabId: moved.tabId, paneId: moved.paneId });
+      saveState(this.state);
+      if (wt.alreadyOpen) {
+        try { await this.herdr.renameWorkspace(wt.workspaceId, label); } catch { /* keep their name */ }
+      } else if (wt.paneId) {
+        try { await this.herdr.closePane(wt.paneId); } catch { /* a spare shell is harmless */ }
+      }
+      if (moved.closedWorkspaceId !== placeholder.workspaceId) { try { await this.herdr.closeWorkspace(placeholder.workspaceId); } catch { /* ignore */ } }
+      log(`${key}: moved into herdr worktree workspace ${wt.workspaceId} pane ${run.paneId}${wt.alreadyOpen ? ' (it was already open)' : ''}`);
+    } catch (e) {
+      log(`${key}: could not give the worktree its own herdr workspace: ${e.message}`);
+    }
   }
 
   async startAgentWithRetry(opts) {
