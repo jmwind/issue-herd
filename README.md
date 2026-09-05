@@ -23,7 +23,7 @@ your-repo/
 ## Install
 
 ```bash
-git clone <this repo> ~/Code/linear-herd
+git clone git@github.com:jmwind/linear-herd.git ~/Code/linear-herd
 cd ~/Code/linear-herd && npm link        # puts `linear-herd` on your PATH
 ```
 
