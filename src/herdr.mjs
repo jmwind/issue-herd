@@ -57,6 +57,40 @@ export class Herdr {
   }
 
   /**
+   * Open an existing git worktree checkout of the repo at `cwd` as a herdr worktree workspace
+   * (herdr shows its branch and groups it under the repo's workspace). If that checkout is already
+   * open, herdr returns the existing workspace and `alreadyOpen` is true.
+   * Returns { workspaceId, tabId, paneId, alreadyOpen }.
+   */
+  async openWorktree({ cwd, path: checkout, label, focus = false }) {
+    const args = ['worktree', 'open', '--cwd', cwd, '--path', checkout, focus ? '--focus' : '--no-focus'];
+    if (label) args.push('--label', label);
+    const r = await this.run(args);
+    return { ...pickIds(r.result), alreadyOpen: !!r.result.already_open, raw: r.result };
+  }
+
+  /**
+   * Move a pane into `workspaceId` as a new tab. The pane keeps its terminal (and any agent in it)
+   * but gets new ids. herdr closes the source tab/workspace if the move emptied it.
+   * Returns { changed, paneId, tabId, workspaceId, closedWorkspaceId }.
+   */
+  async movePaneToWorkspace(paneId, workspaceId, { focus = false } = {}) {
+    const r = await this.run(['pane', 'move', paneId, '--new-tab', '--workspace', workspaceId, focus ? '--focus' : '--no-focus']);
+    const m = r.result.move_result || r.result;
+    return {
+      changed: m.changed !== false,
+      paneId: m.pane?.pane_id || paneId,
+      tabId: m.created_tab?.tab_id || m.pane?.tab_id,
+      workspaceId: m.pane?.workspace_id || workspaceId,
+      closedWorkspaceId: m.closed_workspace_id || null,
+    };
+  }
+
+  async closePane(paneId) {
+    return this.run(['pane', 'close', paneId]);
+  }
+
+  /**
    * Start an agent in an existing shell pane. Resolves when herdr sees it ready.
    * `agentArgs` are passed to the agent binary after `--`.
    */

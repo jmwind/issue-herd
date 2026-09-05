@@ -243,6 +243,11 @@ whatever your rule says (`not state:started` excludes anything already In Progre
 4. Settle the branch: ask git what the worktree is actually on and, if `branch` asks for a different
    name and that name is free, rename onto it. This happens before the brief is written and before
    Linear is told, so all three quote the same, existing branch.
+   Then give the worktree a herdr workspace of its own: the workspace from step 2 sits at the repo
+   root, so the sidebar would show `main`. linear-herd runs `herdr worktree open --path <worktree>`
+   (herdr shows the real branch and groups it under the repo), moves Claude's pane into it with
+   `herdr pane move`, and closes the placeholder. If you had already opened that checkout yourself,
+   Claude joins it as a second tab and your shell stays.
 5. Render the brief template into `<working tree>/.linear-herd/state/runs/<KEY>/brief.md` with the
    issue, comments, and your `instructions.md`, then `herdr agent prompt <key> "read the brief at …
    and follow it"`. The brief and `result.json` live inside Claude's own working tree (gitignored)
