@@ -17,7 +17,12 @@ export class LinearClient {
       headers: { 'Content-Type': 'application/json', Authorization: this.apiKey },
       body: JSON.stringify({ query, variables }),
     });
-    if (!res.ok) throw new Error(`Linear HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) {
+      const text = await res.text();
+      let detail = text.slice(0, 200);
+      try { const j = JSON.parse(text); if (j.errors?.length) detail = j.errors.map((e) => e.message).join('; '); } catch { /* keep text */ }
+      throw new Error(`Linear HTTP ${res.status}: ${detail}${res.status === 401 ? ' — check LINEAR_API_KEY in .env.local' : ''}`);
+    }
     const json = await res.json();
     if (json.errors?.length) throw new Error(`Linear GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
     return json.data;
