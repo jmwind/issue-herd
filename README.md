@@ -56,10 +56,23 @@ never overwrites a file that exists. Then:
 4. Smoke-test the herdr plumbing without touching Linear (opens a workspace, starts Claude, has it
    write the result file, finalizes): `linear-herd smoke`. Close the workspace it leaves open when
    you have looked at it.
-5. Check a rule against live issues, no side effects: `linear-herd match "label:ai and team:ENG"`,
-   then `linear-herd dry-run`.
+5. Optional: preview what the config's rules would pick up, with no side effects: `linear-herd dry-run`.
+   To try an expression before putting it in the config: `linear-herd match "label:ai and team:ENG"`.
 
 Unit tests for the tool itself: `npm test` in this repo.
+
+## Commands
+
+| command | what it does |
+|---|---|
+| `linear-herd` | **the watcher.** Reads `.linear-herd/config.json`, evaluates its rules against Linear every `pollSeconds`, picks up matches, supervises them. Run this one in herdr. |
+| `linear-herd once` | one poll with the config's rules, then exit (stays up while it supervises anything it picked up) |
+| `linear-herd dry-run` | the config's rules, print what would be picked up, change nothing |
+| `linear-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing; for testing a rule before adding it |
+| `linear-herd status` | tracked runs and their outcome |
+| `linear-herd reset <KEY>` | forget a run so the issue can be picked up again |
+| `linear-herd smoke` | end-to-end herdr test with a fake issue, no Linear calls |
+| `linear-herd init` | scaffold `.linear-herd/` in the current repo |
 
 ## Run it in herdr
 
