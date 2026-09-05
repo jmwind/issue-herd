@@ -12,7 +12,9 @@ so they are reviewed and versioned with the code:
 ```
 your-repo/
 ├── .linear-herd/
+│   ├── .gitignore           ignores state/ and config.local.json    (committed)
 │   ├── config.json          rules and defaults                      (committed)
+│   ├── config.local.json    per-machine overrides of config.json    (gitignored)
 │   ├── instructions.md      how to work in this repo, appended to every brief (committed)
 │   ├── prompts/default.md   optional override of the built-in brief template
 │   └── state/               state.json, runs/<KEY>/, logs/          (gitignored)
@@ -68,9 +70,11 @@ cd ~/Code/your-repo
 linear-herd init
 ```
 
-`init` writes `.linear-herd/config.json` and `.linear-herd/instructions.md` from the examples,
-adds `.linear-herd/state/` to `.gitignore`, and documents `LINEAR_API_KEY` in `.env.example`. It
-never overwrites a file that exists. Then:
+`init` writes `.linear-herd/config.json` and `.linear-herd/instructions.md` from the examples, a
+`.linear-herd/.gitignore` that keeps `state/` and `config.local.json` out of git (your repo's own
+`.gitignore` is not touched), and documents `LINEAR_API_KEY` in `.env.example`. It never
+overwrites a file that exists, so re-running it in a repo set up by an older version adds only the
+missing `.gitignore`. Then:
 
 1. Linear → Settings → Security & access → **Personal API keys** → New key. Put it in the repo's
    `.env.local` (or `.env`) as `LINEAR_API_KEY=lin_api_...`. The process environment wins over both.
@@ -91,7 +95,7 @@ Unit tests for the tool itself: `npm test` in this repo.
 
 | command | what it does |
 |---|---|
-| `linear-herd` | **the watcher.** Reads `.linear-herd/config.json`, evaluates its rules against Linear every `pollSeconds`, picks up matches, supervises them. Run this one in herdr. |
+| `linear-herd` | **the watcher.** Reads `.linear-herd/config.json`, evaluates its rules against Linear every `pollSeconds`, picks up matches, supervises them. Edits to `config.json` or `instructions.md` are picked up on the next poll, no restart needed; a file that fails to load is reported once and the previous config stays in force until it is fixed. Run this one in herdr. |
 | `linear-herd once` | one poll with the config's rules, then exit (stays up while it supervises anything it picked up) |
 | `linear-herd dry-run` | the config's rules, print what would be picked up, change nothing |
 | `linear-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing; for testing a rule before adding it |
@@ -211,6 +215,25 @@ tighter than `or`.
 
 The repository is always the one you run `linear-herd` in (its git top level); rules do not name
 a repo.
+
+### Per-machine overrides: `config.local.json`
+
+Anything that should differ between the machines running linear-herd on the same repo goes in
+`.linear-herd/config.local.json`. It is gitignored, has the same shape as `config.json`, and is
+layered over it: top-level keys replace, `defaults` merges key by key (its `on*` objects one level
+deeper), and `rules` merge by `name` (a name that is not in `config.json` is added). The watcher
+logs which keys are overridden at startup, and edits to it are picked up live like `config.json`.
+
+```jsonc
+{
+  "defaults": { "claimLabel": "herdr-jml-mbp" },     // so the label on the issue says where it ran
+  "rules": [ { "name": "docs", "enabled": false } ]  // do not run this rule on this machine
+}
+```
+
+The claim label must exist in Linear (create it there first). With a different claim label per
+machine, the pickup comment marker is what stops a second machine from taking an issue this one
+already claimed, so keep `onPickup.comment` on.
 
 `state` values in `onPickup`/`onDone` are matched against the team's workflow by name, then by
 type, so `"started"` works for any team. Set a key to `null`/`false` to skip that step.

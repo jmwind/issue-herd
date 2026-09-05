@@ -15,6 +15,7 @@
 //
 // Run it from inside the git repository it should work on. Everything is project-local:
 //   <repo>/.linear-herd/config.json        rules and defaults (committed)
+//   <repo>/.linear-herd/config.local.json  per-machine overrides of config.json, same shape (gitignored)
 //   <repo>/.linear-herd/instructions.md    repo brief appended to every agent prompt (committed)
 //   <repo>/.linear-herd/prompts/default.md optional override of the built-in prompt template
 //   <repo>/.linear-herd/state/             state.json, runs/<KEY>/, logs/ (gitignored)
@@ -26,6 +27,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { compile } from '../src/expr.mjs';
+import { mergeConfig, overridePaths } from '../src/config.mjs';
 import { LinearClient } from '../src/linear.mjs';
 import { Herdr, agentNameFor } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
@@ -35,6 +37,7 @@ const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = findRepoRoot(process.cwd());
 const CONFIG_DIR = path.join(REPO, '.linear-herd');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+const LOCAL_CONFIG_PATH = path.join(CONFIG_DIR, 'config.local.json'); // per-machine overrides, gitignored
 const STATE_DIR = path.join(CONFIG_DIR, 'state');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 const RUNS_DIR = path.join(STATE_DIR, 'runs');
@@ -137,9 +140,12 @@ const DEFAULTS = {
 };
 
 function loadConfig() {
-  const raw = readJson(CONFIG_PATH, null);
-  if (!raw) throw new Error(`no config at ${CONFIG_PATH}`);
+  if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no config at ${CONFIG_PATH}`);
+  const readConfigFile = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { throw new Error(`${path.relative(REPO, p)} is not valid JSON: ${e.message}`); } };
+  const local = fs.existsSync(LOCAL_CONFIG_PATH) ? readConfigFile(LOCAL_CONFIG_PATH) : null;
+  const raw = mergeConfig(readConfigFile(CONFIG_PATH), local);
   const cfg = { ...DEFAULTS, ...raw, defaults: { ...DEFAULTS.defaults, ...(raw.defaults || {}) } };
+  cfg.localOverrides = overridePaths(local);
   cfg.name = String(cfg.name || path.basename(REPO)).trim() || 'linear-herd';
   cfg.rules = (raw.rules || []).map((r, i) => {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
@@ -149,7 +155,20 @@ function loadConfig() {
     rule.instructions = [rule.instructions, readInstructions(rule.instructionsFile)].filter(Boolean).join('\n\n');
     return rule;
   });
+  cfg.stamp = configStamp(cfg);
   return cfg;
+}
+
+/**
+ * A fingerprint of every file the config is built from: config.json, config.local.json (present
+ * or not) and each rule's instructions file. The watcher compares it before every poll and
+ * reloads when it changes, so editing a rule takes effect without a restart. (Prompt templates
+ * are read at pickup time, so they never need a reload.)
+ */
+function configStamp(cfg) {
+  const files = new Set([CONFIG_PATH, LOCAL_CONFIG_PATH]);
+  for (const r of cfg.rules) if (r.instructionsFile) files.add(expand(r.instructionsFile));
+  return [...files].map((f) => { try { const st = fs.statSync(f); return `${f}:${st.mtimeMs}:${st.size}`; } catch { return `${f}:missing`; } }).join('|');
 }
 
 function readInstructions(file) {
@@ -555,10 +574,40 @@ class LinearHerd {
     catch (e) { log(`  could not label workspace ${id} "${label}": ${e.message}`); }
   }
 
-  async loop() {
-    log(`linear-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
+  /**
+   * Re-read .linear-herd/config.json (and the instructions files it names) if any of them changed
+   * on disk since the config was last loaded. A config that fails to parse is reported and ignored:
+   * the watcher keeps running on the last good one until the file is fixed. Runs already in flight
+   * keep their rule by name; a rule that was removed falls back to the defaults for its reports.
+   */
+  reloadConfigIfChanged() {
+    const stamp = configStamp(this.cfg);
+    if (stamp === this.cfg.stamp) return false;
+    let next;
+    try { next = loadConfig(); }
+    catch (e) {
+      this.cfg.stamp = stamp; // do not re-report the same broken file every poll
+      log(`config changed but could not be loaded, keeping the previous one: ${e.message}`);
+      return false;
+    }
+    const before = this.cfg;
+    this.cfg = next;
+    this.warned = new Set(); // rules changed, so "matches but is skipped" notes may no longer apply
+    log(`config reloaded: watching ${next.rules.filter((r) => r.enabled !== false).length} rule(s) every ${next.pollSeconds}s`);
+    this.logRules();
+    if (next.name !== before.name) this.labelOwnWorkspace().catch(() => {});
+    return true;
+  }
+
+  logRules() {
     for (const r of this.cfg.rules) log(`  rule ${r.name}${r.enabled === false ? ' (disabled)' : ''}: ${r.match}  →  ${r.repo}`);
     log(`  guards: claim label ${this.cfg.defaults.claimLabel || 'off'}, skip issues assigned to others: ${this.cfg.defaults.skipIfAssignedToOthers ? 'on' : 'off'}; caps: ${this.cfg.maxConcurrent} total`);
+    if (this.cfg.localOverrides.length) log(`  overrides from ${path.basename(LOCAL_CONFIG_PATH)}: ${this.cfg.localOverrides.join(', ')}`);
+  }
+
+  async loop() {
+    log(`linear-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
+    this.logRules();
     const who = await this.linear.me().then((u) => u.email).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
     log(`  Linear: ${who} · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
     await this.labelOwnWorkspace();
@@ -569,6 +618,7 @@ class LinearHerd {
       polls++;
       let summary;
       try {
+        this.reloadConfigIfChanged();
         const r = await this.pollOnce();
         if (r.picked.length) log(`poll #${polls}: ${r.scanned} open issues, ${r.candidates} matched, picked ${r.picked.join(', ')}`);
         const running = await this.runningSummary();
@@ -598,22 +648,28 @@ function alreadyTaken(issue, rule, viewer) {
 
 // ---------------------------------------------------------------- commands
 
+const GITIGNORE = `# linear-herd. config.json, instructions.md and prompts/ are committed; these are not.
+# runtime state: state.json, runs/<KEY>/, logs/
+state/
+# per-machine overrides of config.json
+config.local.json
+`;
+
 function init() {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   const made = [];
   const put = (p, content) => { if (!fs.existsSync(p)) { fs.writeFileSync(p, content); made.push(path.relative(REPO, p)); } };
   put(CONFIG_PATH, fs.readFileSync(path.join(PKG_DIR, 'config.example.json'), 'utf8'));
   put(path.join(CONFIG_DIR, 'instructions.md'), fs.readFileSync(path.join(PKG_DIR, 'prompts', 'instructions.example.md'), 'utf8'));
-  // gitignore the runtime state
-  const gi = path.join(REPO, '.gitignore');
-  const giText = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
-  if (!/^\.linear-herd\/state\/?$/m.test(giText)) { fs.appendFileSync(gi, `${giText && !giText.endsWith('\n') ? '\n' : ''}\n# linear-herd runtime state (config.json and instructions.md are committed)\n.linear-herd/state/\n`); made.push('.gitignore (+ .linear-herd/state/)'); }
+  // .linear-herd/ carries its own .gitignore so the repo's is left alone
+  put(path.join(CONFIG_DIR, '.gitignore'), GITIGNORE);
   // document the key
   const ex = path.join(REPO, '.env.example');
   const exText = fs.existsSync(ex) ? fs.readFileSync(ex, 'utf8') : '';
   if (!/^LINEAR_API_KEY=/m.test(exText)) { fs.appendFileSync(ex, `${exText && !exText.endsWith('\n') ? '\n' : ''}\n# linear-herd: Linear personal API key (Settings → Security & access → Personal API keys).\n# Put the real value in .env.local, never here.\nLINEAR_API_KEY=\n`); made.push('.env.example (+ LINEAR_API_KEY)'); }
   console.log(made.length ? `wrote in ${REPO}:\n  ${made.join('\n  ')}` : `nothing to do; ${path.relative(REPO, CONFIG_DIR)} already initialised`);
   console.log(`\nnext: add LINEAR_API_KEY to ${path.join(REPO, '.env.local')}, edit .linear-herd/config.json and instructions.md, then \`linear-herd match "label:ai"\``);
+  console.log(`per-machine settings (e.g. a claim label that names this machine) go in .linear-herd/config.local.json, which is gitignored`);
 }
 
 const PKG = readJson(path.join(PKG_DIR, 'package.json'), { version: '0.0.0', repository: {} });
