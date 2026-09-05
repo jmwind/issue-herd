@@ -84,25 +84,42 @@ export class LinearClient {
     return state;
   }
 
-  async labelId(name) {
+  /**
+   * Id of the label called `name` (case-insensitive; a workspace label wins over a team one).
+   * With `create`, a label that does not exist yet is created as a workspace label, so a claim
+   * label like `herdr-<host>` never has to be made by hand. Returns null when absent and not creating.
+   */
+  async labelId(name, { create = false } = {}) {
     this.labelIds ??= new Map();
     const key = name.toLowerCase();
     if (!this.labelIds.has(key)) {
       const d = await this.gql('query($name: String!) { issueLabels(filter: { name: { eqIgnoreCase: $name } }, first: 5) { nodes { id name team { id } } } }', { name });
       const hit = d.issueLabels.nodes.find((l) => !l.team) || d.issueLabels.nodes[0];
-      if (!hit) throw new Error(`no Linear label named '${name}' — create it in Linear first`);
-      this.labelIds.set(key, hit.id);
+      if (hit) this.labelIds.set(key, hit.id);
+      else if (create) this.labelIds.set(key, await this.createLabel(name));
+      else return null;
     }
     return this.labelIds.get(key);
   }
 
+  /** Create a workspace-level issue label. Returns its id. */
+  async createLabel(name) {
+    const d = await this.gql('mutation($input: IssueLabelCreateInput!) { issueLabelCreate(input: $input) { success issueLabel { id name } } }', { input: { name } });
+    const created = d.issueLabelCreate?.issueLabel;
+    if (!created?.id) throw new Error(`could not create Linear label '${name}'`);
+    return created.id;
+  }
+
+  /** Add a label to an issue, creating the label in the workspace if Linear does not have it yet. */
   async addLabel(issueId, labelName) {
-    const labelId = await this.labelId(labelName);
+    const labelId = await this.labelId(labelName, { create: true });
     await this.gql('mutation($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }', { id: issueId, labelId });
   }
 
+  /** Remove a label from an issue. A label that does not exist cannot be on the issue: no-op. */
   async removeLabel(issueId, labelName) {
     const labelId = await this.labelId(labelName);
+    if (!labelId) return;
     await this.gql('mutation($id: String!, $labelId: String!) { issueRemoveLabel(id: $id, labelId: $labelId) { success } }', { id: issueId, labelId });
   }
 
