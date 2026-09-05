@@ -5,15 +5,19 @@ Watches Linear and, when an issue matches one of your rules, opens a **herdr wor
 issue: picked up → waiting for you → PR open. Runs on your own machine, inside herdr, with no
 public URL and no third-party orchestrator. Zero dependencies beyond Node 22 and the `herdr` CLI.
 
+**It is project-local.** You run `linear-herd` from inside the repository it should work on. The
+rules, the repo-specific instructions for the agent, and the API key all live in that repository,
+so they are reviewed and versioned with the code:
+
 ```
-repo (this)                          config home: ~/.linear-herd  (or $LINEAR_HERD_HOME)
-├── bin/linear-herd.mjs   the CLI    ├── config.json         rules, defaults
-├── src/expr.mjs          rule lang  ├── .env                LINEAR_API_KEY (never commit)
-├── src/linear.mjs        GraphQL    ├── prompts/default.md  your copy of the brief template (optional)
-├── src/herdr.mjs         herdr CLI  ├── runs/<KEY>/         per-issue: issue.json, brief.md, result.json
-├── prompts/default.md    template   ├── state.json          what has been picked up
-├── config.example.json              └── logs/linear-herd.log
-└── test/
+your-repo/
+├── .linear-herd/
+│   ├── config.json          rules and defaults                      (committed)
+│   ├── instructions.md      how to work in this repo, appended to every brief (committed)
+│   ├── prompts/default.md   optional override of the built-in brief template
+│   └── state/               state.json, runs/<KEY>/, logs/          (gitignored)
+├── .env.local               LINEAR_API_KEY=…                        (gitignored)
+└── .env.example             documents LINEAR_API_KEY                (committed)
 ```
 
 ## Install
@@ -21,33 +25,48 @@ repo (this)                          config home: ~/.linear-herd  (or $LINEAR_HE
 ```bash
 git clone <this repo> ~/Code/linear-herd
 cd ~/Code/linear-herd && npm link        # puts `linear-herd` on your PATH
-linear-herd init                         # writes ~/.linear-herd/{config.json,.env,prompts/default.md}
 ```
 
 Requires Node 22+, the `herdr` CLI with its server running, `claude` on PATH and logged in, and
 `gh` logged in for PRs. No npm dependencies.
 
-## Setup (once)
+## Set up a repository
 
-1. Linear → Settings → Security & access → **Personal API keys** → New key. Paste it into
-   `~/.linear-herd/.env` as `LINEAR_API_KEY=lin_api_...`.
+```bash
+cd ~/Code/your-repo
+linear-herd init
+```
+
+`init` writes `.linear-herd/config.json` and `.linear-herd/instructions.md` from the examples,
+adds `.linear-herd/state/` to `.gitignore`, and documents `LINEAR_API_KEY` in `.env.example`. It
+never overwrites a file that exists. Then:
+
+1. Linear → Settings → Security & access → **Personal API keys** → New key. Put it in the repo's
+   `.env.local` (or `.env`) as `LINEAR_API_KEY=lin_api_...`. The process environment wins over both.
 2. In Linear, create the labels your rules use: the trigger label (e.g. `ai`) and the claim label
    (`herdr` by default).
-3. Edit `~/.linear-herd/config.json`: one rule per repo.
-4. Unit tests: `npm test`.
-5. Smoke-test the herdr plumbing without touching Linear (opens a workspace, starts Claude, has it
-   write the result file, finalizes): `linear-herd smoke ~/Code/your-repo`. Close the workspace it
-   leaves open when you have looked at it.
-6. Check a rule against live issues, no side effects: `linear-herd match "label:ai and team:DEV"`,
+3. Edit `.linear-herd/config.json` (the rules) and `.linear-herd/instructions.md` (what the agent
+   must know about this repo: checks to run, things never to run, branch and PR conventions, when
+   to stop and ask). Commit both.
+4. Smoke-test the herdr plumbing without touching Linear (opens a workspace, starts Claude, has it
+   write the result file, finalizes): `linear-herd smoke`. Close the workspace it leaves open when
+   you have looked at it.
+5. Check a rule against live issues, no side effects: `linear-herd match "label:ai and team:ENG"`,
    then `linear-herd dry-run`.
+
+Unit tests for the tool itself: `npm test` in this repo.
 
 ## Run it in herdr
 
+From the repo directory:
+
 ```bash
-herdr tab create --label linear-herd --no-focus
+herdr tab create --label linear-herd --cwd "$PWD" --no-focus
 # read .result.root_pane.pane_id from the JSON, then
 herdr pane run <pane-id> "linear-herd"
 ```
+
+One watcher per repository. Run several in separate panes if you have several repos.
 
 Leave that pane alone; the herdr server keeps it alive when you detach. Every issue it picks up
 becomes its own workspace in the sidebar, labelled with the issue key, with Claude's status
@@ -56,23 +75,23 @@ becomes its own workspace in the sidebar, labelled with the issue key, with Clau
 ## The rule language
 
 ```
-label:ai and team:DEV and not state:started
-(label:ai or label:agent) project:GustKit priority<=2
+label:ai and team:ENG and not state:started
+(label:ai or label:agent) project:Webapp priority<=2
 assignee:me state:todo updated<1d
 ```
 
 | field | matches | examples |
 |---|---|---|
 | `label` | any label on the issue | `label:ai` `label:"needs review"` `label!=blocked` |
-| `project` | project name | `project:GustKit` `project:"Alpha *"` |
-| `team` | team key or name | `team:DEV` `team:Development` |
+| `project` | project name | `project:Webapp` `project:"Alpha *"` |
+| `team` | team key or name | `team:ENG` `team:Engineering` |
 | `assignee` | `me`, `none`, name, display name, email | `assignee:none` `assignee:me` |
 | `creator` | same as assignee | `creator:me` |
 | `state` / `status` | workflow state name **or type** (`triage backlog unstarted started completed canceled`) | `state:Todo` `not state:started` |
 | `priority` | `none urgent high medium low` or 0–4; `<` `<=` `>` `>=` treat "none" as lowest | `priority:urgent` `priority<=2` |
 | `estimate` | points | `estimate<=3` |
 | `title` | substring, or glob with `*` | `title:crash` `title:*zoom*` |
-| `key` / `id` | identifier | `key:DEV-123` `key:DEV-*` |
+| `key` / `id` | identifier | `key:ENG-123` `key:ENG-*` |
 | `cycle` | `current`, `none`, or number | `cycle:current` |
 | `age` / `updated` | time since created / updated: `30m 2h 3d 1w` | `age>1d` `updated<2h` |
 | `any` | everything | `any:true` |
@@ -96,7 +115,8 @@ tighter than `or`.
     "permissionMode": "acceptEdits",  // claude --permission-mode; see `claude --help` for choices
     "claudeArgs": [],         // extra flags for claude, e.g. ["--model", "opus"]
     "maxConcurrent": 2,       // per-rule cap
-    "prompt": "prompts/default.md",   // brief template; {{placeholders}} listed in the file
+    "prompt": "prompts/default.md",   // brief template: .linear-herd/prompts/default.md if present, else the built-in
+    "instructionsFile": "instructions.md",  // repo brief appended to the prompt; "instructions" (inline string) also works
     "claimLabel": "herdr",            // label added on pickup and checked before pickup; null disables
     "skipIfAssignedToOthers": true,   // leave issues held by other people alone
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
@@ -104,13 +124,15 @@ tighter than `or`.
     "onBlocked": { "comment": true, "notify": true },   // agent hit a permission/question dialog
     "onIdle":    { "comment": true, "notify": true }    // agent stopped without writing result.json
   },
-  "rules": [
-    { "name": "gustkit", "match": "label:ai and team:DEV and not state:started",
-      "repo": "~/Code/gustkit", "instructions": "repo-specific guidance appended to the brief",
-      "enabled": true }
+  "rules": [                  // evaluated in order; first match wins; every rule inherits defaults
+    { "name": "ai", "match": "label:ai and team:ENG and not state:started", "enabled": true },
+    { "name": "docs", "match": "label:ai and label:docs", "instructionsFile": "instructions-docs.md" }
   ]
 }
 ```
+
+The repository is always the one you run `linear-herd` in (its git top level); rules do not name
+a repo.
 
 `state` values in `onPickup`/`onDone` are matched against the team's workflow by name, then by
 type, so `"started"` works for any team. Set a key to `null`/`false` to skip that step.
@@ -138,10 +160,13 @@ whatever your rule says (`not state:started` excludes anything already In Progre
    above are applied. Urgent first, then oldest first.
 2. `herdr workspace create --cwd <repo> --label "<KEY> <title>" --no-focus` (or `herdr worktree
    create` in herdr worktree mode).
-3. Render `prompts/default.md` into `runs/<KEY>/brief.md` with the issue, comments, and your
-   rule's `instructions`.
-4. `herdr agent start <key> --kind claude --pane <pane> -- --name KEY --worktree <slug> --permission-mode …`
-   then `herdr agent prompt <key> "read the brief at … and follow it"`.
+3. `herdr agent start <key> --kind claude --pane <pane> -- --name KEY --worktree <slug> --permission-mode …`,
+   then ask herdr which directory Claude is now working in (the worktree it created).
+4. Render the brief template into `<working tree>/.linear-herd/state/runs/<KEY>/brief.md` with the
+   issue, comments, and your `instructions.md`, then `herdr agent prompt <key> "read the brief at …
+   and follow it"`. The brief and `result.json` live inside Claude's own working tree (gitignored)
+   because a path in the main checkout triggers permission dialogs from a worktree; a copy is
+   archived under the watcher's `.linear-herd/state/runs/<KEY>/` when the run finishes.
 5. Comment on the issue, assign it to you, move it to In Progress.
 6. A supervisor waits on `herdr agent wait`. When Claude writes `runs/<KEY>/result.json`
    (`pr_open | needs_human | nothing_to_do | failed`, PR URL, summary, testing notes) the watcher
@@ -168,6 +193,8 @@ workspace and open the port in your browser.
 - Claude never goes `working` after the prompt — open the workspace; it is probably sitting on
   the trust-this-folder dialog for a new worktree. Answer it once per repo.
 - Re-run an issue: remove the `herdr` claim label in Linear, delete the pickup comment if you want
-  a clean thread, then `linear-herd reset DEV-123`. It will be picked up on the next poll if the
+  a clean thread, then `linear-herd reset ENG-123`. It will be picked up on the next poll if the
   rule still matches.
+- `no .linear-herd/config.json` — you are not inside a repository that has been set up; `cd` into
+  it (any subdirectory works, the git top level is used) or run `linear-herd init`.
 - `LINEAR_HERD_DEBUG=1` logs every herdr command.

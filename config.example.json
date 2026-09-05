@@ -8,6 +8,7 @@
     "claudeArgs": [],
     "maxConcurrent": 2,
     "prompt": "prompts/default.md",
+    "instructionsFile": "instructions.md",
     "claimLabel": "herdr",
     "skipIfAssignedToOthers": true,
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
@@ -17,11 +18,8 @@
   },
   "rules": [
     {
-      "name": "my-repo",
-      "match": "label:ai and team:ENG and not state:started and not state:triage",
-      "repo": "~/Code/my-repo",
-      "maxConcurrent": 2,
-      "instructions": "Repo-specific guidance appended to the brief: which checks to run, what never to run, branch and PR conventions, when to stop and ask."
+      "name": "ai-label",
+      "match": "label:ai and team:ENG and not state:started and not state:triage"
     }
   ]
 }

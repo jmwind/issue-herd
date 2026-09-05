@@ -1,7 +1,7 @@
 // Rule expression language for linear-herd.
 //
-//   label:ai and project:GustKit and not assignee:none
-//   (label:ai or label:agent) team:DEV priority>=3
+//   label:ai and project:Webapp and not assignee:none
+//   (label:ai or label:agent) team:ENG priority>=3
 //   state:started assignee:me
 //
 // Grammar
@@ -18,8 +18,8 @@
 //
 // Fields (all read from the normalized issue produced by lib/linear.mjs):
 //   label        any label name                         label:ai   label:"needs *"
-//   project      project name                           project:GustKit
-//   team         team key or team name                  team:DEV   team:Development
+//   project      project name                           project:Webapp
+//   team         team key or team name                  team:ENG   team:Engineering
 //   assignee     me | none | name | displayName | email assignee:me   assignee:none
 //   creator      me | name | displayName | email
 //   state        workflow state name or type            state:Todo  state:started
@@ -29,7 +29,7 @@
 //                and 0 is "no priority"; 0 is treated as 5 so priority<=2 excludes it)
 //   estimate     points                                 estimate<=3
 //   title        substring or glob on the title         title:*crash*
-//   id | key     issue identifier                       key:DEV-123
+//   id | key     issue identifier                       key:ENG-123
 //   cycle        current | none | number                cycle:current
 //   age          time since createdAt, e.g. 2h 3d 1w    age>1d
 //   updated      time since updatedAt                   updated<2h

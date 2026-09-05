@@ -8,26 +8,39 @@
 //   linear-herd match "<expr>"  evaluate an expression against live open issues
 //   linear-herd status          show tracked runs
 //   linear-herd reset <KEY>     forget a run so the issue can be picked up again
-//   linear-herd smoke [repo]    end-to-end test against herdr with a fake issue (no Linear)
-//   linear-herd init            write a starter config, .env and prompt into the config home
+//   linear-herd smoke           end-to-end test against herdr with a fake issue (no Linear)
+//   linear-herd init            scaffold .linear-herd/ in this repo
 //
-// Config home: $LINEAR_HERD_HOME or ~/.linear-herd — config.json, .env, state.json, runs/, logs/, prompts/
+// Run it from inside the git repository it should work on. Everything is project-local:
+//   <repo>/.linear-herd/config.json        rules and defaults (committed)
+//   <repo>/.linear-herd/instructions.md    repo brief appended to every agent prompt (committed)
+//   <repo>/.linear-herd/prompts/default.md optional override of the built-in prompt template
+//   <repo>/.linear-herd/state/             state.json, runs/<KEY>/, logs/ (gitignored)
+//   <repo>/.env, <repo>/.env.local         LINEAR_API_KEY (gitignored; document it in .env.example)
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { compile } from '../src/expr.mjs';
 import { LinearClient } from '../src/linear.mjs';
 import { Herdr, agentNameFor } from '../src/herdr.mjs';
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const HOME = process.env.LINEAR_HERD_HOME ? expandTilde(process.env.LINEAR_HERD_HOME) : path.join(os.homedir(), '.linear-herd');
-const CONFIG_PATH = path.join(HOME, 'config.json');
-const ENV_PATH = path.join(HOME, '.env');
-const STATE_PATH = path.join(HOME, 'state.json');
-const RUNS_DIR = path.join(HOME, 'runs');
-const LOG_DIR = path.join(HOME, 'logs');
+const REPO = findRepoRoot(process.cwd());
+const CONFIG_DIR = path.join(REPO, '.linear-herd');
+const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+const STATE_DIR = path.join(CONFIG_DIR, 'state');
+const STATE_PATH = path.join(STATE_DIR, 'state.json');
+const RUNS_DIR = path.join(STATE_DIR, 'runs');
+const LOG_DIR = path.join(STATE_DIR, 'logs');
+const ENV_FILES = [path.join(REPO, '.env.local'), path.join(REPO, '.env')]; // first wins; process env beats both
+
+function findRepoRoot(cwd) {
+  try { return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+  catch { return cwd; }
+}
 
 // ---------------------------------------------------------------- utilities
 
@@ -40,8 +53,10 @@ function log(...a) {
 function readJson(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } }
 function writeJson(p, v) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(v, null, 2) + '\n'); }
 function loadEnv() {
-  if (!fs.existsSync(ENV_PATH)) return;
-  for (const raw of fs.readFileSync(ENV_PATH, 'utf8').split('\n')) {
+  for (const file of ENV_FILES) if (fs.existsSync(file)) loadEnvFile(file);
+}
+function loadEnvFile(file) {
+  for (const raw of fs.readFileSync(file, 'utf8').split('\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
@@ -55,14 +70,14 @@ function slugify(s, max = 40) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/g, '');
 }
 function expandTilde(p) { return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p; }
-/** Resolve a config path: ~ and absolute as-is; relative first against the config home, then the package. */
+/** Resolve a config path: ~ and absolute as-is; relative first against <repo>/.linear-herd, then the package. */
 function expand(p) {
   p = expandTilde(p);
   if (path.isAbsolute(p)) return p;
-  const inHome = path.join(HOME, p);
-  if (fs.existsSync(inHome)) return inHome;
+  const inRepo = path.join(CONFIG_DIR, p);
+  if (fs.existsSync(inRepo)) return inRepo;
   const inPkg = path.join(PKG_DIR, p);
-  return fs.existsSync(inPkg) ? inPkg : inHome;
+  return fs.existsSync(inPkg) ? inPkg : inRepo;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -77,8 +92,9 @@ const DEFAULTS = {
     permissionMode: 'acceptEdits', // passed to `claude --permission-mode`; any other flag goes in claudeArgs
     claudeArgs: [],
     maxConcurrent: 2,
-    prompt: 'prompts/default.md',
-    instructions: '',
+    prompt: 'prompts/default.md',   // repo override in .linear-herd/prompts/, else the package's
+    instructions: '',               // inline text appended to the brief …
+    instructionsFile: 'instructions.md', // … or a markdown file in .linear-herd/ (both are included if present)
     // Guards against double work. The claim label is added to the issue the moment it is picked up and
     // checked before pickup, so a restart, a lost state.json, or a second machine cannot take it again.
     claimLabel: 'herdr',
@@ -97,13 +113,19 @@ function loadConfig() {
   const cfg = { ...DEFAULTS, ...raw, defaults: { ...DEFAULTS.defaults, ...(raw.defaults || {}) } };
   cfg.rules = (raw.rules || []).map((r, i) => {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
-    if (!r.repo) throw new Error(`rule "${r.name || i + 1}" has no "repo"`);
-    const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: expand(r.repo) };
+    const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
     for (const k of ['onPickup', 'onDone', 'onBlocked', 'onIdle']) rule[k] = { ...cfg.defaults[k], ...(r[k] || {}) };
     try { rule.compiled = compile(rule.match); } catch (e) { throw new Error(`rule "${rule.name}": ${e.message}`); }
+    rule.instructions = [rule.instructions, readInstructions(rule.instructionsFile)].filter(Boolean).join('\n\n');
     return rule;
   });
   return cfg;
+}
+
+function readInstructions(file) {
+  if (!file) return '';
+  const p = expand(file);
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim() : '';
 }
 
 // ---------------------------------------------------------------- state
@@ -195,11 +217,11 @@ class LinearHerd {
   async pickUp(issue, rule) {
     const key = issue.identifier;
     const slug = `${key.toLowerCase()}-${slugify(issue.title, 32)}`.replace(/-+$/, '');
-    const dir = path.join(RUNS_DIR, key);
-    fs.mkdirSync(dir, { recursive: true });
+    const archiveDir = path.join(RUNS_DIR, key); // in the watcher's checkout: issue.json now, result.json copied on finish
+    fs.mkdirSync(archiveDir, { recursive: true });
     const run = {
       rule: rule.name, status: 'starting', issueId: issue.id, title: issue.title, url: issue.url,
-      startedAt: new Date().toISOString(), dir, resultPath: path.join(dir, 'result.json'),
+      startedAt: new Date().toISOString(), archiveDir,
       branch: rule.worktree === 'herdr' ? `linear/${slug}` : rule.worktree === 'claude' ? `claude/${slug}` : null,
       worktree: rule.worktree, agentName: agentNameFor(key), notified: {},
     };
@@ -223,23 +245,16 @@ class LinearHerd {
         ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.branch, label });
         run.worktreePath = ws.path;
       } else {
-        ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { LINEAR_ISSUE: key, LINEAR_HERD_RUN: dir } });
+        ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { LINEAR_ISSUE: key } });
       }
       Object.assign(run, { workspaceId: ws.workspaceId, tabId: ws.tabId, paneId: ws.paneId });
       saveState(this.state);
       log(`${key}: workspace ${ws.workspaceId} pane ${ws.paneId}`);
 
-      // 2. brief
-      fs.writeFileSync(path.join(dir, 'issue.json'), JSON.stringify(issue, null, 2));
-      const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run }));
-      const briefPath = path.join(dir, 'brief.md');
-      fs.writeFileSync(briefPath, brief);
-      run.briefPath = briefPath;
+      fs.writeFileSync(path.join(archiveDir, 'issue.json'), JSON.stringify(issue, null, 2));
 
-      // 3. start claude
-      // --add-dir makes the run directory (brief.md, result.json) part of Claude's workspace so reading and
-      // writing it does not trigger a permission dialog under acceptEdits.
-      const agentArgs = ['--name', key, '--add-dir', dir];
+      // 2. start claude
+      const agentArgs = ['--name', key];
       if (rule.worktree === 'claude') agentArgs.push('--worktree', slug);
       if (rule.permissionMode) agentArgs.push('--permission-mode', rule.permissionMode);
       agentArgs.push(...(rule.claudeArgs || []));
@@ -247,8 +262,22 @@ class LinearHerd {
       await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs });
       log(`${key}: claude started as agent "${run.agentName}"`);
 
+      // 3. brief — written INSIDE the working tree Claude actually uses (herdr reports it), under the
+      // gitignored .linear-herd/state/, so reading and writing it needs no permission dialog. A path in the
+      // main checkout does not work when Claude runs in a worktree.
+      const workDir = run.worktreePath || await this.agentCwd(run.agentName, rule);
+      run.workDir = workDir;
+      run.dir = path.join(workDir, '.linear-herd', 'state', 'runs', key);
+      run.resultPath = path.join(run.dir, 'result.json');
+      fs.mkdirSync(run.dir, { recursive: true });
+      const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run }));
+      run.briefPath = path.join(run.dir, 'brief.md');
+      fs.writeFileSync(run.briefPath, brief);
+      saveState(this.state);
+      log(`${key}: working tree ${workDir}`);
+
       // 4. prompt
-      await this.herdr.prompt(run.agentName, `You are working Linear issue ${key}. Your full brief is in ${briefPath} — read that file first and follow it exactly.`);
+      await this.herdr.prompt(run.agentName, `You are working Linear issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`);
       const st = await this.herdr.waitAgent(run.agentName, { until: ['working'], timeoutMs: 30_000 });
       log(`${key}: prompted (state ${st})`);
       run.status = 'running'; saveState(this.state);
@@ -270,6 +299,20 @@ class LinearHerd {
       }
       throw e;
     }
+  }
+
+  /** The directory Claude is working in: the worktree it created, or the repo. Polls herdr until it settles. */
+  async agentCwd(name, rule) {
+    const deadline = Date.now() + (rule.worktree === 'none' ? 4_000 : 25_000);
+    let last = rule.repo;
+    while (Date.now() < deadline) {
+      const a = await this.herdr.agentGet(name);
+      const cwd = a?.foreground_cwd || a?.cwd;
+      if (cwd && cwd !== rule.repo) return cwd;   // worktree mode: Claude moved
+      if (cwd) last = cwd;
+      await sleep(1000);
+    }
+    return last;
   }
 
   async startAgentWithRetry(opts) {
@@ -344,6 +387,8 @@ class LinearHerd {
   async finalize(key, result, rule) {
     const run = this.state.runs[key];
     run.status = 'done'; run.result = result; run.finishedAt = new Date().toISOString(); saveState(this.state);
+    // keep a copy in the watcher's checkout; the worktree may be removed later
+    try { fs.mkdirSync(run.archiveDir, { recursive: true }); for (const f of ['result.json', 'brief.md']) { const src = path.join(run.dir, f); if (fs.existsSync(src)) fs.copyFileSync(src, path.join(run.archiveDir, f)); } } catch { /* best effort */ }
     const status = result.status || 'unknown';
     const icon = status === 'pr_open' ? '✅' : status === 'needs_human' ? '🙋' : status === 'nothing_to_do' ? '🤷' : '❌';
     const lines = [`${icon} **linear-herd** finished ${key} with status \`${status}\`.`];
@@ -356,7 +401,7 @@ class LinearHerd {
     log(`${key}: done (${status}) ${result.prUrl || ''}`);
     await this.report(key, rule, rule.onDone, lines.join('\n'), 'done');
     if (this.linear && rule.onDone.state && status === 'pr_open') {
-      try { await this.linear.setState({ id: run.issueId, team: readJson(path.join(run.dir, 'issue.json'), {}).team }, rule.onDone.state); }
+      try { await this.linear.setState({ id: run.issueId, team: readJson(path.join(run.archiveDir, 'issue.json'), {}).team }, rule.onDone.state); }
       catch (e) { log(`${key}: onDone state failed: ${e.message}`); }
     }
     if (rule.onDone.closeWorkspace && run.workspaceId) { try { await this.herdr.closeWorkspace(run.workspaceId); } catch { /* ignore */ } }
@@ -373,7 +418,7 @@ class LinearHerd {
     for (const [key, run] of Object.entries(this.state.runs)) {
       if (run.status !== 'running' && run.status !== 'starting') continue;
       const rule = this.cfg.rules.find((r) => r.name === run.rule) || this.cfg.defaults;
-      const result = readJson(run.resultPath, null);
+      const result = run.resultPath ? readJson(run.resultPath, null) : null;
       if (result) { await this.finalize(key, result, rule); continue; }
       const agent = await this.herdr.agentGet(run.agentName);
       if (!agent) {
@@ -417,22 +462,29 @@ function alreadyTaken(issue, rule, viewer) {
 // ---------------------------------------------------------------- commands
 
 function init() {
-  fs.mkdirSync(path.join(HOME, 'prompts'), { recursive: true });
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
   const made = [];
-  const put = (rel, content) => { const p = path.join(HOME, rel); if (!fs.existsSync(p)) { fs.writeFileSync(p, content); made.push(p); } };
-  put('config.json', fs.readFileSync(path.join(PKG_DIR, 'config.example.json'), 'utf8'));
-  put('.env', '# linear-herd secrets. Never commit this file.\n# Linear → Settings → Security & access → Personal API keys → New key\nLINEAR_API_KEY=\n\n# LINEAR_HERD_DEBUG=1   # log every herdr command\n');
-  put('prompts/default.md', fs.readFileSync(path.join(PKG_DIR, 'prompts', 'default.md'), 'utf8'));
-  console.log(made.length ? `wrote:\n  ${made.join('\n  ')}` : `nothing to do; ${HOME} already initialised`);
-  console.log(`\nnext: put your Linear API key in ${path.join(HOME, '.env')}, edit ${CONFIG_PATH}, then \`linear-herd match "label:ai"\``);
+  const put = (p, content) => { if (!fs.existsSync(p)) { fs.writeFileSync(p, content); made.push(path.relative(REPO, p)); } };
+  put(CONFIG_PATH, fs.readFileSync(path.join(PKG_DIR, 'config.example.json'), 'utf8'));
+  put(path.join(CONFIG_DIR, 'instructions.md'), fs.readFileSync(path.join(PKG_DIR, 'prompts', 'instructions.example.md'), 'utf8'));
+  // gitignore the runtime state
+  const gi = path.join(REPO, '.gitignore');
+  const giText = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
+  if (!/^\.linear-herd\/state\/?$/m.test(giText)) { fs.appendFileSync(gi, `${giText && !giText.endsWith('\n') ? '\n' : ''}\n# linear-herd runtime state (config.json and instructions.md are committed)\n.linear-herd/state/\n`); made.push('.gitignore (+ .linear-herd/state/)'); }
+  // document the key
+  const ex = path.join(REPO, '.env.example');
+  const exText = fs.existsSync(ex) ? fs.readFileSync(ex, 'utf8') : '';
+  if (!/^LINEAR_API_KEY=/m.test(exText)) { fs.appendFileSync(ex, `${exText && !exText.endsWith('\n') ? '\n' : ''}\n# linear-herd: Linear personal API key (Settings → Security & access → Personal API keys).\n# Put the real value in .env.local, never here.\nLINEAR_API_KEY=\n`); made.push('.env.example (+ LINEAR_API_KEY)'); }
+  console.log(made.length ? `wrote in ${REPO}:\n  ${made.join('\n  ')}` : `nothing to do; ${path.relative(REPO, CONFIG_DIR)} already initialised`);
+  console.log(`\nnext: add LINEAR_API_KEY to ${path.join(REPO, '.env.local')}, edit .linear-herd/config.json and instructions.md, then \`linear-herd match "label:ai"\``);
 }
 
 async function main(argv) {
   if ((argv[0] || '') === 'init') return init();
-  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 14).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
+  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 20).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
   loadEnv();
   const cmd = argv[0] || 'run';
-  if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no config at ${CONFIG_PATH} — run \`linear-herd init\` first`);
+  if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no ${path.relative(process.cwd(), CONFIG_PATH) || CONFIG_PATH} — cd into the repo you want to work on and run \`linear-herd init\``);
   const cfg = loadConfig();
   const herdr = new Herdr({ log: (m) => process.env.LINEAR_HERD_DEBUG && log('  $', m) });
 
@@ -478,11 +530,8 @@ async function main(argv) {
 
 /** End-to-end herdr test with a fake issue: workspace → claude → brief → result.json → finalize. No Linear calls. */
 async function smoke({ cfg, herdr, argv }) {
-  const repoArg = argv.slice(1).find((a) => !a.startsWith('--'));
-  const repo = repoArg ? expand(repoArg) : cfg.rules[0]?.repo;
-  if (!repo) throw new Error('usage: linear-herd smoke <repo-dir> [--worktree]');
   const rule = {
-    ...cfg.defaults, name: 'smoke', repo, worktree: argv.includes('--worktree') ? cfg.defaults.worktree : 'none',
+    ...cfg.defaults, name: 'smoke', repo: REPO, worktree: argv.includes('--worktree') ? cfg.defaults.worktree : 'none',
     prompt: path.join(PKG_DIR, 'prompts', 'smoke.md'), instructions: '',
     onPickup: { comment: false }, onDone: { comment: false, notify: true, closeWorkspace: false },
     onBlocked: { comment: false, notify: true }, onIdle: { comment: false, notify: true },
