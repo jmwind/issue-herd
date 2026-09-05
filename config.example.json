@@ -4,7 +4,8 @@
   "maxConcurrent": 3,
   "defaults": {
     "worktree": "claude",
-    "permissionMode": "acceptEdits",
+    "branch": "{{linearBranchName}}",
+    "permissionMode": "auto",
     "claudeArgs": [],
     "maxConcurrent": 2,
     "prompt": "prompts/default.md",

@@ -170,11 +170,22 @@ tighter than `or`.
   "lookbackDays": 30,         // only consider issues updated in this window
   "maxConcurrent": 3,         // global cap on running agents
   "defaults": {               // every rule inherits these
-    "worktree": "claude",     // "claude": claude --worktree <slug> (branch claude/<slug>)
-                              // "herdr":  herdr worktree create (branch linear/<slug>, herdr shows it as a worktree)
+    "worktree": "claude",     // "claude": claude --worktree <slug> (Claude names the branch worktree/<slug>)
+                              // "herdr":  herdr worktree create (herdr shows it as a worktree)
                               // "none":   pass no worktree flag. If your Claude Code settings default to
                               //           worktree mode, Claude still creates one with a random name.
-    "permissionMode": "acceptEdits",  // claude --permission-mode; see `claude --help` for choices
+    "branch": "{{linearBranchName}}", // what the run's branch is called. Linear's own branch name is the
+                              // default: a PR on it auto-links back to the issue. Templates may use
+                              // {{linearBranchName}}, {{slug}}, {{key}} (dev-3298), {{KEY}} (DEV-3298),
+                              // e.g. "claude/{{slug}}" or "linear/{{slug}}". In "herdr" mode it is passed
+                              // to `herdr worktree create --branch`; in "claude" mode the worktree is
+                              // renamed onto it before the agent is prompted. null accepts whatever the
+                              // tool named it. Ignored when "worktree" is "none" — that run works on the
+                              // branch the repo is already on, and renaming it would move your checkout.
+                              // Whatever happens, the brief, the Linear comment and result.json all quote
+                              // the branch `git` actually reports, never a name linear-herd hoped for.
+    "permissionMode": "auto",         // claude --permission-mode. auto = unattended (the point of a watcher);
+                                      // acceptEdits still asks before every command; see `claude --help`
     "claudeArgs": [],         // extra flags for claude, e.g. ["--model", "opus"]
     "maxConcurrent": 2,       // per-rule cap
     "prompt": "prompts/default.md",   // brief template: .linear-herd/prompts/default.md if present, else the built-in
@@ -224,18 +235,21 @@ whatever your rule says (`not state:started` excludes anything already In Progre
    create` in herdr worktree mode).
 3. `herdr agent start <key> --kind claude --pane <pane> -- --name KEY --worktree <slug> --permission-mode …`,
    then ask herdr which directory Claude is now working in (the worktree it created).
-4. Render the brief template into `<working tree>/.linear-herd/state/runs/<KEY>/brief.md` with the
+4. Settle the branch: ask git what the worktree is actually on and, if `branch` asks for a different
+   name and that name is free, rename onto it. This happens before the brief is written and before
+   Linear is told, so all three quote the same, existing branch.
+5. Render the brief template into `<working tree>/.linear-herd/state/runs/<KEY>/brief.md` with the
    issue, comments, and your `instructions.md`, then `herdr agent prompt <key> "read the brief at …
    and follow it"`. The brief and `result.json` live inside Claude's own working tree (gitignored)
    because a path in the main checkout triggers permission dialogs from a worktree; a copy is
    archived under the watcher's `.linear-herd/state/runs/<KEY>/` when the run finishes.
-5. Comment on the issue, assign it to you, move it to In Progress.
-6. A supervisor waits on `herdr agent wait`. When Claude writes `runs/<KEY>/result.json`
+6. Comment on the issue, assign it to you, move it to In Progress.
+7. A supervisor waits on `herdr agent wait`. When Claude writes `runs/<KEY>/result.json`
    (`pr_open | needs_human | nothing_to_do | failed`, PR URL, summary, testing notes) the watcher
    comments the result on the issue, moves it to In Review on `pr_open`, and sends a herdr
    notification. If Claude gets **blocked** on a permission dialog or **stops** to ask a question,
    you get one comment and one notification telling you which workspace to open.
-7. Workspaces are left open so you can inspect, test, and steer. Close them yourself.
+8. Workspaces are left open so you can inspect, test, and steer. Close them yourself.
 
 If you restart the watcher, it re-attaches to agents that are still alive and finalizes any run
 whose result file appeared while it was down.

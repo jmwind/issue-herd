@@ -29,6 +29,7 @@ import { compile } from '../src/expr.mjs';
 import { LinearClient } from '../src/linear.mjs';
 import { Herdr, agentNameFor } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
+import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = findRepoRoot(process.cwd());
@@ -95,6 +96,11 @@ function expand(p) {
   return fs.existsSync(inPkg) ? inPkg : inRepo;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Run git in `cwd`. Returns trimmed stdout, or null if git failed — callers must tolerate null. */
+function git(args, cwd) {
+  try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+  catch { return null; }
+}
 
 // ---------------------------------------------------------------- config
 
@@ -104,7 +110,12 @@ const DEFAULTS = {
   maxConcurrent: 3,
   defaults: {
     worktree: 'claude',            // "claude" (claude --worktree), "herdr" (herdr worktree create), or "none"
-    permissionMode: 'acceptEdits', // passed to `claude --permission-mode`; any other flag goes in claudeArgs
+    // The branch a run works on, as a template over {{linearBranchName}} / {{slug}} / {{key}} / {{KEY}}.
+    // Linear's own branch name is the default because a PR on it auto-links back to the issue. In
+    // "herdr" mode it is passed to `herdr worktree create --branch`; in "claude" mode the worktree
+    // is renamed onto it before the agent is prompted. null accepts whatever the tool named it.
+    branch: '{{linearBranchName}}',
+    permissionMode: 'auto',        // claude --permission-mode: auto (unattended), acceptEdits (asks before commands), plan, …
     claudeArgs: [],
     maxConcurrent: 2,
     prompt: 'prompts/default.md',   // repo override in .linear-herd/prompts/, else the package's
@@ -250,7 +261,10 @@ class LinearHerd {
     const run = {
       rule: rule.name, status: 'starting', issueId: issue.id, title: issue.title, url: issue.url,
       startedAt: new Date().toISOString(), archiveDir,
-      branch: rule.worktree === 'herdr' ? `linear/${slug}` : rule.worktree === 'claude' ? `claude/${slug}` : null,
+      // `wantBranch` is what we want it called; `branch` is what git says it is, filled in by
+      // settleBranch once the worktree exists. Nothing downstream may report a name we only guessed.
+      wantBranch: desiredBranch({ template: rule.branch, issue, slug, worktree: rule.worktree }),
+      branch: null,
       worktree: rule.worktree, agentName: agentNameFor(key), notified: {},
     };
     this.state.runs[key] = run; saveState(this.state);
@@ -270,7 +284,7 @@ class LinearHerd {
       const label = `${key} ${issue.title}`.slice(0, 48);
       let ws;
       if (rule.worktree === 'herdr') {
-        ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.branch, label });
+        ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `linear/${slug}`, label });
         run.worktreePath = ws.path;
       } else {
         ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { LINEAR_ISSUE: key } });
@@ -295,6 +309,8 @@ class LinearHerd {
       // main checkout does not work when Claude runs in a worktree.
       const workDir = run.worktreePath || await this.agentCwd(run.agentName, rule);
       run.workDir = workDir;
+      // Settle the branch before the brief is rendered and before Linear is told: both quote it.
+      this.settleBranch(key, run, rule, workDir);
       run.dir = path.join(workDir, '.linear-herd', 'state', 'runs', key);
       run.resultPath = path.join(run.dir, 'result.json');
       fs.mkdirSync(run.dir, { recursive: true });
@@ -341,6 +357,34 @@ class LinearHerd {
       await sleep(1000);
     }
     return last;
+  }
+
+  /**
+   * Reconcile the branch we wanted with the branch that exists, and record the truth in run.branch.
+   *
+   * In "claude" mode the worktree is created by `claude --worktree <slug>`, which names the branch
+   * itself — so the only way to get the name we want is to rename onto it, and the only way to know
+   * the name is to ask git. Renaming is safe here: this runs before the agent is prompted, so the
+   * branch has no commits of ours and no upstream. Anything that goes wrong is a log line, never a
+   * failed run — a run on an unexpected branch name is fine, a run whose brief lies is not.
+   *
+   * The one thing it must never do is rename a branch in the maintainer's own checkout. `agentCwd`
+   * falls back to the repo root when Claude has not moved into a worktree before its timeout, so a
+   * workDir equal to the repo is read but never renamed.
+   */
+  settleBranch(key, run, rule, workDir) {
+    if (rule.worktree === 'none') { run.branch = null; return null; }
+    if (path.resolve(workDir) === path.resolve(rule.repo)) log(`${key}: no worktree of its own; leaving the branch in ${workDir} alone`);
+    const { branch, action, from, want } = reconcileBranch({ git, cwd: workDir, want: run.wantBranch, repo: rule.repo });
+    run.branch = branch;
+    saveState(this.state);
+    if (action === 'renamed') log(`${key}: branch ${from} → ${branch}`);
+    else if (action === 'taken') log(`${key}: branch ${want} already exists, staying on ${branch}`);
+    else if (action === 'failed') log(`${key}: could not rename ${branch} → ${want}, staying on ${branch}`);
+    else if (action === 'unreadable') log(`${key}: no branch readable in ${workDir}; the brief will not name one`);
+    else if (action === 'detached') log(`${key}: ${workDir} is on a detached HEAD; the brief will not name a branch`);
+    else log(`${key}: branch ${branch}`);
+    return branch;
   }
 
   async startAgentWithRetry(opts) {
