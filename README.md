@@ -23,8 +23,13 @@ your-repo/
 ## Install
 
 ```bash
-git clone git@github.com:jmwind/linear-herd.git ~/Code/linear-herd
-cd ~/Code/linear-herd && npm link        # puts `linear-herd` on your PATH
+npm install -g github:jmwind/linear-herd     # puts `linear-herd` on your PATH; rerun to update
+```
+
+Pin a release with `github:jmwind/linear-herd#v0.1.0`. To hack on it instead:
+
+```bash
+git clone git@github.com:jmwind/linear-herd.git && cd linear-herd && npm link
 ```
 
 Requires Node 22+, the `herdr` CLI with its server running, `claude` on PATH and logged in, and
