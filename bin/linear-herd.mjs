@@ -47,11 +47,23 @@ function findRepoRoot(cwd) {
 
 // ---------------------------------------------------------------- utilities
 
-function ts() { return new Date().toISOString().replace('T', ' ').slice(0, 19); }
+function ts() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
+function hms() { return new Date().toTimeString().slice(0, 8); }
+const TTY = process.stdout.isTTY;
+let liveLine = false;
+/** An event: its own line, on screen and in the log file. Clears the live heartbeat line first. */
 function log(...a) {
   const line = `[${ts()}] ${a.join(' ')}`;
+  if (liveLine && TTY) { process.stdout.write('\r\x1b[2K'); liveLine = false; }
   console.log(line);
   try { fs.mkdirSync(LOG_DIR, { recursive: true }); fs.appendFileSync(path.join(LOG_DIR, 'linear-herd.log'), line + '\n'); } catch { /* ignore */ }
+}
+/** The heartbeat: one line that is overwritten in place on a TTY, printed every 10th time otherwise. */
+let heartbeats = 0;
+function live(text) {
+  heartbeats++;
+  if (TTY) { process.stdout.write(`\r\x1b[2K${text}`); liveLine = true; }
+  else if (heartbeats % 10 === 1) console.log(text);
 }
 function readJson(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } }
 function writeJson(p, v) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(v, null, 2) + '\n'); }
@@ -200,21 +212,34 @@ class LinearHerd {
         try { ok = rule.compiled.test(issue, ctx); } catch (e) { log(`rule ${rule.name}: ${e.message}`); }
         if (!ok) continue;
         const why = alreadyTaken(issue, rule, viewer);
-        if (why) { if (!this.warned?.has(issue.identifier)) { (this.warned ??= new Set()).add(issue.identifier); log(`${issue.identifier} matches ${rule.name} but is skipped: ${why}`); } break; }
+        if (why) { this.warnOnce(`taken:${issue.identifier}`, `${issue.identifier} matches ${rule.name} but is skipped: ${why}`); break; }
         candidates.push({ issue, rule }); break;
       }
     }
     // urgent first, then oldest first
     candidates.sort((a, b) => (prio(a.issue) - prio(b.issue)) || (Date.parse(a.issue.createdAt) - Date.parse(b.issue.createdAt)));
-    const picked = [];
+    const picked = []; const waiting = [];
     for (const c of candidates) {
-      if (this.runningCount() >= this.cfg.maxConcurrent) { log(`global cap ${this.cfg.maxConcurrent} reached; ${c.issue.identifier} waits`); break; }
-      if (this.runningCount(c.rule.name) >= c.rule.maxConcurrent) { log(`rule ${c.rule.name} cap ${c.rule.maxConcurrent} reached; ${c.issue.identifier} waits`); continue; }
+      if (this.runningCount() >= this.cfg.maxConcurrent) { waiting.push(c.issue.identifier); this.warnOnce(`cap:${c.issue.identifier}`, `${c.issue.identifier} matches but waits: global cap ${this.cfg.maxConcurrent} reached`); continue; }
+      if (this.runningCount(c.rule.name) >= c.rule.maxConcurrent) { waiting.push(c.issue.identifier); this.warnOnce(`cap:${c.issue.identifier}`, `${c.issue.identifier} matches but waits: rule ${c.rule.name} cap ${c.rule.maxConcurrent} reached`); continue; }
       if (this.dry) { log(`DRY would pick ${c.issue.identifier} "${c.issue.title}" via rule ${c.rule.name}`); continue; }
       try { await this.pickUp(c.issue, c.rule); picked.push(c.issue.identifier); }
       catch (e) { log(`pickup ${c.issue.identifier} failed: ${e.message}`); }
     }
-    return { scanned: issues.length, candidates: candidates.length, picked };
+    return { scanned: issues.length, candidates: candidates.length, picked, waiting };
+  }
+
+  warnOnce(key, msg) { (this.warned ??= new Set()); if (!this.warned.has(key)) { this.warned.add(key); log(msg); } }
+
+  /** "DEV-12 w3 working · DEV-15 w4 blocked" for the heartbeat and `status`. */
+  async runningSummary() {
+    const parts = [];
+    for (const [key, run] of Object.entries(this.state.runs)) {
+      if (run.status !== 'running') continue;
+      const a = await this.herdr.agentGet(run.agentName).catch(() => null);
+      parts.push(`${key} ${run.workspaceId || '?'} ${a?.agent_status || 'gone'}`);
+    }
+    return parts;
   }
 
   async pickUp(issue, rule) {
@@ -355,23 +380,27 @@ class LinearHerd {
       }
       if (st === 'timeout') continue;
       if (st === 'blocked') {
+        log(`${key}: blocked — waiting for approval or input in ${run.workspaceId}`);
         if (!run.notified.blocked) {
           run.notified.blocked = true; saveState(this.state);
           const tail = await this.tail(name, 12);
           await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is waiting for approval or input in herdr workspace \`${run.workspaceId}\`.${tail}`, 'request');
         }
-        await this.herdr.waitAgent(name, { until: ['working', 'idle', 'done'], timeoutMs: 6 * 3600e3 });
+        const next = await this.herdr.waitAgent(name, { until: ['working', 'idle', 'done'], timeoutMs: 6 * 3600e3 });
+        log(`${key}: unblocked → ${next}`);
         run.notified.blocked = false;
         continue;
       }
       if (st === 'idle' || st === 'done' || st === 'unknown') {
         // Claude finished a turn without writing result.json — probably asked a question in chat.
+        log(`${key}: ${st} without a result — probably asking a question in ${run.workspaceId}`);
         if (!run.notified.idle) {
           run.notified.idle = true; saveState(this.state);
           const tail = await this.tail(name, 15);
           await this.report(key, rule, rule.onIdle, `💬 The agent for ${key} stopped without a result and is probably asking a question. Answer it in herdr workspace \`${run.workspaceId}\`.${tail}`, 'request');
         }
         await this.herdr.waitAgent(name, { until: ['working'], timeoutMs: 6 * 3600e3 });
+        log(`${key}: working again`);
         run.notified.idle = false;
         continue;
       }
@@ -439,13 +468,25 @@ class LinearHerd {
   async loop() {
     log(`linear-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
     for (const r of this.cfg.rules) log(`  rule ${r.name}${r.enabled === false ? ' (disabled)' : ''}: ${r.match}  →  ${r.repo}`);
+    log(`  guards: claim label ${this.cfg.defaults.claimLabel || 'off'}, skip issues assigned to others: ${this.cfg.defaults.skipIfAssignedToOthers ? 'on' : 'off'}; caps: ${this.cfg.maxConcurrent} total`);
+    const who = await this.linear.me().then((u) => u.email).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
+    log(`  Linear: ${who} · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
     await this.resume();
     let nextUpdateCheck = Date.now() + 24 * 3600e3; // startup already checked
+    let polls = 0;
     for (;;) {
+      polls++;
+      let summary;
       try {
         const r = await this.pollOnce();
-        if (r.picked.length) log(`poll: ${r.scanned} open issues, ${r.candidates} matched, picked ${r.picked.join(', ')}`);
-      } catch (e) { log(`poll failed: ${e.message}`); }
+        if (r.picked.length) log(`poll #${polls}: ${r.scanned} open issues, ${r.candidates} matched, picked ${r.picked.join(', ')}`);
+        const running = await this.runningSummary();
+        summary = `${hms()} poll #${polls} · ${r.scanned} open · ${r.candidates} matched · ${r.picked.length} picked${r.waiting.length ? ` · ${r.waiting.length} waiting for a slot` : ''} · running ${running.length}${running.length ? `: ${running.join(' · ')}` : ''} · next in ${this.cfg.pollSeconds}s`;
+      } catch (e) {
+        this.warnOnce(`poll:${e.message}`, `poll #${polls} failed: ${e.message} (further identical failures show only in the live line)`);
+        summary = `${hms()} poll #${polls} FAILED (${e.message.slice(0, 60)}) · retry in ${this.cfg.pollSeconds}s`;
+      }
+      live(summary);
       if (Date.now() >= nextUpdateCheck) { nextUpdateCheck = Date.now() + 24 * 3600e3; await updateReminder({ notify: true }); }
       await sleep(this.cfg.pollSeconds * 1000);
     }
@@ -518,8 +559,14 @@ async function main(argv) {
   if (cmd === 'status') {
     const s = loadState();
     const rows = Object.entries(s.runs);
-    if (!rows.length) { console.log('no runs'); return; }
-    for (const [k, r] of rows) console.log(`${k.padEnd(10)} ${r.status.padEnd(9)} ${(r.workspaceId || '').padEnd(4)} ${r.rule.padEnd(14)} ${r.startedAt.slice(0, 16)}  ${r.result?.prUrl || r.error || ''}  ${r.title || ''}`);
+    if (!rows.length) { console.log(`no runs yet in ${REPO}`); return; }
+    console.log(`${'issue'.padEnd(10)} ${'run'.padEnd(9)} ${'agent'.padEnd(8)} ${'ws'.padEnd(4)} ${'rule'.padEnd(12)} ${'started'.padEnd(16)} outcome`);
+    for (const [k, r] of rows) {
+      let agent = '-';
+      if (r.status === 'running') { const a = await herdr.agentGet(r.agentName).catch(() => null); agent = a?.agent_status || 'gone'; }
+      const outcome = r.result ? `${r.result.status}${r.result.prUrl ? ' ' + r.result.prUrl : ''}` : (r.error || '');
+      console.log(`${k.padEnd(10)} ${r.status.padEnd(9)} ${agent.padEnd(8)} ${(r.workspaceId || '').padEnd(4)} ${r.rule.padEnd(12)} ${r.startedAt.slice(0, 16)} ${outcome}  ${r.title || ''}`);
+    }
     return;
   }
   if (cmd === 'reset') {

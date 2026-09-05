@@ -4,7 +4,7 @@ const ENDPOINT = 'https://api.linear.app/graphql';
 
 export class LinearClient {
   constructor(apiKey, { fetchImpl = fetch } = {}) {
-    if (!apiKey) throw new Error('LINEAR_API_KEY is not set (put it in ~/.herdr-custom/.env)');
+    if (!apiKey) throw new Error('LINEAR_API_KEY is not set — put it in the repository .env.local (see .env.example)');
     this.apiKey = apiKey;
     this.fetch = fetchImpl;
     this.viewer = null;

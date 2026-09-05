@@ -116,6 +116,24 @@ Leave that pane alone; the herdr server keeps it alive when you detach. Every is
 becomes its own workspace in the sidebar, labelled with the issue key, with Claude's status
 (working / blocked / done) shown by herdr. Step into any of them and talk to the agent.
 
+### What the pane shows
+
+A startup banner (version, repo, rules, guards, Linear user, herdr connection), then one **live
+line** that is rewritten after every poll:
+
+```
+14:32:10 poll #48 · 47 open · 1 matched · 0 picked · running 2: DEV-12 w3 working · DEV-15 w4 blocked · next in 30s
+```
+
+Anything that *happens* gets its own timestamped line above it and goes to
+`.linear-herd/state/logs/linear-herd.log`: an issue picked up (with workspace and working tree), an
+issue that matched but was skipped and why (once per issue), an agent blocking on a dialog or
+going idle without a result, unblocking, finishing with its status and PR, a failed poll. When
+stdout is not a terminal (pm2, a log file) the live line is printed every tenth poll instead.
+
+`linear-herd status` from another pane prints the same picture as a table, with each running
+agent's live herdr state.
+
 ## The rule language
 
 ```
