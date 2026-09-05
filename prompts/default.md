@@ -7,7 +7,7 @@ the owner will read the Linear issue and the PR later. Work end to end and leave
 - Issue: {{url}}
 - Team: {{team}} · Project: {{project}} · Priority: {{priority}} · Labels: {{labels}}
 - Repository: `{{repo}}` (you were started in it; worktree mode: {{worktreeMode}})
-- Expected branch: `{{branch}}`
+- Branch: `{{branch}}` — already created and checked out for you; commit on it, do not create another
 - Run directory: `{{runDir}}`
 - **Result file you must write when finished: `{{resultPath}}`**
 
@@ -26,9 +26,10 @@ the owner will read the Linear issue and the PR later. Work end to end and leave
 ## How to work
 
 1. **Orient.** Read the repository's `AGENTS.md` / `CLAUDE.md` and whatever it tells you to read
-   first. Its rules override anything generic here. Confirm you are on branch `{{branch}}` in a
-   worktree (run `git status` and `git worktree list`); if you are on `main`, stop and create a
-   worktree before editing anything.
+   first. Its rules override anything generic here. Confirm with `git status` and `git worktree list`
+   that you are in a worktree on `{{branch}}`; if you are on `main`, stop and create a worktree
+   before editing anything. If the branch differs from the one named above, work on the one you are
+   actually on and say so in the result's `branch` field — never switch branches to match the brief.
 2. **Understand before editing.** Reproduce the problem or locate the exact code the issue is
    about. If the issue is ambiguous in a way that would produce materially different work, do the
    parts that are not ambiguous, then write the result file with status `needs_human` and your
@@ -38,7 +39,8 @@ the owner will read the Linear issue and the PR later. Work end to end and leave
    for one.
 4. **Gate it.** Run the repository's scoped checks for what you touched (the repo brief says which).
    Never weaken a check to go green. Fix failures or report them.
-5. **Commit and open a PR.** Branch `{{branch}}`, one or a few well-described commits. Title the PR
+5. **Commit and open a PR.** You are already on `{{branch}}` — commit there, one or a few
+   well-described commits, and push it with `git push -u origin HEAD`. Title the PR
    with the issue key, e.g. `{{identifier}}: <what changed>`. In the body: what and why, how you
    tested, and the issue URL. Use `gh pr create`. **Do not merge.** Review and merge are a human's job.
 6. **Write the result file** — this is how linear-herd knows you are done and reports back to Linear.
