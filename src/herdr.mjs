@@ -52,6 +52,10 @@ export class Herdr {
     return this.run(['workspace', 'close', workspaceId]);
   }
 
+  async renameWorkspace(workspaceId, label) {
+    return this.run(['workspace', 'rename', workspaceId, label]);
+  }
+
   /**
    * Start an agent in an existing shell pane. Resolves when herdr sees it ready.
    * `agentArgs` are passed to the agent binary after `--`.

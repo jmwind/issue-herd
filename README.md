@@ -110,7 +110,9 @@ herdr tab create --label linear-herd --cwd "$PWD" --no-focus
 herdr pane run <pane-id> "linear-herd"
 ```
 
-One watcher per repository. Run several in separate panes if you have several repos.
+One watcher per repository. Run several in separate panes if you have several repos. When the
+watcher starts inside herdr it renames its own workspace to `<name>Watch` (`name` from the config,
+default: the repo folder name) so it is easy to spot in the sidebar.
 
 Leave that pane alone; the herdr server keeps it alive when you detach. Every issue it picks up
 becomes its own workspace in the sidebar, labelled with the issue key, with Claude's status
@@ -166,6 +168,9 @@ tighter than `or`.
 
 ```jsonc
 {
+  "name": "myapp",            // what this watcher is called. The herdr workspace it runs in is renamed
+                              // "<name>Watch" (here: myappWatch) at startup so it is easy to find in the
+                              // sidebar. Default: the repo folder name
   "pollSeconds": 30,          // Linear poll interval
   "lookbackDays": 30,         // only consider issues updated in this window
   "maxConcurrent": 3,         // global cap on running agents
