@@ -37,6 +37,11 @@ linear-herd update
 Same as rerunning the install; it prints the old and new version. (`npm update -g` does not
 reliably refresh packages installed from a git URL, so use this.)
 
+You will not have to remember: every command checks GitHub for a newer version and prints one
+reminder line if there is one, and the running watcher re-checks once a day and also sends a herdr
+notification. The check is a 4-second fetch of `package.json` on `main`, silent when offline. Set
+`LINEAR_HERD_NO_UPDATE_CHECK=1` to turn it off.
+
 ## Release a change (maintainers)
 
 Edit, commit as usual, then:

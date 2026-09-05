@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { compile } from '../src/expr.mjs';
 import { LinearClient } from '../src/linear.mjs';
 import { Herdr, agentNameFor } from '../src/herdr.mjs';
+import { newerVersion } from '../src/version.mjs';
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = findRepoRoot(process.cwd());
@@ -439,11 +440,13 @@ class LinearHerd {
     log(`linear-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
     for (const r of this.cfg.rules) log(`  rule ${r.name}${r.enabled === false ? ' (disabled)' : ''}: ${r.match}  →  ${r.repo}`);
     await this.resume();
+    let nextUpdateCheck = Date.now() + 24 * 3600e3; // startup already checked
     for (;;) {
       try {
         const r = await this.pollOnce();
         if (r.picked.length) log(`poll: ${r.scanned} open issues, ${r.candidates} matched, picked ${r.picked.join(', ')}`);
       } catch (e) { log(`poll failed: ${e.message}`); }
+      if (Date.now() >= nextUpdateCheck) { nextUpdateCheck = Date.now() + 24 * 3600e3; await updateReminder({ notify: true }); }
       await sleep(this.cfg.pollSeconds * 1000);
     }
   }
@@ -484,6 +487,15 @@ function init() {
 const PKG = readJson(path.join(PKG_DIR, 'package.json'), { version: '0.0.0', repository: {} });
 const INSTALL_SPEC = 'github:jmwind/linear-herd';
 
+/** Print a one-line reminder if GitHub main has a newer version. Quiet otherwise. */
+async function updateReminder({ notify = false } = {}) {
+  const latest = await newerVersion(PKG.version);
+  if (!latest) return false;
+  log(`⬆ linear-herd ${latest} is available (you have ${PKG.version}) — run: linear-herd update`);
+  if (notify) await new Herdr().notify('linear-herd update available', `${PKG.version} → ${latest}: run linear-herd update`);
+  return true;
+}
+
 function update() {
   console.log(`linear-herd ${PKG.version} → installing latest from ${INSTALL_SPEC} …`);
   execFileSync('npm', ['install', '-g', INSTALL_SPEC], { stdio: 'inherit' });
@@ -500,6 +512,7 @@ async function main(argv) {
   const cmd = argv[0] || 'run';
   if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no ${path.relative(process.cwd(), CONFIG_PATH) || CONFIG_PATH} — cd into the repo you want to work on and run \`linear-herd init\``);
   const cfg = loadConfig();
+  if (cmd !== 'smoke') await updateReminder();
   const herdr = new Herdr({ log: (m) => process.env.LINEAR_HERD_DEBUG && log('  $', m) });
 
   if (cmd === 'status') {
