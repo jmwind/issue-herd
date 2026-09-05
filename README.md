@@ -23,10 +23,31 @@ your-repo/
 ## Install
 
 ```bash
-npm install -g github:jmwind/linear-herd     # puts `linear-herd` on your PATH; rerun to update
+npm install -g github:jmwind/linear-herd
 ```
 
-Pin a release with `github:jmwind/linear-herd#v0.1.0`. To hack on it instead:
+That puts `linear-herd` on your PATH. `linear-herd --version` shows what you have.
+
+## Update
+
+```bash
+linear-herd update
+```
+
+Same as rerunning the install; it prints the old and new version. (`npm update -g` does not
+reliably refresh packages installed from a git URL, so use this.)
+
+## Release a change (maintainers)
+
+Edit, commit as usual, then:
+
+```bash
+npm run release
+```
+
+That runs the tests, bumps the patch version in `package.json`, commits it, tags `vX.Y.Z`, and
+pushes commits and tags. Everyone picks it up with `linear-herd update`. Use
+`npm run release:minor` for a feature. To hack on the tool without installing:
 
 ```bash
 git clone git@github.com:jmwind/linear-herd.git && cd linear-herd && npm link

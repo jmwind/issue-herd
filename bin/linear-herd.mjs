@@ -10,6 +10,8 @@
 //   linear-herd reset <KEY>     forget a run so the issue can be picked up again
 //   linear-herd smoke           end-to-end test against herdr with a fake issue (no Linear)
 //   linear-herd init            scaffold .linear-herd/ in this repo
+//   linear-herd update          reinstall the latest version from GitHub
+//   linear-herd --version
 //
 // Run it from inside the git repository it should work on. Everything is project-local:
 //   <repo>/.linear-herd/config.json        rules and defaults (committed)
@@ -434,7 +436,7 @@ class LinearHerd {
   }
 
   async loop() {
-    log(`linear-herd watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
+    log(`linear-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
     for (const r of this.cfg.rules) log(`  rule ${r.name}${r.enabled === false ? ' (disabled)' : ''}: ${r.match}  →  ${r.repo}`);
     await this.resume();
     for (;;) {
@@ -479,9 +481,21 @@ function init() {
   console.log(`\nnext: add LINEAR_API_KEY to ${path.join(REPO, '.env.local')}, edit .linear-herd/config.json and instructions.md, then \`linear-herd match "label:ai"\``);
 }
 
+const PKG = readJson(path.join(PKG_DIR, 'package.json'), { version: '0.0.0', repository: {} });
+const INSTALL_SPEC = 'github:jmwind/linear-herd';
+
+function update() {
+  console.log(`linear-herd ${PKG.version} → installing latest from ${INSTALL_SPEC} …`);
+  execFileSync('npm', ['install', '-g', INSTALL_SPEC], { stdio: 'inherit' });
+  const now = execFileSync('linear-herd', ['--version'], { encoding: 'utf8' }).trim();
+  console.log(`now ${now}`);
+}
+
 async function main(argv) {
+  if (argv[0] === '--version' || argv[0] === '-V' || argv[0] === 'version') { console.log(PKG.version); return; }
+  if (argv[0] === 'update' || argv[0] === 'upgrade') return update();
   if ((argv[0] || '') === 'init') return init();
-  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 20).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
+  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 22).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
   loadEnv();
   const cmd = argv[0] || 'run';
   if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no ${path.relative(process.cwd(), CONFIG_PATH) || CONFIG_PATH} — cd into the repo you want to work on and run \`linear-herd init\``);
