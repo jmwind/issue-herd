@@ -85,6 +85,8 @@ function loadEnvFile(file) {
 function slugify(s, max = 40) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/g, '');
 }
+/** The sidebar label for the watcher's own herdr workspace. */
+function watchLabel(name) { return `${name}Watch`; }
 function expandTilde(p) { return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p; }
 /** Resolve a config path: ~ and absolute as-is; relative first against <repo>/.linear-herd, then the package. */
 function expand(p) {
@@ -105,6 +107,7 @@ function git(args, cwd) {
 // ---------------------------------------------------------------- config
 
 const DEFAULTS = {
+  name: null,          // what this watcher is called; its herdr workspace is labelled "<name>Watch". Default: the repo folder name
   pollSeconds: 30,
   lookbackDays: 30,
   maxConcurrent: 3,
@@ -137,6 +140,7 @@ function loadConfig() {
   const raw = readJson(CONFIG_PATH, null);
   if (!raw) throw new Error(`no config at ${CONFIG_PATH}`);
   const cfg = { ...DEFAULTS, ...raw, defaults: { ...DEFAULTS.defaults, ...(raw.defaults || {}) } };
+  cfg.name = String(cfg.name || path.basename(REPO)).trim() || 'linear-herd';
   cfg.rules = (raw.rules || []).map((r, i) => {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
     const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
@@ -509,12 +513,22 @@ class LinearHerd {
     }
   }
 
+  /** Rename the herdr workspace this watcher runs in to "<name>Watch" so it is easy to find in the sidebar. */
+  async labelOwnWorkspace() {
+    const id = process.env.HERDR_WORKSPACE_ID;
+    if (!id) return;
+    const label = watchLabel(this.cfg.name);
+    try { await this.herdr.renameWorkspace(id, label); log(`  workspace ${id} labelled "${label}"`); }
+    catch (e) { log(`  could not label workspace ${id} "${label}": ${e.message}`); }
+  }
+
   async loop() {
     log(`linear-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
     for (const r of this.cfg.rules) log(`  rule ${r.name}${r.enabled === false ? ' (disabled)' : ''}: ${r.match}  →  ${r.repo}`);
     log(`  guards: claim label ${this.cfg.defaults.claimLabel || 'off'}, skip issues assigned to others: ${this.cfg.defaults.skipIfAssignedToOthers ? 'on' : 'off'}; caps: ${this.cfg.maxConcurrent} total`);
     const who = await this.linear.me().then((u) => u.email).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
     log(`  Linear: ${who} · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
+    await this.labelOwnWorkspace();
     await this.resume();
     let nextUpdateCheck = Date.now() + 24 * 3600e3; // startup already checked
     let polls = 0;
