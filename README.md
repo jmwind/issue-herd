@@ -78,8 +78,8 @@ missing `.gitignore`. Then:
 
 1. Linear → Settings → Security & access → **Personal API keys** → New key. Put it in the repo's
    `.env.local` (or `.env`) as `LINEAR_API_KEY=lin_api_...`. The process environment wins over both.
-2. In Linear, create the labels your rules use: the trigger label (e.g. `ai`) and the claim label
-   (`herdr` by default).
+2. In Linear, create the trigger label your rules use (e.g. `ai`). The claim label (`herdr` by
+   default) is created for you, as a workspace label, the first time it is needed.
 3. Edit `.linear-herd/config.json` (the rules) and `.linear-herd/instructions.md` (what the agent
    must know about this repo: checks to run, things never to run, branch and PR conventions, when
    to stop and ask). Commit both.
@@ -231,8 +231,8 @@ logs which keys are overridden at startup, and edits to it are picked up live li
 }
 ```
 
-The claim label must exist in Linear (create it there first). With a different claim label per
-machine, the pickup comment marker is what stops a second machine from taking an issue this one
+A claim label that does not exist yet is created in Linear on first use. With a different claim
+label per machine, the pickup comment marker is what stops a second machine from taking an issue this one
 already claimed, so keep `onPickup.comment` on.
 
 `state` values in `onPickup`/`onDone` are matched against the team's workflow by name, then by
@@ -301,9 +301,12 @@ workspace and open the port in your browser.
   retries three times. A slow shell init (`nvm` in `.zshrc`) is the usual cause.
 - Claude never goes `working` after the prompt — open the workspace; it is probably sitting on
   the trust-this-folder dialog for a new worktree. Answer it once per repo.
-- Re-run an issue: remove the `herdr` claim label in Linear, delete the pickup comment if you want
-  a clean thread, then `linear-herd reset ENG-123`. It will be picked up on the next poll if the
-  rule still matches.
+- A pickup that failed (`linear-herd status` shows `failed`) is retried by itself: the claim label
+  is handed back, and the next time the issue changes in Linear (an edit, a state change, a label)
+  it is a candidate again. Fix what the log complained about and touch the issue.
+- Re-run an issue that finished or stopped: remove the `herdr` claim label in Linear, delete the
+  pickup comment if you want a clean thread, then `linear-herd reset ENG-123`. It will be picked
+  up on the next poll if the rule still matches.
 - `no .linear-herd/config.json` — you are not inside a repository that has been set up; `cd` into
   it (any subdirectory works, the git top level is used) or run `linear-herd init`.
 - `LINEAR_HERD_DEBUG=1` logs every herdr command.
