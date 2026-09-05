@@ -1,0 +1,6 @@
+node_modules/
+.env
+state.json
+runs/
+logs/
+.DS_Store

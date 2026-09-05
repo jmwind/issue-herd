@@ -1,0 +1,27 @@
+{
+  "pollSeconds": 30,
+  "lookbackDays": 30,
+  "maxConcurrent": 3,
+  "defaults": {
+    "worktree": "claude",
+    "permissionMode": "acceptEdits",
+    "claudeArgs": [],
+    "maxConcurrent": 2,
+    "prompt": "prompts/default.md",
+    "claimLabel": "herdr",
+    "skipIfAssignedToOthers": true,
+    "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
+    "onDone": { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
+    "onBlocked": { "comment": true, "notify": true },
+    "onIdle": { "comment": true, "notify": true }
+  },
+  "rules": [
+    {
+      "name": "my-repo",
+      "match": "label:ai and team:ENG and not state:started and not state:triage",
+      "repo": "~/Code/my-repo",
+      "maxConcurrent": 2,
+      "instructions": "Repo-specific guidance appended to the brief: which checks to run, what never to run, branch and PR conventions, when to stop and ask."
+    }
+  ]
+}
