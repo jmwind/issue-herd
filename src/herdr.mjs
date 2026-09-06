@@ -164,6 +164,30 @@ export class Herdr {
 /** herdr's not-found codes are per noun: `agent_not_found`, `pane_not_found`, ... */
 export function isNotFound(err) { return /(^|_)not_found$/.test(err?.code || ''); }
 
+/**
+ * herdr refuses to type into an agent that is sitting on an approval or question dialog: `agent
+ * prompt` answers `agent_blocked` and sends nothing. The prompt is not lost, it is not yet
+ * deliverable — the caller should keep it and try again once the agent takes input.
+ */
+export function isBlocked(err) { return err?.code === 'agent_blocked'; }
+
+/**
+ * Agent names are unique across the herdr server, so a second `agent start` under a name that is
+ * already running is refused with `agent_name_taken`. For us that is never a failure: the agent it
+ * names is the session for this issue, already up.
+ */
+export function isNameTaken(err) { return err?.code === 'agent_name_taken'; }
+
+/** Where an existing agent sits, in the shape the workspace calls return. */
+export function agentPlacement(agent) {
+  return {
+    workspaceId: agent?.workspace_id,
+    tabId: agent?.tab_id,
+    paneId: agent?.pane_id,
+    cwd: agent?.foreground_cwd || agent?.cwd || null,
+  };
+}
+
 function pickIds(result) {
   const ws = result.workspace || {};
   const tab = result.tab || {};

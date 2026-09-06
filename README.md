@@ -385,6 +385,9 @@ whatever your rule says (`not state:started` excludes anything already In Progre
    and follow it"`. The brief and `result.json` live inside Claude's own working tree (gitignored)
    because a path in the main checkout triggers permission dialogs from a worktree; a copy is
    archived under the watcher's `.issue-herd/state/runs/<KEY>/` when the run finishes.
+   If Claude comes up on a dialog of its own — the trust prompt in a directory it has not seen —
+   herdr will not type into it. That is not a failed run: the prompt is kept, you get the ✋ comment
+   and notification, and the supervisor sends the brief the moment you answer the dialog.
 6. Comment on the issue, assign it to you, move it to In Progress.
 7. A supervisor waits on `herdr agent wait`. When Claude writes `runs/<KEY>/result.json`
    (`pr_open | needs_human | nothing_to_do | failed`, PR URL, summary, testing notes) the watcher
@@ -402,7 +405,9 @@ whatever your rule says (`not state:started` excludes anything already In Progre
 
 If you restart the watcher, it re-attaches to agents that are still alive, finalizes any run whose
 result file appeared while it was down, and goes on watching the pull requests it had not seen
-merged yet.
+merged yet. A pickup for an issue whose session is still running — after `issue-herd reset <KEY>`,
+or a retry of a start that failed late — reuses that session instead of building a second workspace
+beside it, so nothing is left adrift and you keep the pane you have been typing into.
 
 ### When the PR is merged
 
