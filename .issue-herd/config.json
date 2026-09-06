@@ -1,5 +1,5 @@
 {
-  "tracker": "linear",
+  "tracker": "github",
   "pollSeconds": 30,
   "lookbackDays": 30,
   "maxConcurrent": 3,
@@ -15,12 +15,12 @@
     "skipIfAssignedToOthers": true,
     "onPickup": {
       "comment": true,
-      "state": "In Progress",
+      "state": null,
       "assignToMe": true
     },
     "onDone": {
       "comment": true,
-      "state": "In Review",
+      "state": null,
       "notify": true,
       "closeWorkspace": false
     },
@@ -36,7 +36,7 @@
   "rules": [
     {
       "name": "ai-label",
-      "match": "label:ai and team:ENG and not state:started and not state:triage"
+      "match": "label:ai"
     }
   ]
 }

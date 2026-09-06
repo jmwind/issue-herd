@@ -1,10 +1,10 @@
 // Branch naming for a run.
 //
-// One run, one branch name, true everywhere: the brief the agent reads, the pickup comment on
-// Linear, and the PR it opens. That used to be a guess. In `worktree: "claude"` mode linear-herd
+// One run, one branch name, true everywhere: the brief the agent reads, the pickup comment on the
+// issue, and the PR it opens. That used to be a guess. In `worktree: "claude"` mode issue-herd
 // does not create the branch — `claude --worktree <slug>` does, and it names it by its own scheme
-// (`worktree-<slug>`), so the brief promised a `claude/<slug>` that never existed, while Linear's
-// own `branchName` was a third name again.
+// (`worktree-<slug>`), so the brief promised a `claude/<slug>` that never existed, while the
+// tracker's own `branchName` was a third name again.
 //
 // So: render the name we *want* from a template, hand it to whatever creates the worktree when we
 // can (herdr mode), rename to it when we cannot (claude mode), and in both cases finish by asking
@@ -25,9 +25,9 @@ export function isValidBranchName(name) {
 }
 
 /**
- * Render a branch template ("{{linearBranchName}}", "claude/{{slug}}", …).
+ * Render a branch template ("{{issueBranchName}}", "claude/{{slug}}", …).
  * Returns null — meaning "no opinion, take what the tool made" — for an empty template, an
- * unresolved variable (the fake issue in `smoke` has no Linear branch name), or a name git would
+ * unresolved variable (the fake issue in `smoke` has no tracker branch name), or a name git would
  * reject. Never throws: a bad template must not be able to fail a run.
  */
 export function renderBranch(template, vars = {}) {
@@ -45,7 +45,7 @@ export function renderBranch(template, vars = {}) {
 /** The variables a branch template may use. */
 export function branchVars({ issue, slug }) {
   return {
-    linearBranchName: issue?.branchName || '',
+    issueBranchName: issue?.branchName || '',
     slug: slug || '',
     key: issue?.identifier ? issue.identifier.toLowerCase() : '',
     KEY: issue?.identifier || '',

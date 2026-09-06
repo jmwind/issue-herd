@@ -1,48 +1,51 @@
-# linear-herd
+# issue-herd
 
-Watches Linear and, when an issue matches one of your rules, opens a **herdr workspace**, starts
-**Claude Code** in it (worktree mode), hands it a written brief, and reports back to the Linear
-issue: picked up → waiting for you → PR open. Runs on your own machine, inside herdr, with no
-public URL and no third-party orchestrator. Zero dependencies beyond Node 22 and the `herdr` CLI.
+Watches an issue tracker (**Linear** or **GitHub Issues**) and, when an issue matches one of your
+rules, opens a **herdr workspace**, starts **Claude Code** in it (worktree mode), hands it a written
+brief, and reports back to the issue: picked up → waiting for you → PR open. Runs on your own
+machine, inside herdr, with no public URL and no third-party orchestrator. Zero dependencies beyond
+Node 22 and the `herdr` CLI.
 
-**It is project-local.** You run `linear-herd` from inside the repository it should work on. The
-rules, the repo-specific instructions for the agent, and the API key all live in that repository,
-so they are reviewed and versioned with the code:
+**It is project-local.** You run `issue-herd` from inside the repository it should work on. The
+tracker, the rules and the repo-specific instructions for the agent all live in that repository, so
+they are reviewed and versioned with the code. Your token lives with you, not in the repo:
 
 ```
 your-repo/
-├── .linear-herd/
+├── .issue-herd/
 │   ├── .gitignore           ignores state/ and config.local.json    (committed)
 │   ├── config.json          rules and defaults                      (committed)
 │   ├── config.local.json    per-machine overrides of config.json    (gitignored)
 │   ├── instructions.md      how to work in this repo, appended to every brief (committed)
 │   ├── prompts/default.md   optional override of the built-in brief template
 │   └── state/               state.json, runs/<KEY>/, logs/          (gitignored)
-├── .env.local               LINEAR_API_KEY=…                        (gitignored)
-└── .env.example             documents LINEAR_API_KEY                (committed)
+├── .env.local               LINEAR_API_KEY=… or GITHUB_TOKEN=…, if you prefer a file (gitignored)
+└── .env.example             documents that variable                 (committed)
+
+~/.config/issue-herd/credentials.json   what `issue-herd login` saved, per user, mode 600
 ```
 
 ## Install
 
 ```bash
-npm install -g github:jmwind/linear-herd
+npm install -g github:jmwind/issue-herd
 ```
 
-That puts `linear-herd` on your PATH. `linear-herd --version` shows what you have.
+That puts `issue-herd` on your PATH. `issue-herd --version` shows what you have.
 
 ## Update
 
 ```bash
-linear-herd update
+issue-herd update
 ```
 
 Same as rerunning the install; it prints the old and new version. (`npm update -g` does not
 reliably refresh packages installed from a git URL, so use this.)
 
-You will not have to remember: every command checks GitHub for a newer version and prints one
-reminder line if there is one, and the running watcher re-checks once a day and also sends a herdr
-notification. The check is a 4-second fetch of `package.json` on `main`, silent when offline. Set
-`LINEAR_HERD_NO_UPDATE_CHECK=1` to turn it off.
+You will not have to remember: the watching commands (`issue-herd`, `once`, `dry-run`, `match`,
+`status`, `reset`) check GitHub for a newer version and print one reminder line if there is one,
+and the running watcher re-checks once a day and also sends a herdr notification. The check is a 4-second fetch of `package.json` on `main`, silent when offline. Set
+`ISSUE_HERD_NO_UPDATE_CHECK=1` to turn it off.
 
 ## Release a change (maintainers)
 
@@ -52,42 +55,53 @@ Edit, commit as usual, then:
 npm run release
 ```
 
+**Rename the GitHub repository to `issue-herd` before the first release under this name.** The
+update check and `issue-herd update` both point at `jmwind/issue-herd`; until that repository
+exists they get a 404, which `newerVersion` cannot tell from "no newer version", so every install
+would silently believe it is up to date forever.
+
 That runs the tests, bumps the patch version in `package.json`, commits it, tags `vX.Y.Z`, and
-pushes commits and tags. Everyone picks it up with `linear-herd update`. Use
+pushes commits and tags. Everyone picks it up with `issue-herd update`. Use
 `npm run release:minor` for a feature. To hack on the tool without installing:
 
 ```bash
-git clone git@github.com:jmwind/linear-herd.git && cd linear-herd && npm link
+git clone git@github.com:jmwind/issue-herd.git && cd issue-herd && npm link
 ```
 
 Requires Node 22+, the `herdr` CLI with its server running, `claude` on PATH and logged in, and
-`gh` logged in for PRs. No npm dependencies.
+`gh` logged in for PRs (with GitHub Issues as the tracker, that login is also the token). No npm
+dependencies.
 
 ## Set up a repository
 
 ```bash
 cd ~/Code/your-repo
-linear-herd init
+issue-herd init
 ```
 
-`init` writes `.linear-herd/config.json` and `.linear-herd/instructions.md` from the examples, a
-`.linear-herd/.gitignore` that keeps `state/` and `config.local.json` out of git (your repo's own
-`.gitignore` is not touched), and documents `LINEAR_API_KEY` in `.env.example`. It never
+`init` asks which tracker the repo uses (or take `--tracker linear` / `--tracker github`) and
+writes `.issue-herd/config.json` and `.issue-herd/instructions.md` from the examples, a
+`.issue-herd/.gitignore` that keeps `state/` and `config.local.json` out of git (your repo's own
+`.gitignore` is not touched), and documents the token variable in `.env.example`. It never
 overwrites a file that exists, so re-running it in a repo set up by an older version adds only the
 missing `.gitignore`. Then:
 
-1. Linear → Settings → Security & access → **Personal API keys** → New key. Put it in the repo's
-   `.env.local` (or `.env`) as `LINEAR_API_KEY=lin_api_...`. The process environment wins over both.
-2. In Linear, create the trigger label your rules use (e.g. `ai`). The claim label (`herdr` by
-   default) is created for you, as a workspace label, the first time it is needed.
-3. Edit `.linear-herd/config.json` (the rules) and `.linear-herd/instructions.md` (what the agent
+1. `issue-herd login`. GitHub: if `gh` is logged in that token is used, otherwise a browser
+   sign-in. Linear: a browser sign-in when the tool has a Linear OAuth client id (see
+   [Signing in](#signing-in)), otherwise it opens the personal-API-keys page and asks you to paste
+   the key. Either way the token is saved in `~/.config/issue-herd/credentials.json`, once per
+   machine, for every repo. Prefer a file? `LINEAR_API_KEY` / `GITHUB_TOKEN` in the repo's
+   `.env.local` (or the process environment) wins over the saved token.
+2. Create the trigger label your rules use (e.g. `ai`). The claim label (`herdr` by default) is
+   created for you the first time it is needed, on either tracker.
+3. Edit `.issue-herd/config.json` (the rules) and `.issue-herd/instructions.md` (what the agent
    must know about this repo: checks to run, things never to run, branch and PR conventions, when
    to stop and ask). Commit both.
-4. Smoke-test the herdr plumbing without touching Linear (opens a workspace, starts Claude, has it
-   write the result file, finalizes): `linear-herd smoke`. Close the workspace it leaves open when
+4. Smoke-test the herdr plumbing without touching the tracker (opens a workspace, starts Claude, has it
+   write the result file, finalizes): `issue-herd smoke`. Close the workspace it leaves open when
    you have looked at it.
-5. Optional: preview what the config's rules would pick up, with no side effects: `linear-herd dry-run`.
-   To try an expression before putting it in the config: `linear-herd match "label:ai and team:ENG"`.
+5. Optional: preview what the config's rules would pick up, with no side effects: `issue-herd dry-run`.
+   To try an expression before putting it in the config: `issue-herd match "label:ai and team:ENG"`.
 
 Unit tests for the tool itself: `npm test` in this repo.
 
@@ -95,23 +109,25 @@ Unit tests for the tool itself: `npm test` in this repo.
 
 | command | what it does |
 |---|---|
-| `linear-herd` | **the watcher.** Reads `.linear-herd/config.json`, evaluates its rules against Linear every `pollSeconds`, picks up matches, supervises them. Edits to `config.json` or `instructions.md` are picked up on the next poll, no restart needed; a file that fails to load is reported once and the previous config stays in force until it is fixed. Run this one in herdr. |
-| `linear-herd once` | one poll with the config's rules, then exit (stays up while it supervises anything it picked up) |
-| `linear-herd dry-run` | the config's rules, print what would be picked up, change nothing |
-| `linear-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing; for testing a rule before adding it |
-| `linear-herd status` | tracked runs and their outcome |
-| `linear-herd reset <KEY>` | forget a run so the issue can be picked up again |
-| `linear-herd smoke` | end-to-end herdr test with a fake issue, no Linear calls |
-| `linear-herd init` | scaffold `.linear-herd/` in the current repo |
+| `issue-herd` | **the watcher.** Reads `.issue-herd/config.json`, evaluates its rules against the tracker every `pollSeconds`, picks up matches, supervises them. Edits to `config.json` or `instructions.md` are picked up on the next poll, no restart needed; a file that fails to load is reported once and the previous config stays in force until it is fixed. Run this one in herdr. |
+| `issue-herd once` | one poll with the config's rules, then exit (stays up while it supervises anything it picked up) |
+| `issue-herd dry-run` | the config's rules, print what would be picked up, change nothing |
+| `issue-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing; for testing a rule before adding it |
+| `issue-herd status` | tracked runs and their outcome |
+| `issue-herd reset <KEY>` | forget a run so the issue can be picked up again |
+| `issue-herd login [linear\|github] [--paste]` | sign in (browser when possible) and save the token for this machine; `--paste` skips straight to pasting a token |
+| `issue-herd logout [linear\|github]` | forget the saved token |
+| `issue-herd smoke` | end-to-end herdr test with a fake issue, no tracker calls |
+| `issue-herd init [--tracker linear\|github]` | scaffold `.issue-herd/` in the current repo |
 
 ## Run it in herdr
 
 From the repo directory:
 
 ```bash
-herdr tab create --label linear-herd --cwd "$PWD" --no-focus
+herdr tab create --label issue-herd --cwd "$PWD" --no-focus
 # read .result.root_pane.pane_id from the JSON, then
-herdr pane run <pane-id> "linear-herd"
+herdr pane run <pane-id> "issue-herd"
 ```
 
 One watcher per repository. Run several in separate panes if you have several repos. When the
@@ -124,20 +140,20 @@ becomes its own workspace in the sidebar, labelled with the issue key, with Clau
 
 ### What the pane shows
 
-A startup banner (version, repo, rules, guards, Linear user, herdr connection), then one **live
-line** that is rewritten after every poll:
+A startup banner (version, repo, rules, guards, the tracker account and where its token came from,
+herdr connection), then one **live line** that is rewritten after every poll:
 
 ```
 14:32:10 poll #48 · 47 open · 1 matched · 0 picked · running 2: DEV-12 w3 working · DEV-15 w4 blocked · next in 30s
 ```
 
 Anything that *happens* gets its own timestamped line above it and goes to
-`.linear-herd/state/logs/linear-herd.log`: an issue picked up (with workspace and working tree), an
+`.issue-herd/state/logs/issue-herd.log`: an issue picked up (with workspace and working tree), an
 issue that matched but was skipped and why (once per issue), an agent blocking on a dialog or
 going idle without a result, unblocking, finishing with its status and PR, a failed poll. When
 stdout is not a terminal (pm2, a log file) the live line is printed every tenth poll instead.
 
-`linear-herd status` from another pane prints the same picture as a table, with each running
+`issue-herd status` from another pane prints the same picture as a table, with each running
 agent's live herdr state.
 
 ## The rule language
@@ -153,8 +169,8 @@ assignee:me state:todo updated<1d
 | `label` | any label on the issue | `label:ai` `label:"needs review"` `label!=blocked` |
 | `project` | project name | `project:Webapp` `project:"Alpha *"` |
 | `team` | team key or name | `team:ENG` `team:Engineering` |
-| `assignee` | `me`, `none`, name, display name, email | `assignee:none` `assignee:me` |
-| `creator` | same as assignee | `creator:me` |
+| `assignee` | `me`, `none`, name, display name, email, `@login` | `assignee:none` `assignee:me` |
+| `creator` | same as assignee | `creator:me` `creator:@alex` |
 | `state` / `status` | workflow state name **or type** (`triage backlog unstarted started completed canceled`) | `state:Todo` `not state:started` |
 | `priority` | `none urgent high medium low` or 0–4; `<` `<=` `>` `>=` treat "none" as lowest | `priority:urgent` `priority<=2` |
 | `estimate` | points | `estimate<=3` |
@@ -168,6 +184,10 @@ Operators: `:` or `=` (equals, case-insensitive, `*` wildcard), `!=`, `<`, `<=`,
 Combine with `and`, `or`, `not`, parentheses; two terms side by side mean `and`. `and` binds
 tighter than `or`.
 
+The same fields work on every tracker; what they map to on GitHub is in
+[Issue trackers](#issue-trackers) (`team` is the repository, `project` the milestone, `state` is
+`open` or `closed`, `priority` comes from labels such as `P1` or `priority: high`).
+
 ## Config reference
 
 ```jsonc
@@ -175,29 +195,39 @@ tighter than `or`.
   "name": "myapp",            // what this watcher is called. The herdr workspace it runs in is renamed
                               // "<name>Watch" (here: myappWatch) at startup so it is easy to find in the
                               // sidebar. Default: the repo folder name
-  "pollSeconds": 30,          // Linear poll interval
+  "tracker": "linear",        // "linear" (default) or "github"; or an object for options, e.g.
+                              // { "type": "github", "repo": "owner/name", "prefix": "GH" }. See Issue trackers below
+  "pollSeconds": 30,          // poll interval
   "lookbackDays": 30,         // only consider issues updated in this window
   "maxConcurrent": 3,         // global cap on running agents
   "defaults": {               // every rule inherits these
-    "worktree": "claude",     // "claude": claude --worktree <slug> (Claude names the branch worktree/<slug>)
-                              // "herdr":  herdr worktree create (herdr shows it as a worktree)
-                              // "none":   pass no worktree flag. If your Claude Code settings default to
-                              //           worktree mode, Claude still creates one with a random name.
-    "branch": "{{linearBranchName}}", // what the run's branch is called. Linear's own branch name is the
-                              // default: a PR on it auto-links back to the issue. Templates may use
-                              // {{linearBranchName}}, {{slug}}, {{key}} (dev-3298), {{KEY}} (DEV-3298),
-                              // e.g. "claude/{{slug}}" or "linear/{{slug}}". In "herdr" mode it is passed
-                              // to `herdr worktree create --branch`; in "claude" mode the worktree is
-                              // renamed onto it before the agent is prompted. null accepts whatever the
-                              // tool named it. Ignored when "worktree" is "none" — that run works on the
-                              // branch the repo is already on, and renaming it would move your checkout.
-                              // Whatever happens, the brief, the Linear comment and result.json all quote
-                              // the branch `git` actually reports, never a name linear-herd hoped for.
+    "worktree": "self",       // who creates the git worktree the run works in.
+                              // "self":  issue-herd does, with one `git worktree add` on the branch below.
+                              //          The directory and the branch are settled before the agent starts,
+                              //          so nothing downstream has to discover or correct them.
+                              // "herdr": herdr worktree create (herdr shows it as a worktree)
+                              // "none":  no worktree. The run works in the checkout you started the
+                              //          watcher in, on whatever branch it is already on, and nothing is
+                              //          ever renamed. If your Claude Code settings default to worktree
+                              //          mode, Claude still makes one with a name of its own choosing.
+    "worktreeDir": ".issue-herd/worktrees",  // where "self" puts them, relative to the repo. Must stay
+                              // inside the repo, because config.json is committed and this is a path we
+                              // create directories in. `init` gitignores it.
+    "branch": "{{issueBranchName}}", // what the run's branch is called. The tracker's own branch name is the
+                              // default: Linear's auto-links a PR back to the issue, GitHub's is what its
+                              // "create a branch" button would name (7-fix-the-thing). Templates may use
+                              // {{issueBranchName}}, {{slug}}, {{key}} (dev-3298), {{KEY}} (DEV-3298),
+                              // e.g. "claude/{{slug}}" or "herd/{{slug}}". The worktree is created on this
+                              // branch, so it is right from the start. null accepts whatever git picks.
+                              // Ignored when "worktree" is "none" — that run works on the branch the repo
+                              // is already on, and renaming it would move your checkout. Whatever happens,
+                              // the brief, the pickup comment and result.json all quote the branch `git`
+                              // actually reports, never a name issue-herd hoped for.
     "permissionMode": "auto",         // claude --permission-mode. auto = unattended (the point of a watcher);
                                       // acceptEdits still asks before every command; see `claude --help`
     "claudeArgs": [],         // extra flags for claude, e.g. ["--model", "opus"]
     "maxConcurrent": 2,       // per-rule cap
-    "prompt": "prompts/default.md",   // brief template: .linear-herd/prompts/default.md if present, else the built-in
+    "prompt": "prompts/default.md",   // brief template: .issue-herd/prompts/default.md if present, else the built-in
     "instructionsFile": "instructions.md",  // repo brief appended to the prompt; "instructions" (inline string) also works
     "claimLabel": "herdr",            // label added on pickup and checked before pickup; null disables
     "skipIfAssignedToOthers": true,   // leave issues held by other people alone
@@ -213,13 +243,13 @@ tighter than `or`.
 }
 ```
 
-The repository is always the one you run `linear-herd` in (its git top level); rules do not name
+The repository is always the one you run `issue-herd` in (its git top level); rules do not name
 a repo.
 
 ### Per-machine overrides: `config.local.json`
 
-Anything that should differ between the machines running linear-herd on the same repo goes in
-`.linear-herd/config.local.json`. It is gitignored, has the same shape as `config.json`, and is
+Anything that should differ between the machines running issue-herd on the same repo goes in
+`.issue-herd/config.local.json`. It is gitignored, has the same shape as `config.json`, and is
 layered over it: top-level keys replace, `defaults` merges key by key (its `on*` objects one level
 deeper), and `rules` merge by `name` (a name that is not in `config.json` is added). The watcher
 logs which keys are overridden at startup, and edits to it are picked up live like `config.json`.
@@ -231,12 +261,89 @@ logs which keys are overridden at startup, and edits to it are picked up live li
 }
 ```
 
-A claim label that does not exist yet is created in Linear on first use. With a different claim
-label per machine, the pickup comment marker is what stops a second machine from taking an issue this one
-already claimed, so keep `onPickup.comment` on.
+A claim label that does not exist yet is created on first use — a workspace label on Linear, a
+repository label on GitHub — so a per-machine claim label like `herdr-mbp` never has to be made by
+hand. With a different claim label per machine, the pickup comment marker is what stops a second
+machine from taking an issue this one already claimed, so keep `onPickup.comment` on.
 
 `state` values in `onPickup`/`onDone` are matched against the team's workflow by name, then by
 type, so `"started"` works for any team. Set a key to `null`/`false` to skip that step.
+
+## Issue trackers
+
+`"tracker"` in `config.json` says which one. Everything else (rules, guards, the brief, the
+comments) is the same for all of them.
+
+**Linear** (`"tracker": "linear"`, the default). Issues are known by their key (`DEV-123`), the
+branch is Linear's own branch name, `state` is the team workflow, comments and state changes go to
+the issue. The claim label must exist in Linear.
+
+**GitHub Issues** (`"tracker": "github"`). The repository is the `origin` remote of the repo you run
+in; name it explicitly with `{ "type": "github", "repo": "owner/name" }`. Issues are known as `GH-7`
+(change the prefix with `"prefix"`), referenced as `#7` in PR text so `Fixes #7` closes them, and
+the default branch is `7-fix-the-thing`. Mapping:
+
+- `team` is the repository (`team:issue-herd`) and `project` is the milestone.
+- `state` is `open` or `closed`. There are no workflow states, so `init` sets `onPickup.state` and
+  `onDone.state` to `null`. Any other state name is **refused**, with an error naming what GitHub
+  has: it will not invent a label or close your issue on a guess.
+- `priority` comes from labels named `P0`–`P3` or `urgent` / `high` / `medium` / `low`
+  (`priority: high` works too). The most urgent label on the issue wins. With no such label the
+  priority is "none", so a `priority<=2` rule matches nothing in a repository that does not use them.
+- `estimate` and `cycle` are always empty, so any rule using them matches nothing.
+- `assignee` and `creator` match `@login`. An issue assigned to several people is left alone unless
+  every assignee is you.
+- The claim label is created if missing. Pull requests are never treated as issues.
+
+For GitHub Enterprise, set `ISSUE_HERD_GITHUB_HOST=ghe.corp.com` in your shell. That is deliberately
+a machine setting rather than a config key: `config.json` is committed, and this value decides where
+your token is sent, so a repository you clone may *name* the host it expects but not introduce one.
+For the same reason a repository's `.env` cannot set any `ISSUE_HERD_*` variable, and `prompt` and
+`instructionsFile` must point inside `.issue-herd/`.
+
+**Adding a tracker** is one file. Write `src/trackers/<name>.mjs` against the contract documented
+at the top of [`src/tracker.mjs`](src/tracker.mjs) — a class with `me`, `openIssues`,
+`issueByKey`, `comment`, `addLabel`, `removeLabel`, `assign`, `setState` and a static `login` —
+returning the normalized issue shape, then add it to `src/trackers/index.mjs`.
+[`github.mjs`](src/trackers/github.mjs) is the model: one read query and a few writes, no
+dependencies. `test/trackers.test.mjs` checks every registered tracker against the
+contract; `checkIssue()` tells a new tracker exactly which field it got wrong.
+
+## Signing in
+
+`issue-herd login [linear|github]` obtains a token, proves it works with a `me` call, and saves it
+in `~/.config/issue-herd/credentials.json` (mode 600). Runs before `init` too, when the tracker is
+named. `issue-herd logout` forgets it. At startup the banner says which account is in use and where
+the token came from. Lookup order:
+
+1. the environment: `LINEAR_API_KEY`, or `GITHUB_TOKEN` / `GH_TOKEN`, read from the process, then
+   `<repo>/.env.local`, then `<repo>/.env`
+2. the saved credential
+3. GitHub only: `gh auth token`, so a machine with `gh` logged in needs no login at all
+
+`login` never copies a token another tool owns: with `gh` logged in it saves nothing and re-reads
+`gh auth token` on every run, so a token `gh` rotates keeps working.
+
+How `login` gets the token, per tracker:
+
+- **GitHub**: a device-flow browser sign-in when the tool has a GitHub OAuth app client id;
+  otherwise the token `gh` is logged in with, or `gh auth login` (browser) if `gh` is present but
+  logged out; otherwise it opens the new-token page (scope `repo`) and asks you to paste the token.
+- **Linear**: a browser sign-in (authorization code + PKCE, loopback redirect on
+  `http://localhost:8497/callback`, token refreshed automatically before it expires) when the tool
+  has a Linear OAuth client id; otherwise it opens Settings → Security & access → Personal API keys
+  and asks you to paste the key. `--paste` forces the paste route on either tracker.
+
+The browser flows need an OAuth application registered with the provider, which ships as a client
+id in the code (no secret: PKCE for Linear, device flow for GitHub). Maintainers: register one,
+then set `LINEAR_CLIENT_ID` in `src/trackers/linear.mjs` (Linear → Settings → API → OAuth
+applications, callback `http://localhost:8497/callback`, public client) and `GITHUB_CLIENT_ID` in
+`src/trackers/github.mjs` (GitHub → Settings → Developer settings → OAuth Apps, enable device flow).
+Until then the same flows can be tried with the `ISSUE_HERD_LINEAR_CLIENT_ID` and
+`ISSUE_HERD_GITHUB_CLIENT_ID` environment variables, or per repository with a `clientId` in the
+tracker object. `ISSUE_HERD_OAUTH_PORT` moves the loopback port, `ISSUE_HERD_CREDENTIALS` the
+credentials file, and `ISSUE_HERD_GITHUB_HOST` names a GitHub Enterprise host. All of these are read
+from your shell only, never from a repository's `.env`.
 
 ## How it avoids double work
 
@@ -244,12 +351,13 @@ Three independent guards, checked before every pickup:
 
 1. **Claim label on the issue** (`claimLabel`, default `herdr`). Added the moment an issue is
    picked up, re-checked with a fresh fetch right before claiming. Survives restarts, a deleted
-   `state.json`, and a second machine running linear-herd. It stays on the issue after the run as
+   `state.json`, and a second machine running issue-herd. It stays on the issue after the run as
    the record that an agent worked it; remove it to let an agent take the issue again.
-2. **Pickup comment marker.** The "linear-herd picked this up" comment is also detected, so an
+2. **Pickup comment marker.** The "issue-herd picked this up" comment is also detected, so an
    issue claimed by an older version without the label is still skipped.
 3. **Assigned to someone else** (`skipIfAssignedToOthers`, default true). If a human other than
-   you holds the issue, it is theirs. `onPickup.assignToMe` makes the agent's issues yours, so the
+   you holds the issue, it is theirs. On a tracker with several assignees per issue, one other
+   person is enough: an issue shared between you and a colleague is still theirs. `onPickup.assignToMe` makes the agent's issues yours, so the
    rule of thumb is: unassigned or assigned to you means available.
 
 Plus the local `state.json`, which is what stops the same watcher re-picking during a run, and
@@ -257,25 +365,24 @@ whatever your rule says (`not state:started` excludes anything already In Progre
 
 ## How a run works
 
-1. Poll Linear for open issues; evaluate each rule; the first matching rule wins, then the guards
-   above are applied. Urgent first, then oldest first.
-2. `herdr workspace create --cwd <repo> --label "<KEY> <title>" --no-focus` (or `herdr worktree
-   create` in herdr worktree mode).
-3. `herdr agent start <key> --kind claude --pane <pane> -- --name KEY --worktree <slug> --permission-mode …`,
-   then ask herdr which directory Claude is now working in (the worktree it created).
-4. Settle the branch: ask git what the worktree is actually on and, if `branch` asks for a different
-   name and that name is free, rename onto it. This happens before the brief is written and before
-   Linear is told, so all three quote the same, existing branch.
-   Then give the worktree a herdr workspace of its own: the workspace from step 2 sits at the repo
-   root, so the sidebar would show `main`. linear-herd runs `herdr worktree open --path <worktree>`
-   (herdr shows the real branch and groups it under the repo), moves Claude's pane into it with
-   `herdr pane move`, and closes the placeholder. If you had already opened that checkout yourself,
-   Claude joins it as a second tab and your shell stays.
-5. Render the brief template into `<working tree>/.linear-herd/state/runs/<KEY>/brief.md` with the
+1. Poll the tracker for open issues; evaluate each rule; the first matching rule wins, then the
+   guards above are applied. Urgent first, then oldest first.
+2. `git worktree add -b <branch> .issue-herd/worktrees/<slug>` — issue-herd makes the worktree, on
+   the branch the rule asked for. An existing directory for that issue is reused rather than
+   duplicated, and an existing branch is attached to rather than clobbered.
+3. `herdr worktree open --path <worktree>` gives it a workspace, so the sidebar shows the run's real
+   branch and groups it under the repo. If you already had that checkout open, the run gets its own
+   workspace and your shell is left alone.
+4. `herdr agent start <key> --kind claude --pane <pane> -- --name KEY --permission-mode …` — started
+   in a pane that is already in the worktree, so no `--worktree` flag and nothing to discover
+   afterwards. issue-herd then asks git what branch the worktree is on and records the answer, which
+   is the confirmation step rather than a correction: the brief, the pickup comment and the PR all
+   quote what git reports, never a name issue-herd hoped for.
+5. Render the brief template into `<working tree>/.issue-herd/state/runs/<KEY>/brief.md` with the
    issue, comments, and your `instructions.md`, then `herdr agent prompt <key> "read the brief at …
    and follow it"`. The brief and `result.json` live inside Claude's own working tree (gitignored)
    because a path in the main checkout triggers permission dialogs from a worktree; a copy is
-   archived under the watcher's `.linear-herd/state/runs/<KEY>/` when the run finishes.
+   archived under the watcher's `.issue-herd/state/runs/<KEY>/` when the run finishes.
 6. Comment on the issue, assign it to you, move it to In Progress.
 7. A supervisor waits on `herdr agent wait`. When Claude writes `runs/<KEY>/result.json`
    (`pr_open | needs_human | nothing_to_do | failed`, PR URL, summary, testing notes) the watcher
@@ -296,17 +403,21 @@ workspace and open the port in your browser.
 
 ## Troubleshooting
 
-- `linear-herd: herdr server is not running` — start `herdr` once; the server stays up.
+- `issue-herd: herdr server is not running` — start `herdr` once; the server stays up.
 - `agent start … pane_not_ready` — the workspace shell had not reached its prompt; the watcher
   retries three times. A slow shell init (`nvm` in `.zshrc`) is the usual cause.
 - Claude never goes `working` after the prompt — open the workspace; it is probably sitting on
   the trust-this-folder dialog for a new worktree. Answer it once per repo.
-- A pickup that failed (`linear-herd status` shows `failed`) is retried by itself: the claim label
-  is handed back, and the next time the issue changes in Linear (an edit, a state change, a label)
-  it is a candidate again. Fix what the log complained about and touch the issue.
-- Re-run an issue that finished or stopped: remove the `herdr` claim label in Linear, delete the
-  pickup comment if you want a clean thread, then `linear-herd reset ENG-123`. It will be picked
-  up on the next poll if the rule still matches.
-- `no .linear-herd/config.json` — you are not inside a repository that has been set up; `cd` into
-  it (any subdirectory works, the git top level is used) or run `linear-herd init`.
-- `LINEAR_HERD_DEBUG=1` logs every herdr command.
+- A pickup that failed (`issue-herd status` shows `failed`) is retried by itself: the claim label
+  is handed back, and the next time the issue changes on the tracker (an edit, a state change, a
+  label) it is a candidate again. Fix what the log complained about and touch the issue.
+- Re-run an issue that finished or stopped: remove the `herdr` claim label on the issue, delete the
+  pickup comment if you want a clean thread, then `issue-herd reset ENG-123` (or `reset GH-7`). It
+  will be picked up on the next poll if the rule still matches.
+- `no Linear credentials` / `no GitHub credentials` — run `issue-herd login`, or put the token in
+  `.env.local`. A `401` means the token it found (the banner says where) is dead: `login` again.
+- `cannot tell which GitHub repository this is` — the `origin` remote is not on github.com; set
+  `"tracker": { "type": "github", "repo": "owner/name" }`.
+- `no .issue-herd/config.json` — you are not inside a repository that has been set up; `cd` into
+  it (any subdirectory works, the git top level is used) or run `issue-herd init`.
+- `ISSUE_HERD_DEBUG=1` logs every herdr command.

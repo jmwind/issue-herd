@@ -1,10 +1,10 @@
 {
-  "name": "linear-herd",
+  "name": "issue-herd",
   "version": "0.1.8",
-  "description": "Watch Linear; when an issue matches a rule, open a herdr workspace, run Claude Code in a worktree, brief it, and report the PR back to the issue.",
+  "description": "Watch Linear or GitHub Issues; when an issue matches a rule, open a herdr workspace, run Claude Code in a worktree, brief it, and report the PR back to the issue.",
   "type": "module",
   "bin": {
-    "linear-herd": "bin/linear-herd.mjs"
+    "issue-herd": "bin/issue-herd.mjs"
   },
   "files": [
     "bin",
@@ -19,16 +19,17 @@
   },
   "scripts": {
     "test": "node --test",
-    "smoke": "node bin/linear-herd.mjs smoke",
+    "smoke": "node bin/issue-herd.mjs smoke",
     "release": "npm test && npm version patch && git push --follow-tags",
     "release:minor": "npm test && npm version minor && git push --follow-tags"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jmwind/linear-herd.git"
+    "url": "git+https://github.com/jmwind/issue-herd.git"
   },
   "keywords": [
     "linear",
+    "github-issues",
     "herdr",
     "claude-code",
     "agent",

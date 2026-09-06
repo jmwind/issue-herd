@@ -9,12 +9,13 @@ import { branchVars, desiredBranch, isValidBranchName, renderBranch, reconcileBr
 const issue = { identifier: 'DEV-3298', branchName: 'jml/dev-3298-test-for-herdr' };
 const slug = 'dev-3298-test-for-herdr';
 
-test('the default template resolves to Linear\'s own branch name', () => {
+test('the default template resolves to the tracker\'s own branch name', () => {
   // A PR on this branch auto-links back to the issue — that is the whole point of the default.
   assert.equal(
-    desiredBranch({ template: '{{linearBranchName}}', issue, slug, worktree: 'claude' }),
+    desiredBranch({ template: '{{issueBranchName}}', issue, slug, worktree: 'claude' }),
     'jml/dev-3298-test-for-herdr',
   );
+  assert.equal(branchVars({ issue, slug }).linearBranchName, undefined);
 });
 
 test('other templates render from slug and key', () => {
@@ -25,14 +26,14 @@ test('other templates render from slug and key', () => {
 });
 
 test('no worktree means no opinion — never rename the maintainer\'s own checkout', () => {
-  assert.equal(desiredBranch({ template: '{{linearBranchName}}', issue, slug, worktree: 'none' }), null);
-  assert.equal(desiredBranch({ template: '{{linearBranchName}}', issue, slug, worktree: undefined }), null);
+  assert.equal(desiredBranch({ template: '{{issueBranchName}}', issue, slug, worktree: 'none' }), null);
+  assert.equal(desiredBranch({ template: '{{issueBranchName}}', issue, slug, worktree: undefined }), null);
 });
 
 test('an unresolved variable yields null, not a half-rendered branch name', () => {
   // `smoke` builds a fake issue with no Linear branch name; it must fall through to whatever the
   // worktree tool named the branch rather than creating "" or "claude/".
-  assert.equal(desiredBranch({ template: '{{linearBranchName}}', issue: { identifier: 'SMOKE-1' }, slug, worktree: 'claude' }), null);
+  assert.equal(desiredBranch({ template: '{{issueBranchName}}', issue: { identifier: 'SMOKE-1' }, slug, worktree: 'claude' }), null);
   assert.equal(renderBranch('a/{{nope}}', { slug }), null);
 });
 
@@ -124,7 +125,7 @@ test('an unreadable or detached worktree names no branch at all', () => {
 });
 
 test('against real git: the rename happens and HEAD follows it', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'linear-herd-branch-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-branch-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const g = (args, cwd) => {
     try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }

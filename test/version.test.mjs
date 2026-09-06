@@ -27,7 +27,7 @@ test('newerVersion is silent on network or server trouble', async () => {
 });
 
 test('newerVersion honours the opt-out', async () => {
-  process.env.LINEAR_HERD_NO_UPDATE_CHECK = '1';
+  process.env.ISSUE_HERD_NO_UPDATE_CHECK = '1';
   try { assert.equal(await newerVersion('0.1.1', { fetchImpl: fake({ version: '9.9.9' }) }), null); }
-  finally { delete process.env.LINEAR_HERD_NO_UPDATE_CHECK; }
+  finally { delete process.env.ISSUE_HERD_NO_UPDATE_CHECK; }
 });
