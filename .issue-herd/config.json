@@ -1,5 +1,5 @@
 {
-  "tracker": "linear",
+  "tracker": "github",
   "pollSeconds": 30,
   "lookbackDays": 30,
   "maxConcurrent": 3,
@@ -13,15 +13,30 @@
     "instructionsFile": "instructions.md",
     "claimLabel": "herdr",
     "skipIfAssignedToOthers": true,
-    "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
-    "onDone": { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
-    "onBlocked": { "comment": true, "notify": true },
-    "onIdle": { "comment": true, "notify": true }
+    "onPickup": {
+      "comment": true,
+      "state": null,
+      "assignToMe": true
+    },
+    "onDone": {
+      "comment": true,
+      "state": null,
+      "notify": true,
+      "closeWorkspace": false
+    },
+    "onBlocked": {
+      "comment": true,
+      "notify": true
+    },
+    "onIdle": {
+      "comment": true,
+      "notify": true
+    }
   },
   "rules": [
     {
       "name": "ai-label",
-      "match": "label:ai and team:ENG and not state:started and not state:triage"
+      "match": "label:ai"
     }
   ]
 }

@@ -1,4 +1,4 @@
-// Rule expression language for linear-herd.
+// Rule expression language for issue-herd.
 //
 //   label:ai and project:Webapp and not assignee:none
 //   (label:ai or label:agent) team:ENG priority>=3
@@ -16,12 +16,13 @@
 //
 // Matching is case-insensitive. `*` in a value is a glob wildcard.
 //
-// Fields (all read from the normalized issue produced by lib/linear.mjs):
+// Fields (all read from the normalized issue a tracker produces, see src/tracker.mjs; GitHub maps
+// its milestone to `project` and the repository to `team`, and has only open/closed states):
 //   label        any label name                         label:ai   label:"needs *"
 //   project      project name                           project:Webapp
 //   team         team key or team name                  team:ENG   team:Engineering
-//   assignee     me | none | name | displayName | email assignee:me   assignee:none
-//   creator      me | name | displayName | email
+//   assignee     me | none | name | displayName | email | @login   assignee:me   assignee:none
+//   creator      me | name | displayName | email | @login
 //   state        workflow state name or type            state:Todo  state:started
 //                types: triage backlog unstarted started completed canceled
 //   priority     0 none 1 urgent 2 high 3 medium 4 low  priority:urgent  priority<=2
@@ -154,8 +155,11 @@ function person(p, value, ctx) {
   const v = value.toLowerCase();
   if (v === 'none' || v === 'unassigned' || v === 'nobody') return !p;
   if (!p) return false;
-  if (v === 'me') return Boolean(ctx.viewer && (p.id === ctx.viewer.id || (p.email && p.email.toLowerCase() === (ctx.viewer.email || '').toLowerCase())));
-  return strMatch([p.name, p.displayName, p.email], value);
+  if (v === 'me') {
+    const me = ctx.viewer;
+    return Boolean(me && (p.id === me.id || (p.login && p.login === me.login) || (p.email && p.email.toLowerCase() === (me.email || '').toLowerCase())));
+  }
+  return strMatch([p.name, p.displayName, p.email, p.login], value.replace(/^@/, ''));
 }
 
 /** Evaluate a term against a normalized issue. `ctx.viewer` is {id,email}; `ctx.now` is ms. */

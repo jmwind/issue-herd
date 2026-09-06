@@ -1,25 +1,28 @@
 #!/usr/bin/env node
-// linear-herd — watch Linear, and when an issue matches a rule, open a herdr workspace,
-// start Claude Code in it (worktree mode), brief it, and report back to Linear.
+// issue-herd — watch an issue tracker (Linear or GitHub Issues); when an issue matches a rule, open
+// a herdr workspace, start Claude Code in it (worktree mode), brief it, and report back to the issue.
 //
-//   linear-herd                 run the watcher (foreground; run it inside a herdr pane)
-//   linear-herd once            one poll, then exit
-//   linear-herd dry-run         show what would be picked up, touch nothing
-//   linear-herd match "<expr>"  evaluate an expression against live open issues
-//   linear-herd status          show tracked runs
-//   linear-herd reset <KEY>     forget a run so the issue can be picked up again
-//   linear-herd smoke           end-to-end test against herdr with a fake issue (no Linear)
-//   linear-herd init            scaffold .linear-herd/ in this repo
-//   linear-herd update          reinstall the latest version from GitHub
-//   linear-herd --version
+//   issue-herd                 run the watcher (foreground; run it inside a herdr pane)
+//   issue-herd once            one poll, then exit
+//   issue-herd dry-run         show what would be picked up, touch nothing
+//   issue-herd match "<expr>"  evaluate an expression against live open issues
+//   issue-herd status          show tracked runs
+//   issue-herd reset <KEY>     forget a run so the issue can be picked up again
+//   issue-herd login [tracker] sign in (browser when possible) and save the token for this machine
+//   issue-herd logout [tracker] forget the saved token
+//   issue-herd smoke           end-to-end test against herdr with a fake issue (no tracker calls)
+//   issue-herd init [--tracker linear|github]   scaffold .issue-herd/ in this repo
+//   issue-herd update          reinstall the latest version from GitHub
+//   issue-herd --version
 //
 // Run it from inside the git repository it should work on. Everything is project-local:
-//   <repo>/.linear-herd/config.json        rules and defaults (committed)
-//   <repo>/.linear-herd/config.local.json  per-machine overrides of config.json, same shape (gitignored)
-//   <repo>/.linear-herd/instructions.md    repo brief appended to every agent prompt (committed)
-//   <repo>/.linear-herd/prompts/default.md optional override of the built-in prompt template
-//   <repo>/.linear-herd/state/             state.json, runs/<KEY>/, logs/ (gitignored)
-//   <repo>/.env, <repo>/.env.local         LINEAR_API_KEY (gitignored; document it in .env.example)
+//   <repo>/.issue-herd/config.json        which tracker, rules and defaults (committed)
+//   <repo>/.issue-herd/config.local.json  per-machine overrides of config.json, same shape (gitignored)
+//   <repo>/.issue-herd/instructions.md    repo brief appended to every agent prompt (committed)
+//   <repo>/.issue-herd/prompts/default.md optional override of the built-in prompt template
+//   <repo>/.issue-herd/state/             state.json, runs/<KEY>/, logs/ (gitignored)
+//   <repo>/.env, <repo>/.env.local         LINEAR_API_KEY / GITHUB_TOKEN (gitignored), if you prefer a file
+//   ~/.config/issue-herd/credentials.json tokens saved by `issue-herd login` (per user, mode 600)
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,14 +31,16 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { compile } from '../src/expr.mjs';
 import { mergeConfig, overridePaths } from '../src/config.mjs';
-import { LinearClient } from '../src/linear.mjs';
+import { TRACKERS, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
+import { userDisplay } from '../src/tracker.mjs';
+import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCredential, saveCredential, terminalUi } from '../src/auth.mjs';
 import { Herdr, agentNameFor } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = findRepoRoot(process.cwd());
-const CONFIG_DIR = path.join(REPO, '.linear-herd');
+const CONFIG_DIR = path.join(REPO, '.issue-herd');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const LOCAL_CONFIG_PATH = path.join(CONFIG_DIR, 'config.local.json'); // per-machine overrides, gitignored
 const STATE_DIR = path.join(CONFIG_DIR, 'state');
@@ -60,7 +65,7 @@ function log(...a) {
   const line = `[${ts()}] ${a.join(' ')}`;
   if (liveLine && TTY) { process.stdout.write('\r\x1b[2K'); liveLine = false; }
   console.log(line);
-  try { fs.mkdirSync(LOG_DIR, { recursive: true }); fs.appendFileSync(path.join(LOG_DIR, 'linear-herd.log'), line + '\n'); } catch { /* ignore */ }
+  try { fs.mkdirSync(LOG_DIR, { recursive: true }); fs.appendFileSync(path.join(LOG_DIR, 'issue-herd.log'), line + '\n'); } catch { /* ignore */ }
 }
 /** The heartbeat: one line that is overwritten in place on a TTY, printed every 10th time otherwise. */
 let heartbeats = 0;
@@ -91,7 +96,7 @@ function slugify(s, max = 40) {
 /** The sidebar label for the watcher's own herdr workspace. */
 function watchLabel(name) { return `${name}Watch`; }
 function expandTilde(p) { return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p; }
-/** Resolve a config path: ~ and absolute as-is; relative first against <repo>/.linear-herd, then the package. */
+/** Resolve a config path: ~ and absolute as-is; relative first against <repo>/.issue-herd, then the package. */
 function expand(p) {
   p = expandTilde(p);
   if (path.isAbsolute(p)) return p;
@@ -111,22 +116,24 @@ function git(args, cwd) {
 
 const DEFAULTS = {
   name: null,          // what this watcher is called; its herdr workspace is labelled "<name>Watch". Default: the repo folder name
+  tracker: 'linear',   // "linear" | "github", or { "type": "github", "repo": "owner/name", … }; see src/trackers/
   pollSeconds: 30,
   lookbackDays: 30,
   maxConcurrent: 3,
   defaults: {
     worktree: 'claude',            // "claude" (claude --worktree), "herdr" (herdr worktree create), or "none"
-    // The branch a run works on, as a template over {{linearBranchName}} / {{slug}} / {{key}} / {{KEY}}.
-    // Linear's own branch name is the default because a PR on it auto-links back to the issue. In
-    // "herdr" mode it is passed to `herdr worktree create --branch`; in "claude" mode the worktree
-    // is renamed onto it before the agent is prompted. null accepts whatever the tool named it.
-    branch: '{{linearBranchName}}',
+    // The branch a run works on, as a template over {{issueBranchName}} / {{slug}} / {{key}} / {{KEY}}.
+    // The tracker's own branch name is the default (Linear's auto-links a PR back to the issue;
+    // GitHub's is what its "create a branch" button would name). In "herdr" mode it is passed to
+    // `herdr worktree create --branch`; in "claude" mode the worktree is renamed onto it before the
+    // agent is prompted. null accepts whatever the tool named it.
+    branch: '{{issueBranchName}}',
     permissionMode: 'auto',        // claude --permission-mode: auto (unattended), acceptEdits (asks before commands), plan, …
     claudeArgs: [],
     maxConcurrent: 2,
-    prompt: 'prompts/default.md',   // repo override in .linear-herd/prompts/, else the package's
+    prompt: 'prompts/default.md',   // repo override in .issue-herd/prompts/, else the package's
     instructions: '',               // inline text appended to the brief …
-    instructionsFile: 'instructions.md', // … or a markdown file in .linear-herd/ (both are included if present)
+    instructionsFile: 'instructions.md', // … or a markdown file in .issue-herd/ (both are included if present)
     // Guards against double work. The claim label is added to the issue the moment it is picked up and
     // checked before pickup, so a restart, a lost state.json, or a second machine cannot take it again.
     claimLabel: 'herdr',
@@ -146,7 +153,10 @@ function loadConfig() {
   const raw = mergeConfig(readConfigFile(CONFIG_PATH), local);
   const cfg = { ...DEFAULTS, ...raw, defaults: { ...DEFAULTS.defaults, ...(raw.defaults || {}) } };
   cfg.localOverrides = overridePaths(local);
-  cfg.name = String(cfg.name || path.basename(REPO)).trim() || 'linear-herd';
+  cfg.name = String(cfg.name || path.basename(REPO)).trim() || 'issue-herd';
+  cfg.trackerSpec = trackerSpec(cfg.tracker);
+  cfg.Tracker = trackerClass(cfg.trackerSpec);
+  cfg.defaults.trackerLabel = cfg.Tracker.label;   // every rule inherits it, for the brief and the logs
   cfg.rules = (raw.rules || []).map((r, i) => {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
     const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
@@ -194,7 +204,9 @@ function briefVars({ issue, rule, run }) {
     ? issue.comments.map((c) => `- **${c.author}** (${c.createdAt.slice(0, 10)}): ${c.body.replace(/\r?\n/g, '\n  ')}`).join('\n')
     : '_none_';
   return {
+    tracker: rule.trackerLabel,
     identifier: issue.identifier,
+    ref: issue.ref || issue.identifier,
     title: issue.title,
     description: issue.description?.trim() || '_no description_',
     url: issue.url,
@@ -218,10 +230,10 @@ function briefVars({ issue, rule, run }) {
 
 // ---------------------------------------------------------------- core
 
-class LinearHerd {
-  constructor({ cfg, linear, herdr, dry = false }) {
+class IssueHerd {
+  constructor({ cfg, tracker, herdr, dry = false }) {
     this.cfg = cfg;
-    this.linear = linear;   // null in smoke mode
+    this.tracker = tracker; // null in smoke mode
     this.herdr = herdr;
     this.dry = dry;
     this.state = loadState();
@@ -234,8 +246,8 @@ class LinearHerd {
 
   async pollOnce() {
     const since = new Date(Date.now() - this.cfg.lookbackDays * 86400e3).toISOString();
-    const viewer = await this.linear.me();
-    const issues = await this.linear.openIssues({ sinceIso: since });
+    const viewer = await this.tracker.me();
+    const issues = await this.tracker.openIssues({ sinceIso: since });
     const ctx = { viewer, now: Date.now() };
     const candidates = [];
     for (const issue of issues) {
@@ -294,11 +306,11 @@ class LinearHerd {
     log(`picking up ${key} "${issue.title}" (rule ${rule.name})`);
 
     // Claim on Linear first, so a second watcher (or this one after a crash) sees it before any work starts.
-    if (this.linear && rule.claimLabel) {
-      const fresh = await this.linear.issueByKey(key);
-      const why = fresh && alreadyTaken(fresh, rule, await this.linear.me());
+    if (this.tracker && rule.claimLabel) {
+      const fresh = await this.tracker.issueByKey(key);
+      const why = fresh && alreadyTaken(fresh, rule, await this.tracker.me());
       if (why) { delete this.state.runs[key]; saveState(this.state); throw new Error(`skipped, ${why}`); }
-      await this.linear.addLabel(issue.id, rule.claimLabel);
+      await this.tracker.addLabel(issue.id, rule.claimLabel);
       run.claimed = rule.claimLabel; saveState(this.state);
     }
 
@@ -310,7 +322,7 @@ class LinearHerd {
         ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `linear/${slug}`, label });
         run.worktreePath = ws.path;
       } else {
-        ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { LINEAR_ISSUE: key } });
+        ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { HERD_ISSUE: key } });
       }
       Object.assign(run, { workspaceId: ws.workspaceId, tabId: ws.tabId, paneId: ws.paneId });
       saveState(this.state);
@@ -328,7 +340,7 @@ class LinearHerd {
       log(`${key}: claude started as agent "${run.agentName}"`);
 
       // 3. brief — written INSIDE the working tree Claude actually uses (herdr reports it), under the
-      // gitignored .linear-herd/state/, so reading and writing it needs no permission dialog. A path in the
+      // gitignored .issue-herd/state/, so reading and writing it needs no permission dialog. A path in the
       // main checkout does not work when Claude runs in a worktree.
       const workDir = run.worktreePath || await this.agentCwd(run.agentName, rule);
       run.workDir = workDir;
@@ -336,7 +348,7 @@ class LinearHerd {
       this.settleBranch(key, run, rule, workDir);
       // Now that the worktree exists, give it a herdr workspace of its own so the sidebar shows its branch.
       await this.adoptWorktree(key, run, rule, workDir, label);
-      run.dir = path.join(workDir, '.linear-herd', 'state', 'runs', key);
+      run.dir = path.join(workDir, '.issue-herd', 'state', 'runs', key);
       run.resultPath = path.join(run.dir, 'result.json');
       fs.mkdirSync(run.dir, { recursive: true });
       const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run }));
@@ -346,25 +358,28 @@ class LinearHerd {
       log(`${key}: working tree ${workDir}`);
 
       // 4. prompt
-      await this.herdr.prompt(run.agentName, `You are working Linear issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`);
+      await this.herdr.prompt(run.agentName, `You are working ${rule.trackerLabel} issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`);
       const st = await this.herdr.waitAgent(run.agentName, { until: ['working'], timeoutMs: 30_000 });
       log(`${key}: prompted (state ${st})`);
       run.status = 'running'; saveState(this.state);
 
       // 5. tell Linear
-      if (this.linear && rule.onPickup.comment) {
+      if (this.tracker && rule.onPickup.comment) {
         const host = os.hostname();
-        await this.linear.comment(issue.id, `🐑 **linear-herd** picked this up on \`${host}\` · herdr workspace \`${run.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`);
+        await this.tracker.comment(issue.id, `🐑 **issue-herd** picked this up on \`${host}\` · herdr workspace \`${run.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`);
       }
-      if (this.linear && rule.onPickup.assignToMe) { try { await this.linear.assign(issue, (await this.linear.me()).id); } catch (e) { log(`${key}: assign failed: ${e.message}`); } }
-      if (this.linear && rule.onPickup.state) { try { await this.linear.setState(issue, rule.onPickup.state); } catch (e) { log(`${key}: state failed: ${e.message}`); } }
+      if (this.tracker && rule.onPickup.assignToMe) { try { await this.tracker.assign(issue, await this.tracker.me()); } catch (e) { log(`${key}: assign failed: ${e.message}`); } }
+      if (this.tracker && rule.onPickup.state) {
+        try { logStateChange(key, rule, await this.tracker.setState(issue, rule.onPickup.state)); }
+        catch (e) { log(`${key}: state failed: ${e.message}`); }
+      }
 
       this.supervise(key);
     } catch (e) {
       run.status = 'failed'; run.error = e.message; run.finishedAt = new Date().toISOString(); saveState(this.state);
-      if (this.linear) {
-        try { await this.linear.comment(issue.id, `⚠️ linear-herd failed to start a session: ${e.message}`); } catch { /* ignore */ }
-        if (run.claimed) { try { await this.linear.removeLabel(issue.id, run.claimed); } catch { /* ignore */ } }
+      if (this.tracker) {
+        try { await this.tracker.comment(issue.id, `⚠️ issue-herd failed to start a session: ${e.message}`); } catch { /* ignore */ }
+        if (run.claimed) { try { await this.tracker.removeLabel(issue.id, run.claimed); } catch { /* ignore */ } }
       }
       throw e;
     }
@@ -523,7 +538,7 @@ class LinearHerd {
     try { fs.mkdirSync(run.archiveDir, { recursive: true }); for (const f of ['result.json', 'brief.md']) { const src = path.join(run.dir, f); if (fs.existsSync(src)) fs.copyFileSync(src, path.join(run.archiveDir, f)); } } catch { /* best effort */ }
     const status = result.status || 'unknown';
     const icon = status === 'pr_open' ? '✅' : status === 'needs_human' ? '🙋' : status === 'nothing_to_do' ? '🤷' : '❌';
-    const lines = [`${icon} **linear-herd** finished ${key} with status \`${status}\`.`];
+    const lines = [`${icon} **issue-herd** finished ${key} with status \`${status}\`.`];
     if (result.prUrl) lines.push(`\nPR: ${result.prUrl}`);
     if (result.branch) lines.push(`Branch: \`${result.branch}\``);
     if (result.summary) lines.push(`\n${result.summary}`);
@@ -532,8 +547,8 @@ class LinearHerd {
     lines.push(`\n_herdr workspace \`${run.workspaceId}\` is still open._`);
     log(`${key}: done (${status}) ${result.prUrl || ''}`);
     await this.report(key, rule, rule.onDone, lines.join('\n'), 'done');
-    if (this.linear && rule.onDone.state && status === 'pr_open') {
-      try { await this.linear.setState({ id: run.issueId, team: readJson(path.join(run.archiveDir, 'issue.json'), {}).team }, rule.onDone.state); }
+    if (this.tracker && rule.onDone.state && status === 'pr_open') {
+      try { logStateChange(key, rule, await this.tracker.setState({ ...readJson(path.join(run.archiveDir, 'issue.json'), {}), id: run.issueId }, rule.onDone.state)); }
       catch (e) { log(`${key}: onDone state failed: ${e.message}`); }
     }
     if (rule.onDone.closeWorkspace && run.workspaceId) { try { await this.herdr.closeWorkspace(run.workspaceId); } catch { /* ignore */ } }
@@ -541,8 +556,8 @@ class LinearHerd {
 
   async report(key, rule, policy, body, sound = 'none') {
     const run = this.state.runs[key];
-    if (policy?.comment && this.linear) { try { await this.linear.comment(run.issueId, body); } catch (e) { log(`${key}: comment failed: ${e.message}`); } }
-    if (policy?.notify) await this.herdr.notify(`linear-herd ${key}`, body.split('\n')[0].replace(/[*`]/g, '').slice(0, 120), { sound });
+    if (policy?.comment && this.tracker) { try { await this.tracker.comment(run.issueId, body); } catch (e) { log(`${key}: comment failed: ${e.message}`); } }
+    if (policy?.notify) await this.herdr.notify(`issue-herd ${key}`, body.split('\n')[0].replace(/[*`]/g, '').slice(0, 120), { sound });
   }
 
   /** After a restart, re-attach to runs that were in flight. */
@@ -575,7 +590,7 @@ class LinearHerd {
   }
 
   /**
-   * Re-read .linear-herd/config.json (and the instructions files it names) if any of them changed
+   * Re-read .issue-herd/config.json (and the instructions files it names) if any of them changed
    * on disk since the config was last loaded. A config that fails to parse is reported and ignored:
    * the watcher keeps running on the last good one until the file is fixed. Runs already in flight
    * keep their rule by name; a rule that was removed falls back to the defaults for its reports.
@@ -606,10 +621,10 @@ class LinearHerd {
   }
 
   async loop() {
-    log(`linear-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
+    log(`issue-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
     this.logRules();
-    const who = await this.linear.me().then((u) => u.email).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
-    log(`  Linear: ${who} · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
+    const who = await this.tracker.me().then(userDisplay).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
+    log(`  ${trackerBanner(this.cfg, this.tracker)}: ${who} (token from ${this.tracker.source || '?'}) · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
     await this.labelOwnWorkspace();
     await this.resume();
     let nextUpdateCheck = Date.now() + 24 * 3600e3; // startup already checked
@@ -636,72 +651,142 @@ class LinearHerd {
 
 function prio(issue) { return issue.priority === 0 ? 5 : issue.priority; }
 
-const CLAIM_MARKER = '**linear-herd** picked this up';
+/**
+ * Say so when a tracker without workflow states turned a `state` into a label. Silence would be
+ * worse: GitHub creates the label, so a config written for Linear quietly grows an "In Progress"
+ * label in the repository instead of failing.
+ */
+function logStateChange(key, rule, state) {
+  if (state?.label) log(`${key}: ${rule.trackerLabel} has no workflow states — applied "${state.name}" as a label instead`);
+}
+
+const CLAIM_MARKER = '**issue-herd** picked this up';
 
 /** Returns a reason string if some agent or person already owns this issue, else null. */
 function alreadyTaken(issue, rule, viewer) {
   if (rule.claimLabel && issue.labels.some((l) => l.toLowerCase() === rule.claimLabel.toLowerCase())) return `already carries the '${rule.claimLabel}' claim label`;
-  if ((issue.comments || []).some((c) => c.body.includes(CLAIM_MARKER))) return 'a linear-herd pickup comment is already on it';
+  if ((issue.comments || []).some((c) => c.body.includes(CLAIM_MARKER))) return 'an issue-herd pickup comment is already on it';
   if (rule.skipIfAssignedToOthers && issue.assignee && viewer && issue.assignee.id !== viewer.id) return `assigned to ${issue.assignee.displayName || issue.assignee.name}`;
   return null;
 }
 
 // ---------------------------------------------------------------- commands
 
-const GITIGNORE = `# linear-herd. config.json, instructions.md and prompts/ are committed; these are not.
+const GITIGNORE = `# issue-herd. config.json, instructions.md and prompts/ are committed; these are not.
 # runtime state: state.json, runs/<KEY>/, logs/
 state/
 # per-machine overrides of config.json
 config.local.json
 `;
 
-function init() {
+/** `issue-herd init [--tracker linear|github]`. Asks which tracker on a terminal when not told. */
+async function init(args = []) {
+  const flag = args.indexOf('--tracker');
+  let type = flag >= 0 ? args[flag + 1] : args.find((a) => TRACKERS[a]);
+  if (!type && !fs.existsSync(CONFIG_PATH) && process.stdin.isTTY) type = (await ask(`Which issue tracker? [${Object.keys(TRACKERS).join('/')}] (linear) `)).trim();
+  const Tracker = trackerClass(trackerSpec(type || 'linear'));
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   const made = [];
   const put = (p, content) => { if (!fs.existsSync(p)) { fs.writeFileSync(p, content); made.push(path.relative(REPO, p)); } };
-  put(CONFIG_PATH, fs.readFileSync(path.join(PKG_DIR, 'config.example.json'), 'utf8'));
+  // config.example.json, with the tracker's own adjustments layered over it like config.local.json would be
+  const example = mergeConfig(JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'config.example.json'), 'utf8')), Tracker.exampleConfig || null);
+  example.tracker = Tracker.id;
+  put(CONFIG_PATH, JSON.stringify(example, null, 2) + '\n');
   put(path.join(CONFIG_DIR, 'instructions.md'), fs.readFileSync(path.join(PKG_DIR, 'prompts', 'instructions.example.md'), 'utf8'));
-  // .linear-herd/ carries its own .gitignore so the repo's is left alone
+  // .issue-herd/ carries its own .gitignore so the repo's is left alone
   put(path.join(CONFIG_DIR, '.gitignore'), GITIGNORE);
-  // document the key
+  // document the token variable, for people who prefer .env.local to `issue-herd login`
+  const envName = [].concat(Tracker.auth?.env || [])[0];
   const ex = path.join(REPO, '.env.example');
   const exText = fs.existsSync(ex) ? fs.readFileSync(ex, 'utf8') : '';
-  if (!/^LINEAR_API_KEY=/m.test(exText)) { fs.appendFileSync(ex, `${exText && !exText.endsWith('\n') ? '\n' : ''}\n# linear-herd: Linear personal API key (Settings → Security & access → Personal API keys).\n# Put the real value in .env.local, never here.\nLINEAR_API_KEY=\n`); made.push('.env.example (+ LINEAR_API_KEY)'); }
-  console.log(made.length ? `wrote in ${REPO}:\n  ${made.join('\n  ')}` : `nothing to do; ${path.relative(REPO, CONFIG_DIR)} already initialised`);
-  console.log(`\nnext: add LINEAR_API_KEY to ${path.join(REPO, '.env.local')}, edit .linear-herd/config.json and instructions.md, then \`linear-herd match "label:ai"\``);
-  console.log(`per-machine settings (e.g. a claim label that names this machine) go in .linear-herd/config.local.json, which is gitignored`);
+  if (envName && !new RegExp(`^${envName}=`, 'm').test(exText)) {
+    const sep = exText ? (exText.endsWith('\n') ? '\n' : '\n\n') : '';
+    fs.appendFileSync(ex, `${sep}# issue-herd: ${Tracker.label} token — ${Tracker.auth.hint}.\n# Put the real value in .env.local, never here; or skip this and run \`issue-herd login\`.\n${envName}=\n`);
+    made.push(`.env.example (+ ${envName})`);
+  }
+  console.log(made.length ? `wrote in ${REPO} for ${Tracker.label}:\n  ${made.join('\n  ')}` : `nothing to do; ${path.relative(REPO, CONFIG_DIR)} already initialised`);
+  console.log(`\nnext: \`issue-herd login\` (or put ${envName} in ${path.join(REPO, '.env.local')}), edit .issue-herd/config.json and instructions.md, then \`issue-herd match "label:ai"\``);
+  console.log(`per-machine settings (e.g. a claim label that names this machine) go in .issue-herd/config.local.json, which is gitignored`);
+}
+
+/** The tracker config.json names, authenticated from the environment, the saved credential, or the tracker's own fallback. */
+function makeTracker(cfg) {
+  const { Tracker } = cfg;
+  const options = { ...cfg.trackerSpec, cwd: REPO };
+  const found = resolveCredential(Tracker, { options });
+  if (!found) throw noCredentialError(Tracker);
+  // a token the tracker refreshes itself goes back where it came from; env tokens are the user's to manage
+  const onCredential = found.saved ? (cred) => saveCredential(Tracker.id, cred) : null;
+  const tracker = new Tracker(found.credential, { options, onCredential });
+  tracker.check?.();
+  tracker.source = found.source;
+  return tracker;
+}
+
+function trackerBanner(cfg, tracker) {
+  const what = tracker?.describe?.();
+  return `${cfg.Tracker.label}${what ? ` ${what}` : ''}`;
+}
+
+/** `issue-herd login [tracker] [--paste]` and `issue-herd logout [tracker]`. Works before `init` when the tracker is named. */
+async function auth(cmd, args) {
+  const paste = args.includes('--paste');
+  const named = args.find((a) => !a.startsWith('--'));
+  let spec;
+  if (named) spec = trackerSpec(named);
+  else if (fs.existsSync(CONFIG_PATH)) spec = loadConfig().trackerSpec;
+  else throw new Error(`which tracker? issue-herd ${cmd} <${Object.keys(TRACKERS).join('|')}>`);
+  const Tracker = trackerClass(spec);
+  const file = credentialsPath();
+  const shown = file.replace(os.homedir(), '~');
+  if (cmd === 'logout') { console.log(deleteCredential(Tracker.id, file) ? `forgot the ${Tracker.label} token in ${shown}` : `no ${Tracker.label} token saved in ${shown}`); return; }
+  const options = { ...spec, cwd: REPO };
+  const cred = await Tracker.login(terminalUi(), { paste, ...options });
+  const tracker = new Tracker(cred, { options });
+  const user = await tracker.me(); // proves the token works before it is saved
+  const who = `${trackerBanner({ Tracker }, tracker)}: signed in as ${userDisplay(user)}`;
+  if (cred.kind === 'borrowed') {
+    // The credential belongs to another tool that can rotate it (`gh`). Copying it here would go
+    // stale and, being ahead of the fallback in the lookup order, would keep being used after it did.
+    console.log(`✓ ${who} · nothing saved: the token comes from ${cred.source} on every run`);
+    return;
+  }
+  const saved = saveCredential(Tracker.id, { ...cred, user: userDisplay(user) }, file);
+  console.log(`✓ ${who} · ${saved.kind} token saved in ${shown}`);
+  for (const name of [].concat(Tracker.auth?.env || [])) if (process.env[name]) console.log(`note: ${name} is set (environment or .env.local) and takes precedence over the saved token`);
 }
 
 const PKG = readJson(path.join(PKG_DIR, 'package.json'), { version: '0.0.0', repository: {} });
-const INSTALL_SPEC = 'github:jmwind/linear-herd';
+const INSTALL_SPEC = 'github:jmwind/issue-herd';
 
 /** Print a one-line reminder if GitHub main has a newer version. Quiet otherwise. */
 async function updateReminder({ notify = false } = {}) {
   const latest = await newerVersion(PKG.version);
   if (!latest) return false;
-  log(`⬆ linear-herd ${latest} is available (you have ${PKG.version}) — run: linear-herd update`);
-  if (notify) await new Herdr().notify('linear-herd update available', `${PKG.version} → ${latest}: run linear-herd update`);
+  log(`⬆ issue-herd ${latest} is available (you have ${PKG.version}) — run: issue-herd update`);
+  if (notify) await new Herdr().notify('issue-herd update available', `${PKG.version} → ${latest}: run issue-herd update`);
   return true;
 }
 
 function update() {
-  console.log(`linear-herd ${PKG.version} → installing latest from ${INSTALL_SPEC} …`);
+  console.log(`issue-herd ${PKG.version} → installing latest from ${INSTALL_SPEC} …`);
   execFileSync('npm', ['install', '-g', INSTALL_SPEC], { stdio: 'inherit' });
-  const now = execFileSync('linear-herd', ['--version'], { encoding: 'utf8' }).trim();
+  const now = execFileSync('issue-herd', ['--version'], { encoding: 'utf8' }).trim();
   console.log(`now ${now}`);
 }
 
 async function main(argv) {
   if (argv[0] === '--version' || argv[0] === '-V' || argv[0] === 'version') { console.log(PKG.version); return; }
   if (argv[0] === 'update' || argv[0] === 'upgrade') return update();
-  if ((argv[0] || '') === 'init') return init();
-  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 22).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
+  if ((argv[0] || '') === 'init') return init(argv.slice(1));
+  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 26).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
   loadEnv();
   const cmd = argv[0] || 'run';
-  if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no ${path.relative(process.cwd(), CONFIG_PATH) || CONFIG_PATH} — cd into the repo you want to work on and run \`linear-herd init\``);
+  if (cmd === 'login' || cmd === 'logout') return auth(cmd, argv.slice(1));
+  if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no ${path.relative(process.cwd(), CONFIG_PATH) || CONFIG_PATH} — cd into the repo you want to work on and run \`issue-herd init\``);
   const cfg = loadConfig();
   if (cmd !== 'smoke') await updateReminder();
-  const herdr = new Herdr({ log: (m) => process.env.LINEAR_HERD_DEBUG && log('  $', m) });
+  const herdr = new Herdr({ log: (m) => process.env.ISSUE_HERD_DEBUG && log('  $', m) });
 
   if (cmd === 'status') {
     const s = loadState();
@@ -717,26 +802,26 @@ async function main(argv) {
     return;
   }
   if (cmd === 'reset') {
-    const key = argv[1]; if (!key) throw new Error('usage: linear-herd reset <KEY>');
+    const key = argv[1]; if (!key) throw new Error('usage: issue-herd reset <KEY>');
     const s = loadState(); delete s.runs[key]; saveState(s); console.log(`forgot ${key}`); return;
   }
   if (cmd === 'smoke') return smoke({ cfg, herdr, argv });
 
-  const linear = new LinearClient(process.env.LINEAR_API_KEY);
+  const tracker = makeTracker(cfg);
 
   if (cmd === 'match') {
-    const expr = argv.slice(1).join(' '); if (!expr) throw new Error('usage: linear-herd match "<expr>"');
+    const expr = argv.slice(1).join(' '); if (!expr) throw new Error('usage: issue-herd match "<expr>"');
     const rule = compile(expr);
-    const viewer = await linear.me();
-    const issues = await linear.openIssues({ sinceIso: new Date(Date.now() - cfg.lookbackDays * 86400e3).toISOString() });
+    const viewer = await tracker.me();
+    const issues = await tracker.openIssues({ sinceIso: new Date(Date.now() - cfg.lookbackDays * 86400e3).toISOString() });
     const hits = issues.filter((i) => rule.test(i, { viewer }));
     for (const i of hits) console.log(`${i.identifier.padEnd(10)} ${(i.state?.name || '').padEnd(12)} [${i.labels.join(',')}] ${i.assignee?.displayName || '-'}  ${i.title}`);
-    console.log(`${hits.length} of ${issues.length} open issues match`);
+    console.log(`${hits.length} of ${issues.length} open ${trackerBanner(cfg, tracker)} issues match (as ${userDisplay(viewer)})`);
     return;
   }
 
   if (!(await herdr.serverRunning())) throw new Error('herdr server is not running (start herdr first)');
-  const app = new LinearHerd({ cfg, linear, herdr, dry: cmd === 'dry-run' });
+  const app = new IssueHerd({ cfg, tracker, herdr, dry: cmd === 'dry-run' });
 
   if (cmd === 'dry-run' || cmd === 'once') {
     if (cmd === 'once') await app.resume();
@@ -749,7 +834,7 @@ async function main(argv) {
   throw new Error(`unknown command ${cmd}`);
 }
 
-/** End-to-end herdr test with a fake issue: workspace → claude → brief → result.json → finalize. No Linear calls. */
+/** End-to-end herdr test with a fake issue: workspace → claude → brief → result.json → finalize. No tracker calls. */
 async function smoke({ cfg, herdr, argv }) {
   const rule = {
     ...cfg.defaults, name: 'smoke', repo: REPO, worktree: argv.includes('--worktree') ? cfg.defaults.worktree : 'none',
@@ -761,19 +846,19 @@ async function smoke({ cfg, herdr, argv }) {
   const key = `SMOKE-${Date.now().toString().slice(-4)}`;
   const nowIso = new Date().toISOString();
   const issue = {
-    id: 'fake', identifier: key, title: 'linear-herd smoke test', description: 'Prove the herdr pipeline works end to end.',
+    id: 'fake', identifier: key, ref: key, title: 'issue-herd smoke test', description: 'Prove the herdr pipeline works end to end.',
     url: 'https://linear.app/example', priority: 3, priorityLabel: 'Medium', labels: ['ai'], project: null,
     team: { id: 't', key: 'SMK', name: 'Smoke' }, assignee: null, creator: null, state: { name: 'Todo', type: 'unstarted' },
     cycle: null, comments: [], createdAt: nowIso, updatedAt: nowIso,
   };
-  const app = new LinearHerd({ cfg: { ...cfg, rules: [rule] }, linear: null, herdr });
+  const app = new IssueHerd({ cfg: { ...cfg, rules: [rule] }, tracker: null, herdr });
   await app.pickUp(issue, rule);
   log(`smoke: waiting for ${key} to finish…`);
   while (app.state.runs[key].status === 'running') await sleep(2000);
   const run = app.state.runs[key];
   log(`smoke: ${run.status} ${JSON.stringify(run.result || run.error || '')}`);
-  console.log(`\nSmoke run ${key}: ${run.status}. herdr workspace ${run.workspaceId} left open; clean up with:\n  herdr workspace close ${run.workspaceId}\n  linear-herd reset ${key}`);
+  console.log(`\nSmoke run ${key}: ${run.status}. herdr workspace ${run.workspaceId} left open; clean up with:\n  herdr workspace close ${run.workspaceId}\n  issue-herd reset ${key}`);
   process.exit(run.status === 'done' ? 0 : 1);
 }
 
-main(process.argv.slice(2)).catch((e) => { console.error(`linear-herd: ${e.message}`); process.exit(1); });
+main(process.argv.slice(2)).catch((e) => { console.error(`issue-herd: ${e.message}`); process.exit(1); });

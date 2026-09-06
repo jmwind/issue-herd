@@ -25,6 +25,15 @@ const mine = { ...issue, identifier: 'DEV-124', assignee: { id: 'u-me', email: '
 
 const m = (expr, iss = issue) => compile(expr).test(iss, ctx);
 
+test('people match by login too, with or without the @, and "me" by login when there is no email (GitHub)', () => {
+  const gh = { ...issue, assignee: { id: 'jmwind', login: 'jmwind', name: 'JM', displayName: 'jmwind', email: null } };
+  const ghCtx = { viewer: { id: 'jmwind', login: 'jmwind', email: null }, now };
+  assert.ok(compile('assignee:me').test(gh, ghCtx));
+  assert.ok(compile('assignee:@jmwind').test(gh, ghCtx));
+  assert.ok(compile('assignee:jmwind').test(gh, ghCtx));
+  assert.ok(!compile('assignee:me').test(gh, { viewer: { id: 'other', login: 'other' }, now }));
+});
+
 test('tokenizer handles quotes, operators and parens', () => {
   const toks = tokenize('label:"needs review" and (priority>=2 or not team:DEV)');
   assert.deepEqual(toks.map((t) => t.t), ['word', 'op', 'value', 'and', '(', 'word', 'op', 'word', 'or', 'not', 'word', 'op', 'word', ')']);
