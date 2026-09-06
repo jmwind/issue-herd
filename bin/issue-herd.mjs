@@ -37,7 +37,9 @@ import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCrede
 import { Herdr, agentNameFor } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
-import { makeWorktree } from '../src/worktree.mjs';
+import { makeWorktree, removeWorktree } from '../src/worktree.mjs';
+import { parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
+import { GitHubTracker } from '../src/trackers/github.mjs';
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = findRepoRoot(process.cwd());
@@ -165,11 +167,18 @@ const DEFAULTS = {
     onDone: { comment: true, state: 'In Review', notify: true, closeWorkspace: false },
     onBlocked: { comment: true, notify: true },
     onIdle: { comment: true, notify: true },
+    // A run ends at the merge, not at the PR. Once GitHub says the pull request is merged the agent
+    // is asked to exit, its herdr workspace closes and its worktree goes back. On by default: the
+    // point of the issue this implements is that nobody should have to ask for it in a brief.
+    onMerged: { comment: true, notify: true, exitAgent: true, closeWorkspace: true, removeWorktree: true },
   },
   rules: [],
 };
 
 const WORKTREE_MODES = new Set(['self', 'herdr', 'none']);
+const EVENTS = ['onPickup', 'onDone', 'onBlocked', 'onIdle', 'onMerged'];
+/** How often the watcher may ask GitHub about the same pull request, whatever `pollSeconds` says. */
+const PR_POLL_MS = 60_000;
 
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no config at ${CONFIG_PATH}`);
@@ -184,7 +193,12 @@ function loadConfig() {
   cfg.rules = (raw.rules || []).map((r, i) => {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
     const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
-    for (const k of ['onPickup', 'onDone', 'onBlocked', 'onIdle']) rule[k] = { ...cfg.defaults[k], ...(r[k] || {}) };
+    for (const k of EVENTS) {
+      // `"onMerged": null` (or false) — in the rule or in the defaults — turns that step off
+      // entirely, rather than falling back to the very defaults it is trying to switch off.
+      const own = k in r ? r[k] : cfg.defaults[k];
+      rule[k] = !own ? {} : { ...(cfg.defaults[k] || {}), ...own };
+    }
     if (!WORKTREE_MODES.has(rule.worktree)) {
       throw new Error(`rule "${rule.name}": unknown worktree mode ${JSON.stringify(rule.worktree)} — use "self" (issue-herd creates it), "herdr", or "none"`);
     }
@@ -272,6 +286,7 @@ class IssueHerd {
   }
 
   async pollOnce() {
+    if (!this.dry) await this.checkMerges();
     const since = new Date(Date.now() - this.cfg.lookbackDays * 86400e3).toISOString();
     const viewer = await this.tracker.me();
     const issues = await this.tracker.openIssues({ sinceIso: since });
@@ -304,6 +319,9 @@ class IssueHerd {
   }
 
   warnOnce(key, msg) { (this.warned ??= new Set()); if (!this.warned.has(key)) { this.warned.add(key); log(msg); } }
+
+  /** How many runs are done but still waiting for their pull request to be merged. */
+  awaitingMerge() { return Object.values(this.state.runs).filter((r) => r.status === 'awaiting_merge').length; }
 
   /** "DEV-12 w3 working · DEV-15 w4 blocked" for the heartbeat and `status`. */
   async runningSummary() {
@@ -590,7 +608,13 @@ class IssueHerd {
     if (result.summary) lines.push(`\n${result.summary}`);
     if (result.testing) lines.push(`\n**How to test**\n${result.testing}`);
     if (result.notes) lines.push(`\n**Notes**\n${result.notes}`);
-    lines.push(`\n_herdr workspace \`${run.workspaceId}\` is still open._`);
+    // A merged PR is what says the run is over; until then the workspace and the worktree stay up
+    // for whoever reviews it. A prUrl that is not a pull request URL is not followed — the agent
+    // wrote it, and the watcher will not sit waiting for a merge that can never be seen.
+    const watch = status === 'pr_open' && watchesMerge(rule) && parsePrUrl(result.prUrl) ? result.prUrl : null;
+    lines.push(watch
+      ? `\n_herdr workspace \`${run.workspaceId}\` and the run's worktree stay up until ${watch} is merged._`
+      : `\n_herdr workspace \`${run.workspaceId}\` is still open._`);
     log(`${key}: done (${status}) ${result.prUrl || ''}`);
     await this.report(key, rule, rule.onDone, lines.join('\n'), 'done');
     if (this.tracker && rule.onDone.state && status === 'pr_open') {
@@ -598,6 +622,90 @@ class IssueHerd {
       catch (e) { log(`${key}: onDone state failed: ${e.message}`); }
     }
     if (rule.onDone.closeWorkspace && run.workspaceId) { try { await this.herdr.closeWorkspace(run.workspaceId); } catch { /* ignore */ } }
+    if (watch) {
+      run.prUrl = watch; run.status = 'awaiting_merge'; saveState(this.state);
+      log(`${key}: waiting for ${watch} to be merged before shutting the run down`);
+    }
+  }
+
+  /**
+   * The other half of a run. The agent stopped when the PR was open; the workspace and the worktree
+   * are still there because a reviewer may want them. When GitHub says the PR is merged, they are
+   * not needed any more, so the agent is asked to exit, the workspace closes and the worktree goes
+   * back — the part of a run nobody should have to write into their instructions.
+   *
+   * A PR closed without merging is a person's decision about work in progress, so nothing is torn
+   * down: the run simply stops being watched.
+   */
+  async checkMerges() {
+    for (const [key, run] of Object.entries(this.state.runs)) {
+      if (run.status !== 'awaiting_merge' || !run.prUrl) continue;
+      if (run.prCheckedAt && Date.now() - Date.parse(run.prCheckedAt) < PR_POLL_MS) continue;
+      const rule = this.cfg.rules.find((r) => r.name === run.rule) || { ...this.cfg.defaults, repo: REPO };
+      let pr = null;
+      try { pr = await this.askPr(run.prUrl); }
+      catch (e) { this.warnOnce(`pr:${key}:${e.message}`, `${key}: cannot read ${run.prUrl}, so a merge cannot be seen: ${e.message}`); }
+      run.prCheckedAt = new Date().toISOString(); saveState(this.state);
+      if (!pr || pr.state === 'open') continue;
+      if (pr.state === 'closed') {
+        run.status = 'done'; run.finishedAt ||= new Date().toISOString(); saveState(this.state);
+        log(`${key}: ${run.prUrl} was closed without merging; leaving workspace ${run.workspaceId} and the worktree alone`);
+        continue;
+      }
+      run.mergedAt = pr.mergedAt || new Date().toISOString();
+      log(`${key}: ${run.prUrl} is merged`);
+      const did = await this.shutdown(key, run, rule);
+      run.status = 'merged'; run.finishedAt = new Date().toISOString(); saveState(this.state);
+      await this.report(key, rule, rule.onMerged, `🎉 ${run.prUrl} is merged, so **issue-herd** shut ${key} down.\n\n${did.map((d) => `- ${d}`).join('\n')}`, 'done');
+    }
+  }
+
+  /**
+   * Shut a merged run down, in the only order that works: the agent exits first (it is a process
+   * with its own idea of how to stop), then its workspace closes, and only then does the worktree
+   * go — a directory nothing is standing in any more.
+   *
+   * Every step reports rather than throws. A merge has already happened; refusing to do the rest of
+   * the cleanup because herdr was restarted, or because the worktree has scratch files in it, would
+   * be the wrong trade.
+   */
+  async shutdown(key, run, rule) {
+    const policy = rule.onMerged || {};
+    const did = [];
+    if (policy.exitAgent && run.agentName) {
+      const how = await this.herdr.stopAgent(run.agentName);
+      log(`${key}: agent ${run.agentName} ${how}`);
+      did.push(`Agent \`${run.agentName}\` ${how}.`);
+    }
+    if (policy.closeWorkspace && run.workspaceId) {
+      try { await this.herdr.closeWorkspace(run.workspaceId); log(`${key}: workspace ${run.workspaceId} closed`); did.push(`herdr workspace \`${run.workspaceId}\` closed.`); }
+      catch (e) { log(`${key}: could not close workspace ${run.workspaceId}: ${e.message}`); did.push(`herdr workspace \`${run.workspaceId}\` is still open (${e.message}).`); }
+    }
+    if (policy.removeWorktree && run.worktree !== 'none') {
+      const at = run.worktreePath || run.workDir;
+      const r = removeWorktree({ git, repo: rule.repo, at });
+      const where = at ? path.relative(rule.repo, at) || at : '(none)';
+      log(`${key}: worktree ${where}: ${r.removed ? 'removed' : `kept — ${r.reason}`}`);
+      did.push(r.removed ? `Worktree \`${where}\` removed.` : `Worktree \`${where}\` kept: ${r.reason}.`);
+    }
+    return did;
+  }
+
+  /**
+   * Ask GitHub about a run's pull request. The GitHub tracker's own token when that is the tracker,
+   * otherwise whatever this machine has for GitHub (GITHUB_TOKEN, a saved login, `gh auth token`),
+   * because a Linear issue's fix is a GitHub PR too. Resolved once, on the first PR to be watched.
+   */
+  async askPr(url) {
+    if (!this.pr) {
+      const options = { ...(this.cfg.trackerSpec.type === 'github' ? this.cfg.trackerSpec : {}), cwd: REPO };
+      const token = this.tracker instanceof GitHubTracker
+        ? this.tracker.token
+        : resolveCredential(GitHubTracker, { options })?.credential?.token || null;
+      this.pr = { host: GitHubTracker.host(options), token };
+      log(`  pull requests: ${this.pr.host}${token ? '' : ' (no GitHub token on this machine; only public repositories will answer)'}`);
+    }
+    return prState(url, this.pr);
   }
 
   async report(key, rule, policy, body, sound = 'none') {
@@ -695,7 +803,7 @@ class IssueHerd {
         const r = await this.pollOnce();
         if (r.picked.length) log(`poll #${polls}: ${r.scanned} open issues, ${r.candidates} matched, picked ${r.picked.join(', ')}`);
         const running = await this.runningSummary();
-        summary = `${hms()} poll #${polls} · ${r.scanned} open · ${r.candidates} matched · ${r.picked.length} picked${r.waiting.length ? ` · ${r.waiting.length} waiting for a slot` : ''} · running ${running.length}${running.length ? `: ${running.join(' · ')}` : ''} · next in ${this.cfg.pollSeconds}s${this.tracker.budget?.() ? ` · ${this.tracker.budget()}` : ''}`;
+        summary = `${hms()} poll #${polls} · ${r.scanned} open · ${r.candidates} matched · ${r.picked.length} picked${r.waiting.length ? ` · ${r.waiting.length} waiting for a slot` : ''} · running ${running.length}${running.length ? `: ${running.join(' · ')}` : ''}${this.awaitingMerge() ? ` · ${this.awaitingMerge()} awaiting merge` : ''} · next in ${this.cfg.pollSeconds}s${this.tracker.budget?.() ? ` · ${this.tracker.budget()}` : ''}`;
       } catch (e) {
         this.warnOnce(`poll:${e.message}`, `poll #${polls} failed: ${e.message} (further identical failures show only in the live line)`);
         summary = `${hms()} poll #${polls} FAILED (${e.message.slice(0, 60)}) · retry in ${this.cfg.pollSeconds}s`;
@@ -870,12 +978,12 @@ async function main(argv) {
     const s = loadState();
     const rows = Object.entries(s.runs);
     if (!rows.length) { console.log(`no runs yet in ${REPO}`); return; }
-    console.log(`${'issue'.padEnd(10)} ${'run'.padEnd(9)} ${'agent'.padEnd(8)} ${'ws'.padEnd(4)} ${'rule'.padEnd(12)} ${'started'.padEnd(16)} outcome`);
+    console.log(`${'issue'.padEnd(10)} ${'run'.padEnd(14)} ${'agent'.padEnd(8)} ${'ws'.padEnd(4)} ${'rule'.padEnd(12)} ${'started'.padEnd(16)} outcome`);
     for (const [k, r] of rows) {
       let agent = '-';
       if (r.status === 'running') { const a = await herdr.agentGet(r.agentName).catch(() => null); agent = a?.agent_status || 'gone'; }
       const outcome = r.result ? `${r.result.status}${r.result.prUrl ? ' ' + r.result.prUrl : ''}` : (r.error || '');
-      console.log(`${k.padEnd(10)} ${r.status.padEnd(9)} ${agent.padEnd(8)} ${(r.workspaceId || '').padEnd(4)} ${r.rule.padEnd(12)} ${r.startedAt.slice(0, 16)} ${outcome}  ${r.title || ''}`);
+      console.log(`${k.padEnd(10)} ${r.status.padEnd(14)} ${agent.padEnd(8)} ${(r.workspaceId || '').padEnd(4)} ${r.rule.padEnd(12)} ${r.startedAt.slice(0, 16)} ${outcome}  ${r.title || ''}`);
     }
     return;
   }

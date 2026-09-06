@@ -3,12 +3,13 @@
 // config.json is committed and shared; config.local.json is gitignored and per machine. The local
 // file has the same shape and overrides field by field:
 //   - top-level keys (pollSeconds, maxConcurrent, name, …) replace the committed value
-//   - "defaults" merges key by key; its onPickup/onDone/onBlocked/onIdle objects merge key by key too
+//   - "defaults" merges key by key; its onPickup/onDone/onBlocked/onIdle/onMerged objects merge key
+//     by key too
 //   - "rules" merge by name: fields of a local rule override the committed rule with the same name
 //     (so "enabled": false can switch a rule off on one machine); a name that does not exist in
 //     config.json is added as a new rule
 
-const EVENT_KEYS = ['onPickup', 'onDone', 'onBlocked', 'onIdle'];
+const EVENT_KEYS = ['onPickup', 'onDone', 'onBlocked', 'onIdle', 'onMerged'];
 
 function isObject(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
 
