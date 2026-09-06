@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { makeWorktree, worktreeRoot } from '../src/worktree.mjs';
+import { makeWorktree, removeWorktree, worktreeRoot } from '../src/worktree.mjs';
 
 const git = (args, cwd) => {
   try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
@@ -97,4 +97,56 @@ test('worktreeDir cannot point outside the repository', () => {
 
 test('makeWorktree needs a slug', () => {
   assert.throws(() => makeWorktree({ git, repo: '/repo', slug: '' }), /needs a slug/);
+});
+
+test('a merged run\'s worktree is handed back, and the branch it was on survives', (t) => {
+  const r = repo(t);
+  const made = makeWorktree({ git, repo: r, slug: 'gh-22', branch: 'herd/gh-22' });
+  const out = removeWorktree({ git, repo: r, at: made.path });
+  assert.deepEqual(out, { removed: true, reason: null });
+  assert.equal(fs.existsSync(made.path), false);
+  assert.equal(git(['worktree', 'list'], r).includes(made.path), false);
+  assert.ok(git(['show-ref', '--verify', 'refs/heads/herd/gh-22'], r), 'the merge is on the branch; only the checkout goes');
+});
+
+test('gitignored run state does not stop a worktree from being removed', (t) => {
+  // Every run writes brief.md and result.json into .issue-herd/state/ inside its own worktree.
+  const r = repo(t);
+  fs.writeFileSync(path.join(r, '.gitignore'), '.issue-herd/state/\n.issue-herd/worktrees/\n');
+  execFileSync('git', ['add', '.gitignore'], { cwd: r });
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'ignore state'], { cwd: r });
+  const made = makeWorktree({ git, repo: r, slug: 'gh-22', branch: 'herd/gh-22' });
+  fs.mkdirSync(path.join(made.path, '.issue-herd/state/runs/GH-22'), { recursive: true });
+  fs.writeFileSync(path.join(made.path, '.issue-herd/state/runs/GH-22/result.json'), '{"status":"pr_open"}');
+  assert.equal(removeWorktree({ git, repo: r, at: made.path }).removed, true);
+});
+
+test('a worktree with work still in it is kept, and says why', (t) => {
+  // The PR is merged, but something in there is not committed. A directory is cheaper than
+  // whatever that file was.
+  const r = repo(t);
+  const made = makeWorktree({ git, repo: r, slug: 'gh-23', branch: 'herd/gh-23' });
+  fs.writeFileSync(path.join(made.path, 'notes.txt'), 'not committed anywhere');
+  const out = removeWorktree({ git, repo: r, at: made.path });
+  assert.equal(out.removed, false);
+  assert.match(out.reason, /uncommitted or untracked/);
+  assert.ok(fs.existsSync(made.path));
+});
+
+test('the repository\'s own checkout is never removed', (t) => {
+  // "worktree": "none" runs work in the checkout the watcher was started in.
+  const r = repo(t);
+  const out = removeWorktree({ git, repo: r, at: r });
+  assert.equal(out.removed, false);
+  assert.match(out.reason, /the repository itself/);
+  assert.ok(fs.existsSync(path.join(r, '.git')));
+  assert.deepEqual(removeWorktree({ git, repo: r, at: null }), { removed: false, reason: 'the run had no worktree of its own' });
+});
+
+test('a worktree somebody already deleted is pruned, not an error', (t) => {
+  const r = repo(t);
+  const made = makeWorktree({ git, repo: r, slug: 'gh-24', branch: 'herd/gh-24' });
+  fs.rmSync(made.path, { recursive: true, force: true });
+  assert.deepEqual(removeWorktree({ git, repo: r, at: made.path }), { removed: false, reason: 'already gone' });
+  assert.equal(git(['worktree', 'list'], r).includes(made.path), false, 'the admin files went too');
 });

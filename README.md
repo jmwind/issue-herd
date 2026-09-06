@@ -234,7 +234,9 @@ The same fields work on every tracker; what they map to on GitHub is in
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
     "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
     "onBlocked": { "comment": true, "notify": true },   // agent hit a permission/question dialog
-    "onIdle":    { "comment": true, "notify": true }    // agent stopped without writing result.json
+    "onIdle":    { "comment": true, "notify": true },   // agent stopped without writing result.json
+    "onMerged":  { "comment": true, "notify": true, "exitAgent": true,
+                   "closeWorkspace": true, "removeWorktree": true }  // the PR from this run was merged
   },
   "rules": [                  // evaluated in order; first match wins; every rule inherits defaults
     { "name": "ai", "match": "label:ai and team:ENG and not state:started", "enabled": true },
@@ -392,13 +394,39 @@ whatever your rule says (`not state:started` excludes anything already In Progre
    comments the result on the issue, moves it to In Review on `pr_open`, and sends a herdr
    notification. If Claude gets **blocked** on a permission dialog or **stops** to ask a question,
    you get one comment and one notification telling you which workspace to open.
-8. Workspaces are left open so you can inspect, test, and steer. Close them yourself.
+8. Workspaces are left open so you can inspect, test, and steer.
+9. On `pr_open`, the run is not over: issue-herd keeps watching the pull request (once a minute,
+   whatever `pollSeconds` says). When GitHub says it is **merged**, the run is shut down for you —
+   the agent is asked to exit with `/exit` so it can stop the way its own tool wants to, its herdr
+   workspace closes, and its worktree is handed back with `git worktree remove`. One last comment on
+   the issue says what was cleaned up. Nothing about this belongs in your instructions; it is what
+   `onMerged` does by default. A PR **closed without merging** is a decision about work in progress,
+   so nothing is torn down — the run just stops being watched.
 
-If you restart the watcher, it re-attaches to agents that are still alive and finalizes any run
-whose result file appeared while it was down. A pickup for an issue whose session is still running —
-after `issue-herd reset <KEY>`, or a retry of a start that failed late — reuses that session instead
-of building a second workspace beside it, so nothing is left adrift and you keep the pane you have
-been typing into.
+If you restart the watcher, it re-attaches to agents that are still alive, finalizes any run whose
+result file appeared while it was down, and goes on watching the pull requests it had not seen
+merged yet. A pickup for an issue whose session is still running — after `issue-herd reset <KEY>`,
+or a retry of a start that failed late — reuses that session instead of building a second workspace
+beside it, so nothing is left adrift and you keep the pane you have been typing into.
+
+### When the PR is merged
+
+`onMerged` is on by default and each step can be switched off on its own; `"onMerged": null` turns
+the whole thing off and leaves runs open as they were before.
+
+| key | default | what it does when the PR is merged |
+| --- | --- | --- |
+| `exitAgent` | `true` | sends the agent `/exit` and waits up to 20s for it to go |
+| `closeWorkspace` | `true` | `herdr workspace close` |
+| `removeWorktree` | `true` | `git worktree remove` — never forced, so a worktree with uncommitted or untracked files is kept and the log says so |
+| `comment` / `notify` | `true` | one comment on the issue and one herdr notification saying what was cleaned up |
+
+The pull request is read straight from GitHub, whichever tracker the issue came from (a Linear
+issue's PR is on GitHub too). It uses the GitHub tracker's token when that is your tracker, and
+otherwise whatever this machine has for GitHub — `GITHUB_TOKEN`, `issue-herd login github`, or
+`gh auth token`. Without one, only public repositories answer. A `prUrl` pointing anywhere but the
+GitHub host this machine trusts is refused rather than fetched: `result.json` is written by an agent
+that has read the issue's text, so it does not get to say where your token goes.
 
 ## Manual testing and screenshots
 

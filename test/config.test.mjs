@@ -47,3 +47,11 @@ test('overridePaths lists what the local file changes', () => {
   assert.deepEqual(paths, ['pollSeconds', 'defaults.claimLabel', 'defaults.onPickup.state', 'rules[bugs].enabled']);
   assert.deepEqual(overridePaths(null), []);
 });
+
+test('onMerged merges one level deep like the other events', () => {
+  // Turning one step of the merge cleanup off on this machine must not take the rest with it.
+  const withMerge = { ...base, defaults: { ...base.defaults, onMerged: { comment: true, exitAgent: true, closeWorkspace: true, removeWorktree: true } } };
+  const cfg = mergeConfig(withMerge, { defaults: { onMerged: { removeWorktree: false } } });
+  assert.deepEqual(cfg.defaults.onMerged, { comment: true, exitAgent: true, closeWorkspace: true, removeWorktree: false });
+  assert.deepEqual(overridePaths({ defaults: { onMerged: { removeWorktree: false } } }), ['defaults.onMerged.removeWorktree']);
+});

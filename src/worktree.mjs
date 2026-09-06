@@ -61,3 +61,22 @@ export function makeWorktree({ git, repo, dir = '.issue-herd/worktrees', slug, b
   }
   return { path: at, branch, created: true };
 }
+
+/**
+ * Give a finished run's worktree back, once its PR is merged. `git worktree remove` deletes the
+ * checkout and the admin files in one step, and refuses when the tree has uncommitted or untracked
+ * work in it — which is exactly the answer we want, so nothing here forces it. A worktree that is
+ * kept is a log line, never an error: the merge already happened, and the cleanup lagging behind
+ * costs a directory, while a forced delete costs whatever was in it.
+ *
+ * Returns { removed, reason }. The repository's own checkout is never removed, whatever a run
+ * recorded as its working directory.
+ */
+export function removeWorktree({ git, repo, at }) {
+  if (!at) return { removed: false, reason: 'the run had no worktree of its own' };
+  const dir = path.resolve(at);
+  if (dir === path.resolve(repo)) return { removed: false, reason: 'the run worked in the repository itself' };
+  if (!fs.existsSync(dir)) { git(['worktree', 'prune'], repo); return { removed: false, reason: 'already gone' }; }
+  if (git(['worktree', 'remove', dir], repo) !== null) return { removed: true, reason: null };
+  return { removed: false, reason: 'git would not remove it (uncommitted or untracked files?) — remove it by hand when you are done with it' };
+}

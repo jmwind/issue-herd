@@ -3,6 +3,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileP = promisify(execFile);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class Herdr {
   constructor({ bin = 'herdr', env = process.env, log = () => {} } = {}) {
@@ -81,6 +82,35 @@ export class Herdr {
 
   async prompt(target, text) {
     return this.run(['agent', 'prompt', target, text]);
+  }
+
+  /**
+   * Ask the agent to exit, and wait until herdr stops seeing it.
+   *
+   * `/exit` is what a person types in Claude Code, so it is what the agent is sent: the tool gets
+   * to write its own history and shut its own MCP servers down instead of having the pane pulled
+   * out from under it. That is the "shutdown steps specific to that agent" part — a coding tool
+   * that stops differently gets its own line here, not an instruction in somebody's brief.
+   *
+   * Never throws, and never insists: closing the workspace is the caller's fallback, so this
+   * reports what happened ('exited', 'was already gone', 'is still running') and returns.
+   */
+  async stopAgent(name, { exitCommand = '/exit', timeoutMs = 20_000, pollMs = 1000 } = {}) {
+    try {
+      if (!(await this.agentGet(name))) return 'was already gone';
+      await this.prompt(name, exitCommand);
+    } catch (err) {
+      if (isNotFound(err)) return 'was already gone';
+      this.log(`agent ${name} could not be asked to exit: ${err.message}`);
+      return 'is still running';
+    }
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await sleep(pollMs);
+      const agent = await this.agentGet(name).catch(() => 'unreadable');
+      if (agent === null) return 'exited';
+    }
+    return 'is still running';
   }
 
   /** The agent, or null when herdr has no agent by that name (its code is `agent_not_found`). */

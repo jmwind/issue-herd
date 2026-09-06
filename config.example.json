@@ -31,6 +31,13 @@
     "onIdle": {
       "comment": true,
       "notify": true
+    },
+    "onMerged": {
+      "comment": true,
+      "notify": true,
+      "exitAgent": true,
+      "closeWorkspace": true,
+      "removeWorktree": true
     }
   },
   "rules": [
