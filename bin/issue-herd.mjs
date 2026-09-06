@@ -278,7 +278,8 @@ class IssueHerd {
     const ctx = { viewer, now: Date.now() };
     const candidates = [];
     for (const issue of issues) {
-      if (this.state.runs[issue.identifier]) continue;
+      const prev = this.state.runs[issue.identifier];
+      if (prev && !retryable(prev, issue)) continue;
       for (const rule of this.cfg.rules) {
         if (rule.enabled === false) continue;
         let ok = false;
@@ -333,11 +334,18 @@ class IssueHerd {
     log(`picking up ${key} "${issue.title}" (rule ${rule.name})`);
 
     // Claim on Linear first, so a second watcher (or this one after a crash) sees it before any work starts.
+    // Nothing has been built yet, so if the claim cannot be made the run is forgotten rather than left
+    // behind as `starting` — a stale `starting` run is what resume() trips over on the next start.
     if (this.tracker && rule.claimLabel) {
-      const fresh = await this.tracker.issueByKey(key);
-      const why = fresh && alreadyTaken(fresh, rule, await this.tracker.me());
-      if (why) { delete this.state.runs[key]; saveState(this.state); throw new Error(`skipped, ${why}`); }
-      await this.tracker.addLabel(issue.id, rule.claimLabel);
+      try {
+        const fresh = await this.tracker.issueByKey(key);
+        const why = fresh && alreadyTaken(fresh, rule, await this.tracker.me());
+        if (why) throw new Error(`skipped, ${why}`);
+        await this.tracker.addLabel(issue.id, rule.claimLabel);
+      } catch (e) {
+        delete this.state.runs[key]; saveState(this.state);
+        throw e;
+      }
       run.claimed = rule.claimLabel; saveState(this.state);
     }
 
@@ -416,10 +424,25 @@ class IssueHerd {
       run.status = 'failed'; run.error = e.message; run.finishedAt = new Date().toISOString(); saveState(this.state);
       if (this.tracker) {
         try { await this.tracker.comment(issue.id, `⚠️ issue-herd failed to start a session: ${e.message}`); } catch { /* ignore */ }
-        if (run.claimed) { try { await this.tracker.removeLabel(issue.id, run.claimed); } catch { /* ignore */ } }
+        await this.releaseClaim(key, run);
       }
       throw e;
     }
+  }
+
+  /**
+   * After a failed start: give the claim label back so the issue can be taken again, and record
+   * the issue's updatedAt as it stands *after* our own cleanup. retryable() compares against that,
+   * so our comment and label removal do not count as the user changing the issue.
+   */
+  async releaseClaim(key, run) {
+    if (!this.tracker) return;
+    if (run.claimed) {
+      try { await this.tracker.removeLabel(run.issueId, run.claimed); log(`${key}: removed the '${run.claimed}' claim label`); }
+      catch (e) { log(`${key}: could not remove the '${run.claimed}' claim label: ${e.message}`); }
+    }
+    try { run.issueUpdatedAt = (await this.tracker.issueByKey(key))?.updatedAt || null; } catch { /* finishedAt is the fallback */ }
+    saveState(this.state);
   }
 
   /** The directory Claude is working in: the worktree it created, or the repo. Polls herdr until it settles. */
@@ -590,10 +613,22 @@ class IssueHerd {
       const rule = this.cfg.rules.find((r) => r.name === run.rule) || this.cfg.defaults;
       const result = run.resultPath ? readJson(run.resultPath, null) : null;
       if (result) { await this.finalize(key, result, rule); continue; }
-      const agent = await this.herdr.agentGet(run.agentName);
+      let agent;
+      try { agent = await this.herdr.agentGet(run.agentName); }
+      catch (e) { log(`${key}: could not check agent ${run.agentName}, leaving the run as ${run.status}: ${e.message}`); continue; }
       if (!agent) {
         const was = run.status;
-        run.status = was === 'starting' ? 'failed' : 'stopped'; run.finishedAt = new Date().toISOString(); saveState(this.state);
+        if (was === 'starting') {
+          // Died mid-start. Treat it like a failed start: hand the claim back so the issue can be
+          // taken again. A start that never even got a workspace left nothing behind, so forget it
+          // outright and let the next poll try again.
+          await this.releaseClaim(key, run);
+          if (!run.workspaceId) { delete this.state.runs[key]; saveState(this.state); log(`${key}: was starting before restart and never got a workspace; forgetting it`); continue; }
+          run.status = 'failed'; run.error ??= 'the watcher stopped before the session was up';
+        } else {
+          run.status = 'stopped';
+        }
+        run.finishedAt = new Date().toISOString(); saveState(this.state);
         log(`${key}: was ${was} before restart, agent is gone → ${run.status}`);
         continue;
       }
@@ -673,6 +708,17 @@ class IssueHerd {
 }
 
 function prio(issue) { return issue.priority === 0 ? 5 : issue.priority; }
+
+/**
+ * A failed run is not the last word: once the issue changes on the tracker after the failure was
+ * recorded (someone edits it, moves it, re-adds a label), it is a candidate again. Runs that are
+ * running, done, or stopped keep blocking the issue; `issue-herd reset` clears those by hand.
+ */
+function retryable(run, issue) {
+  if (run.status !== 'failed') return false;
+  const since = run.issueUpdatedAt || run.finishedAt;
+  return !since || !issue.updatedAt || Date.parse(issue.updatedAt) > Date.parse(since);
+}
 
 const CLAIM_MARKER = '**issue-herd** picked this up';
 
@@ -862,7 +908,13 @@ async function main(argv) {
     if (cmd === 'once' && app.supervising.size) { log(`supervising ${app.supervising.size} run(s); Ctrl-C when done`); await new Promise(() => {}); }
     return;
   }
-  if (cmd === 'run') return app.loop();
+  if (cmd === 'run') {
+    // The watcher must outlive its own mistakes: anything that escapes the per-poll and per-run
+    // handlers is logged and the loop carries on. Fix the config or the issue and it is retried.
+    process.on('uncaughtException', (e) => log(`unexpected error (kept running): ${e.stack || e.message}`));
+    process.on('unhandledRejection', (e) => log(`unexpected error (kept running): ${e?.stack || e?.message || e}`));
+    return app.loop();
+  }
   throw new Error(`unknown command ${cmd}`);
 }
 

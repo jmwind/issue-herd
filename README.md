@@ -92,8 +92,8 @@ missing `.gitignore`. Then:
    the key. Either way the token is saved in `~/.config/issue-herd/credentials.json`, once per
    machine, for every repo. Prefer a file? `LINEAR_API_KEY` / `GITHUB_TOKEN` in the repo's
    `.env.local` (or the process environment) wins over the saved token.
-2. Create the trigger label your rules use (e.g. `ai`). On Linear also create the claim label
-   (`herdr` by default); on GitHub issue-herd creates it the first time it claims an issue.
+2. Create the trigger label your rules use (e.g. `ai`). The claim label (`herdr` by default) is
+   created for you the first time it is needed, on either tracker.
 3. Edit `.issue-herd/config.json` (the rules) and `.issue-herd/instructions.md` (what the agent
    must know about this repo: checks to run, things never to run, branch and PR conventions, when
    to stop and ask). Commit both.
@@ -261,9 +261,10 @@ logs which keys are overridden at startup, and edits to it are picked up live li
 }
 ```
 
-The claim label must exist in Linear (create it there first; GitHub creates it on first use). With
-a different claim label per machine, the pickup comment marker is what stops a second machine from
-taking an issue this one already claimed, so keep `onPickup.comment` on.
+A claim label that does not exist yet is created on first use — a workspace label on Linear, a
+repository label on GitHub — so a per-machine claim label like `herdr-mbp` never has to be made by
+hand. With a different claim label per machine, the pickup comment marker is what stops a second
+machine from taking an issue this one already claimed, so keep `onPickup.comment` on.
 
 `state` values in `onPickup`/`onDone` are matched against the team's workflow by name, then by
 type, so `"started"` works for any team. Set a key to `null`/`false` to skip that step.
@@ -407,9 +408,12 @@ workspace and open the port in your browser.
   retries three times. A slow shell init (`nvm` in `.zshrc`) is the usual cause.
 - Claude never goes `working` after the prompt — open the workspace; it is probably sitting on
   the trust-this-folder dialog for a new worktree. Answer it once per repo.
-- Re-run an issue: remove the `herdr` claim label on the issue, delete the pickup comment if you
-  want a clean thread, then `issue-herd reset ENG-123` (or `reset GH-7`). It will be picked up on
-  the next poll if the rule still matches.
+- A pickup that failed (`issue-herd status` shows `failed`) is retried by itself: the claim label
+  is handed back, and the next time the issue changes on the tracker (an edit, a state change, a
+  label) it is a candidate again. Fix what the log complained about and touch the issue.
+- Re-run an issue that finished or stopped: remove the `herdr` claim label on the issue, delete the
+  pickup comment if you want a clean thread, then `issue-herd reset ENG-123` (or `reset GH-7`). It
+  will be picked up on the next poll if the rule still matches.
 - `no Linear credentials` / `no GitHub credentials` — run `issue-herd login`, or put the token in
   `.env.local`. A `401` means the token it found (the banner says where) is dead: `login` again.
 - `cannot tell which GitHub repository this is` — the `origin` remote is not on github.com; set

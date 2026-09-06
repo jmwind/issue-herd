@@ -83,8 +83,10 @@ export class Herdr {
     return this.run(['agent', 'prompt', target, text]);
   }
 
+  /** The agent, or null when herdr has no agent by that name (its code is `agent_not_found`). */
   async agentGet(target) {
-    try { const r = await this.run(['agent', 'get', target]); return r.result?.agent || r.result; } catch (err) { if (err.code === 'not_found') return null; throw err; }
+    try { const r = await this.run(['agent', 'get', target]); return r.result?.agent || r.result; }
+    catch (err) { if (isNotFound(err)) return null; throw err; }
   }
 
   /**
@@ -128,6 +130,9 @@ export class Herdr {
     try { await this.run(['notification', 'show', title, '--body', body, '--sound', sound]); } catch { /* best effort */ }
   }
 }
+
+/** herdr's not-found codes are per noun: `agent_not_found`, `pane_not_found`, ... */
+export function isNotFound(err) { return /(^|_)not_found$/.test(err?.code || ''); }
 
 function pickIds(result) {
   const ws = result.workspace || {};

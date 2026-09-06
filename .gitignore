@@ -5,3 +5,4 @@ state.json
 runs/
 logs/
 .DS_Store
+*.swp
