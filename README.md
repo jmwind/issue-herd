@@ -235,8 +235,8 @@ The same fields work on every tracker; what they map to on GitHub is in
     "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
     "onBlocked": { "comment": true, "notify": true },   // agent hit a permission/question dialog
     "onIdle":    { "comment": true, "notify": true },   // agent stopped without writing result.json
-    "onMerged":  { "comment": true, "notify": true, "exitAgent": true,
-                   "closeWorkspace": true, "removeWorktree": true }  // the PR from this run was merged
+    "onMerged":  { "comment": false, "notify": true, "exitAgent": false,
+                   "closeWorkspace": false, "removeWorktree": false }  // the PR from this run was merged
   },
   "rules": [                  // evaluated in order; first match wins; every rule inherits defaults
     { "name": "ai", "match": "label:ai and team:ENG and not state:started", "enabled": true },
@@ -396,12 +396,10 @@ whatever your rule says (`not state:started` excludes anything already In Progre
    you get one comment and one notification telling you which workspace to open.
 8. Workspaces are left open so you can inspect, test, and steer.
 9. On `pr_open`, the run is not over: issue-herd keeps watching the pull request (once a minute,
-   whatever `pollSeconds` says). When GitHub says it is **merged**, the run is shut down for you —
-   the agent is asked to exit with `/exit` so it can stop the way its own tool wants to, its herdr
-   workspace closes, and its worktree is handed back with `git worktree remove`. One last comment on
-   the issue says what was cleaned up. Nothing about this belongs in your instructions; it is what
-   `onMerged` does by default. A PR **closed without merging** is a decision about work in progress,
-   so nothing is torn down — the run just stops being watched.
+   whatever `pollSeconds` says). When GitHub says it is **merged**, you get a notification saying so
+   and naming the workspace and worktree the run is still holding, and the run is recorded as
+   `merged`. Nothing is torn down unless you asked for it in `onMerged` — see below. A PR **closed
+   without merging** just stops being watched.
 
 If you restart the watcher, it re-attaches to agents that are still alive, finalizes any run whose
 result file appeared while it was down, and goes on watching the pull requests it had not seen
@@ -411,15 +409,36 @@ beside it, so nothing is left adrift and you keep the pane you have been typing 
 
 ### When the PR is merged
 
-`onMerged` is on by default and each step can be switched off on its own; `"onMerged": null` turns
-the whole thing off and leaves runs open as they were before.
+By default a merge is **reported, not acted on**. The review that mattered happened before the
+merge, but the agent's session is the record of how the work was done, and throwing that away is
+not something to do to somebody who did not ask for it. So the watcher tells you the run is
+finished and names what it is still holding; closing it is yours.
+
+Turn on the parts you want, in `defaults` or per rule (and `config.local.json` if you want it on
+one machine only):
 
 | key | default | what it does when the PR is merged |
 | --- | --- | --- |
-| `exitAgent` | `true` | sends the agent `/exit` and waits up to 20s for it to go |
-| `closeWorkspace` | `true` | `herdr workspace close` |
-| `removeWorktree` | `true` | `git worktree remove` — never forced, so a worktree with uncommitted or untracked files is kept and the log says so |
-| `comment` / `notify` | `true` | one comment on the issue and one herdr notification saying what was cleaned up |
+| `exitAgent` | `false` | sends the agent `/exit` and waits up to 20s for it to go — Claude Code then writes its own history and stops its own MCP servers, rather than having its pane pulled away |
+| `closeWorkspace` | `false` | `herdr workspace close` |
+| `removeWorktree` | `false` | `git worktree remove` — never forced, so a worktree with uncommitted or untracked files is kept and the log says so |
+| `notify` | `true` | one herdr notification: the PR merged, and which workspace and worktree the run still has |
+| `comment` | `false` | the same as a comment on the issue. Off because GitHub already writes the merge into the issue's timeline; worth turning on for Linear, which does not |
+
+`"onMerged": null` switches the whole thing off, including the watching, and a run then finishes at
+`pr_open` as it did before any of this existed.
+
+The full cleanup, for a rule whose runs you never want to look at again:
+
+```jsonc
+"onMerged": { "exitAgent": true, "closeWorkspace": true, "removeWorktree": true }
+```
+
+What that costs you is the agent's terminal scrollback. `result.json` and `brief.md` are archived
+into the watcher's own `.issue-herd/state/runs/<KEY>/` before anything is removed, and the diff is
+in the PR, but the transcript lives with the session: Claude Code keeps it under
+`~/.claude/projects/<the worktree path>/`, so once the worktree is gone there is nowhere left to
+`claude --resume` from.
 
 The pull request is read straight from GitHub, whichever tracker the issue came from (a Linear
 issue's PR is on GitHub too). It uses the GitHub tracker's token when that is your tracker, and
