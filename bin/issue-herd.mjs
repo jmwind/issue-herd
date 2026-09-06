@@ -34,7 +34,7 @@ import { mergeConfig, overridePaths } from '../src/config.mjs';
 import { TRACKERS, isTracker, mergeSpec, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
 import { slugify, userDisplay } from '../src/tracker.mjs';
 import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCredential, saveCredential, terminalUi } from '../src/auth.mjs';
-import { Herdr, agentNameFor } from '../src/herdr.mjs';
+import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
 import { makeWorktree } from '../src/worktree.mjs';
@@ -318,6 +318,7 @@ class IssueHerd {
 
   async pickUp(issue, rule) {
     const key = issue.identifier;
+    const previous = this.state.runs[key]; // a run we are retrying; its session may still be up
     const slug = `${key.toLowerCase()}-${slugify(issue.title, 32)}`.replace(/-+$/, '');
     const archiveDir = path.join(RUNS_DIR, key); // in the watcher's checkout: issue.json now, result.json copied on finish
     fs.mkdirSync(archiveDir, { recursive: true });
@@ -350,10 +351,25 @@ class IssueHerd {
     }
 
     try {
+      // 0. An earlier attempt at this issue may have left its session running: a start that failed
+      //    after `agent start` succeeded, or an `issue-herd reset` followed by another pickup. herdr
+      //    agent names are unique, so building a second workspace and starting a second agent under
+      //    the same name cannot work — it is refused with `agent_name_taken`, and what it leaves
+      //    behind is an empty workspace and a live session nobody is watching. That session is this
+      //    issue's session, and it is the one the owner has been typing into. Take it back.
+      const found = await this.herdr.agentGet(run.agentName).catch((e) => { log(`${key}: could not ask herdr about agent ${run.agentName}: ${e.message}`); return null; });
+      const existing = found && isOurAgent(found, rule.repo, previous) ? found : null;
+      if (found && !existing) log(`${key}: an agent called "${run.agentName}" is running in ${found.foreground_cwd || found.cwd}, which is not this repository; leaving it alone`);
+
       // 1. workspace (+ worktree)
       const label = `${key} ${issue.title}`.slice(0, 48);
       let ws;
-      if (rule.worktree === 'herdr') {
+      if (existing) {
+        ws = agentPlacement(existing);
+        run.adopted = true;
+        run.worktreePath = ws.cwd;
+        log(`${key}: agent "${run.agentName}" is already running (${existing.agent_status}) in ${ws.cwd}; reusing that session`);
+      } else if (rule.worktree === 'herdr') {
         ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `herd/${slug}`, label });
         run.worktreePath = ws.path;
       } else if (rule.worktree === 'self') {
@@ -370,13 +386,15 @@ class IssueHerd {
 
       fs.writeFileSync(path.join(archiveDir, 'issue.json'), JSON.stringify(issue, null, 2));
 
-      // 2. start claude
-      const agentArgs = ['--name', key];
-      if (rule.permissionMode) agentArgs.push('--permission-mode', rule.permissionMode);
-      agentArgs.push(...(rule.claudeArgs || []));
-      await sleep(1500); // let the shell reach its prompt
-      await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs });
-      log(`${key}: claude started as agent "${run.agentName}"`);
+      // 2. start claude (an adopted session is already up)
+      if (!existing) {
+        const agentArgs = ['--name', key];
+        if (rule.permissionMode) agentArgs.push('--permission-mode', rule.permissionMode);
+        agentArgs.push(...(rule.claudeArgs || []));
+        await sleep(1500); // let the shell reach its prompt
+        await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs });
+        log(`${key}: claude started as agent "${run.agentName}"`);
+      }
 
       // 3. brief — written INSIDE the working tree the agent actually uses, under the gitignored
       // .issue-herd/state/, so reading and writing it needs no permission dialog. A path in the main
@@ -405,16 +423,29 @@ class IssueHerd {
       saveState(this.state);
       log(`${key}: working tree ${workDir}`);
 
-      // 4. prompt
-      await this.herdr.prompt(run.agentName, `You are working ${this.cfg.Tracker.label} issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`);
-      const st = await this.herdr.waitAgent(run.agentName, { until: ['working'], timeoutMs: 30_000 });
-      log(`${key}: prompted (state ${st})`);
+      // 4. prompt. The session is up and briefed, so from here on the run is the supervisor's:
+      // a prompt herdr will not take yet (Claude Code came up on its trust dialog, say) is a run
+      // waiting for its owner, not a failed one. Failing here used to abandon a live agent that had
+      // never been told what to do, and then collide with it on the retry.
+      run.promptText = `You are working ${this.cfg.Tracker.label} issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`;
+      run.pendingPrompt = true;
       run.status = 'running'; saveState(this.state);
+      const sent = await this.deliverPrompt(key, run);
+      if (sent) {
+        const st = await this.herdr.waitAgent(run.agentName, { until: ['working'], timeoutMs: 30_000 });
+        log(`${key}: prompted (state ${st})`);
+      }
 
-      // 5. tell Linear
+      // 5. tell the tracker. The session is up and briefed by now, so nothing here may fail the run.
       if (this.tracker && rule.onPickup.comment) {
         const host = os.hostname();
-        await this.tracker.comment(issue.id, `🐑 **issue-herd** picked this up on \`${host}\` · herdr workspace \`${run.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`);
+        const how = run.adopted ? 'took this back over' : 'picked this up';
+        try { await this.tracker.comment(issue.id, `🐑 **issue-herd** ${how} on \`${host}\` · herdr workspace \`${run.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`); }
+        catch (e) { log(`${key}: pickup comment failed: ${e.message}`); }
+      }
+      if (!sent) {
+        run.notified.blocked = true; saveState(this.state);
+        await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is not taking input yet — answer whatever it is showing in herdr workspace \`${run.workspaceId}\` and issue-herd will send it the brief.${await this.tail(run.agentName, 12)}`, 'request');
       }
       if (this.tracker && rule.onPickup.assignToMe) { try { await this.tracker.assign(issue, await this.tracker.me()); } catch (e) { log(`${key}: assign failed: ${e.message}`); } }
       if (this.tracker && rule.onPickup.state) { try { await this.tracker.setState(issue, rule.onPickup.state); } catch (e) { log(`${key}: state failed: ${e.message}`); } }
@@ -475,7 +506,10 @@ class IssueHerd {
   settleBranch(key, run, rule, workDir) {
     if (rule.worktree === 'none') { run.branch = null; return null; }
     if (path.resolve(workDir) === path.resolve(rule.repo)) log(`${key}: no worktree of its own; leaving the branch in ${workDir} alone`);
-    const { branch, action, from, want } = reconcileBranch({ git, cwd: workDir, want: run.wantBranch, repo: rule.repo });
+    // An adopted session may already have commits and an upstream on the branch it is on, so the
+    // name it is standing on wins over the one this pickup would have chosen. Only a session we
+    // just started is renameable.
+    const { branch, action, from, want } = reconcileBranch({ git, cwd: workDir, want: run.adopted ? null : run.wantBranch, repo: rule.repo });
     run.branch = branch;
     saveState(this.state);
     if (action === 'renamed') log(`${key}: branch ${from} → ${branch}`);
@@ -511,11 +545,37 @@ class IssueHerd {
       catch (e) {
         lastErr = e;
         if (e.code === 'agent_not_ready') return; // started but sitting on a startup dialog; supervise() will see 'blocked'
+        // Our own previous attempt in this loop may have started it after all; anyone else's agent
+        // by that name is not ours to prompt.
+        if (isNameTaken(e) && (await this.herdr.agentGet(opts.name).catch(() => null))?.pane_id === opts.paneId) return;
         if (!/pane_not_ready|not at.*prompt|busy|shell/i.test(e.message)) throw e;
         await sleep(2000 * (attempt + 1));
       }
     }
     throw lastErr;
+  }
+
+  /**
+   * Hand the agent the one prompt that makes it a run: "your brief is in <file>". Returns true when
+   * herdr took it.
+   *
+   * herdr will not type into an agent that is showing a dialog — `agent prompt` answers
+   * `agent_blocked` and sends nothing — and Claude Code shows one the first time it runs in a
+   * directory. So the prompt is kept on the run and tried again by the supervisor as soon as the
+   * agent takes input, which is the whole difference between a session that carries on once its
+   * owner answers the dialog and one that sits there forever having never been told what to do.
+   */
+  async deliverPrompt(key, run) {
+    if (!run.pendingPrompt) return true;
+    try {
+      await this.herdr.prompt(run.agentName, run.promptText);
+      run.pendingPrompt = false; saveState(this.state);
+      log(`${key}: briefed`);
+      return true;
+    } catch (e) {
+      log(`${key}: the agent has not taken the brief yet (${isBlocked(e) ? 'it is showing a dialog' : e.message}); will try again when it takes input`);
+      return false;
+    }
   }
 
   /** Follow a run until it produces result.json or the agent disappears. Safe to call again after restart. */
@@ -530,6 +590,8 @@ class IssueHerd {
     const rule = this.cfg.rules.find((r) => r.name === run.rule) || this.cfg.defaults;
     const name = run.agentName;
     while (run.status === 'running') {
+      // A brief herdr would not take at pickup is owed to the agent; give it the moment it will.
+      if (run.pendingPrompt && await this.deliverPrompt(key, run)) run.notified.blocked = false;
       const st = await this.herdr.waitAgent(name, { timeoutMs: 6 * 3600e3 });
       const result = readJson(run.resultPath, null);
       if (result) { await this.finalize(key, result, rule); return; }
@@ -718,6 +780,19 @@ function retryable(run, issue) {
   if (run.status !== 'failed') return false;
   const since = run.issueUpdatedAt || run.finishedAt;
   return !since || !issue.updatedAt || Date.parse(issue.updatedAt) > Date.parse(since);
+}
+
+/**
+ * Is the agent herdr found under this run's name the session for *this* run? Agent names are made
+ * from the issue key alone, so two repositories watched on the same machine can both want "gh-20",
+ * and adopting the other one's would brief an agent working in someone else's checkout. It is ours
+ * when it sits inside this repository, or when it is in the workspace the previous attempt made.
+ */
+function isOurAgent(agent, repo, previous) {
+  const cwd = agent?.foreground_cwd || agent?.cwd;
+  const root = path.resolve(repo);
+  if (cwd && (path.resolve(cwd) === root || path.resolve(cwd).startsWith(root + path.sep))) return true;
+  return !!(previous?.workspaceId && previous.workspaceId === agent?.workspace_id);
 }
 
 const CLAIM_MARKER = '**issue-herd** picked this up';
@@ -922,7 +997,9 @@ async function main(argv) {
 async function smoke({ cfg, herdr, argv }) {
   const rule = {
     ...cfg.defaults, name: 'smoke', repo: REPO, worktree: argv.includes('--worktree') ? cfg.defaults.worktree : 'none',
-    prompt: path.join(PKG_DIR, 'prompts', 'smoke.md'), instructions: '',
+    // Relative, so expand() finds the package's own copy; an absolute path is refused, since a
+    // repository must not be able to name a file outside .issue-herd/ for the brief.
+    prompt: 'prompts/smoke.md', instructions: '',
     onPickup: { comment: false }, onDone: { comment: false, notify: true, closeWorkspace: false },
     onBlocked: { comment: false, notify: true }, onIdle: { comment: false, notify: true },
   };
