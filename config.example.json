@@ -5,7 +5,7 @@
   "maxConcurrent": 3,
   "defaults": {
     "worktree": "self",
-    "branch": "{{issueBranchName}}",
+    "branch": "{{issueBranchName}}{{roleSuffix}}",
     "permissionMode": "auto",
     "claudeArgs": [],
     "maxConcurrent": 2,

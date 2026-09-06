@@ -25,6 +25,19 @@ test('other templates render from slug and key', () => {
   assert.equal(branchVars({ issue, slug }).KEY, 'DEV-3298');
 });
 
+test('the default template gives every role its own branch, and roleless runs the old name', () => {
+  // Two runs cannot check one branch out into two worktrees, so a role has to reach the name.
+  const t = '{{issueBranchName}}{{roleSuffix}}';
+  assert.equal(desiredBranch({ template: t, issue, slug, worktree: 'self' }), 'jml/dev-3298-test-for-herdr');
+  assert.equal(desiredBranch({ template: t, issue, slug, worktree: 'self', role: 'review' }), 'jml/dev-3298-test-for-herdr-review');
+  assert.equal(desiredBranch({ template: 'herd/{{role}}/{{slug}}', issue, slug, worktree: 'self', role: 'impl' }), 'herd/impl/dev-3298-test-for-herdr');
+  // {{roleSuffix}} is empty on a roleless run, which is a value, not an unresolved variable.
+  assert.deepEqual(branchVars({ issue, slug }).roleSuffix, '');
+  assert.equal(branchVars({ issue, slug, role: 'review' }).role, 'review');
+  // A template that names {{role}} on a roleless run still has nothing to render, so: no opinion.
+  assert.equal(desiredBranch({ template: 'herd/{{role}}/{{slug}}', issue, slug, worktree: 'self' }), null);
+});
+
 test('no worktree means no opinion — never rename the maintainer\'s own checkout', () => {
   assert.equal(desiredBranch({ template: '{{issueBranchName}}', issue, slug, worktree: 'none' }), null);
   assert.equal(desiredBranch({ template: '{{issueBranchName}}', issue, slug, worktree: undefined }), null);

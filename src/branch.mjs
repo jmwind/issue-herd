@@ -28,27 +28,36 @@ export function isValidBranchName(name) {
  * Render a branch template ("{{issueBranchName}}", "claude/{{slug}}", …).
  * Returns null — meaning "no opinion, take what the tool made" — for an empty template, an
  * unresolved variable (the fake issue in `smoke` has no tracker branch name), or a name git would
- * reject. Never throws: a bad template must not be able to fail a run.
+ * reject. Never throws: a bad template must not be able to fail a run. A variable that is present
+ * and empty ({{roleSuffix}} on a roleless run) renders as nothing and is not "unresolved".
  */
 export function renderBranch(template, vars = {}) {
   if (!template || typeof template !== 'string') return null;
   let missing = false;
   const out = template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => {
     const v = vars[k];
-    if (v === undefined || v === null || v === '') { missing = true; return ''; }
+    if (v === undefined || v === null) { missing = true; return ''; }
     return String(v);
   });
   if (missing) return null;
   return isValidBranchName(out) ? out : null;
 }
 
-/** The variables a branch template may use. */
-export function branchVars({ issue, slug }) {
+/**
+ * The variables a branch template may use.
+ *
+ * A variable with nothing behind it is null, not "", so that renderBranch can tell "this issue has
+ * no branch name" from "this run has no role" — `roleSuffix` is legitimately empty and must still
+ * render, which is what makes the default template safe for roleless and role-scoped runs alike.
+ */
+export function branchVars({ issue, slug, role = null }) {
   return {
-    issueBranchName: issue?.branchName || '',
-    slug: slug || '',
-    key: issue?.identifier ? issue.identifier.toLowerCase() : '',
-    KEY: issue?.identifier || '',
+    issueBranchName: issue?.branchName || null,
+    slug: slug || null,
+    key: issue?.identifier ? issue.identifier.toLowerCase() : null,
+    KEY: issue?.identifier || null,
+    role: role || null,
+    roleSuffix: role ? `-${role}` : '',
   };
 }
 
@@ -57,9 +66,9 @@ export function branchVars({ issue, slug }) {
  * Always null without a worktree: `worktree: "none"` runs on the branch the repo is already on,
  * and renaming that would move the maintainer's own checkout.
  */
-export function desiredBranch({ template, issue, slug, worktree }) {
+export function desiredBranch({ template, issue, slug, worktree, role = null }) {
   if (worktree === 'none' || !worktree) return null;
-  return renderBranch(template, branchVars({ issue, slug }));
+  return renderBranch(template, branchVars({ issue, slug, role }));
 }
 
 /**

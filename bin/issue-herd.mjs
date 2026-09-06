@@ -33,6 +33,7 @@ import { compile } from '../src/expr.mjs';
 import { mergeConfig, overridePaths } from '../src/config.mjs';
 import { TRACKERS, isTracker, mergeSpec, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
 import { slugify, userDisplay } from '../src/tracker.mjs';
+import { alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, issueKeyOf, normalizeRole, pickCandidates, pickupMarker, runKeyFor } from '../src/claim.mjs';
 import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCredential, saveCredential, terminalUi } from '../src/auth.mjs';
 import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
@@ -139,6 +140,10 @@ const DEFAULTS = {
   pollSeconds: 30,
   lookbackDays: 30,
   maxConcurrent: 3,
+  // Which claim roles this project runs, e.g. ["impl", "review"]. null means "whatever the rules
+  // ask for"; a list switches on exactly those, so turning a role off is one line rather than
+  // deleting the rules that use it. See src/claim.mjs.
+  roles: null,
   defaults: {
     // Who creates the git worktree a run works in. "self" is issue-herd, with one `git worktree
     // add` on the branch below, so the directory and the branch are both settled before the agent
@@ -152,7 +157,7 @@ const DEFAULTS = {
     // GitHub's is what its "create a branch" button would name). In "herdr" mode it is passed to
     // `herdr worktree create --branch`; in "claude" mode the worktree is renamed onto it before the
     // agent is prompted. null accepts whatever the tool named it.
-    branch: '{{issueBranchName}}',
+    branch: '{{issueBranchName}}{{roleSuffix}}',
     permissionMode: 'auto',        // claude --permission-mode: auto (unattended), acceptEdits (asks before commands), plan, …
     claudeArgs: [],
     maxConcurrent: 2,
@@ -162,6 +167,10 @@ const DEFAULTS = {
     // Guards against double work. The claim label is added to the issue the moment it is picked up and
     // checked before pickup, so a restart, a lost state.json, or a second machine cannot take it again.
     claimLabel: 'herdr',
+    // The claim's role. null is the old, exclusive claim on the whole issue; a role ("impl",
+    // "review", "split") scopes the label, the pickup comment and the run key, so rules with
+    // different roles hold the same issue at the same time without seeing each other.
+    role: null,
     skipIfAssignedToOthers: true,
     onPickup: { comment: true, state: 'In Progress', assignToMe: true },
     onDone: { comment: true, state: 'In Review', notify: true, closeWorkspace: false },
@@ -198,6 +207,7 @@ function loadConfig() {
   cfg.rules = (raw.rules || []).map((r, i) => {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
     const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
+    rule.role = normalizeRole(rule.role, `rule "${rule.name}"`);
     for (const k of EVENTS) {
       // `"onMerged": null` (or false) — in the rule or in the defaults — turns that step off
       // entirely, rather than falling back to the very defaults it is trying to switch off.
@@ -211,6 +221,7 @@ function loadConfig() {
     rule.instructions = [rule.instructions, readInstructions(rule.instructionsFile)].filter(Boolean).join('\n\n');
     return rule;
   });
+  checkRoleBranches(applyRoles(cfg.rules, cfg.roles));
   cfg.stamp = configStamp(cfg);
   return cfg;
 }
@@ -269,6 +280,13 @@ function briefVars({ issue, rule, run, tracker }) {
     resultPath: run.resultPath,
     runDir: run.dir,
     rule: rule.name,
+    role: rule.role || 'none',
+    // A whole line, so a roleless brief says nothing about roles at all rather than "role: none".
+    roleLine: rule.role
+      ? `- Role: \`${rule.role}\` — this run holds the \`${rule.role}\` claim on the issue. Other agents may hold
+  other roles (implementation, review, splitting) on the same issue at the same time: do your role's
+  work only, and do not undo or redo theirs.`
+      : '',
     instructions: rule.instructions || '',
     date: new Date().toISOString().slice(0, 10),
   };
@@ -296,29 +314,21 @@ class IssueHerd {
     const viewer = await this.tracker.me();
     const issues = await this.tracker.openIssues({ sinceIso: since });
     const ctx = { viewer, now: Date.now() };
-    const candidates = [];
-    for (const issue of issues) {
-      const prev = this.state.runs[issue.identifier];
-      if (prev && !retryable(prev, issue)) continue;
-      for (const rule of this.cfg.rules) {
-        if (rule.enabled === false) continue;
-        let ok = false;
-        try { ok = rule.compiled.test(issue, ctx); } catch (e) { log(`rule ${rule.name}: ${e.message}`); }
-        if (!ok) continue;
-        const why = alreadyTaken(issue, rule, viewer);
-        if (why) { this.warnOnce(`taken:${issue.identifier}`, `${issue.identifier} matches ${rule.name} but is skipped: ${why}`); break; }
-        candidates.push({ issue, rule }); break;
-      }
-    }
+    const candidates = pickCandidates({
+      issues, rules: this.cfg.rules, viewer,
+      matches: (issue, rule) => { try { return rule.compiled.test(issue, ctx); } catch (e) { log(`rule ${rule.name}: ${e.message}`); return false; } },
+      busy: (key, issue) => { const prev = this.state.runs[key]; return Boolean(prev) && !retryable(prev, issue); },
+      onSkip: (key, rule, why) => this.warnOnce(`taken:${key}`, `${key} matches ${rule.name} but is skipped: ${why}`),
+    });
     // urgent first, then oldest first
     candidates.sort((a, b) => (prio(a.issue) - prio(b.issue)) || (Date.parse(a.issue.createdAt) - Date.parse(b.issue.createdAt)));
     const picked = []; const waiting = [];
     for (const c of candidates) {
-      if (this.runningCount() >= this.cfg.maxConcurrent) { waiting.push(c.issue.identifier); this.warnOnce(`cap:${c.issue.identifier}`, `${c.issue.identifier} matches but waits: global cap ${this.cfg.maxConcurrent} reached`); continue; }
-      if (this.runningCount(c.rule.name) >= c.rule.maxConcurrent) { waiting.push(c.issue.identifier); this.warnOnce(`cap:${c.issue.identifier}`, `${c.issue.identifier} matches but waits: rule ${c.rule.name} cap ${c.rule.maxConcurrent} reached`); continue; }
-      if (this.dry) { log(`DRY would pick ${c.issue.identifier} "${c.issue.title}" via rule ${c.rule.name}`); continue; }
-      try { await this.pickUp(c.issue, c.rule); picked.push(c.issue.identifier); }
-      catch (e) { log(`pickup ${c.issue.identifier} failed: ${e.message}`); }
+      if (this.runningCount() >= this.cfg.maxConcurrent) { waiting.push(c.key); this.warnOnce(`cap:${c.key}`, `${c.key} matches but waits: global cap ${this.cfg.maxConcurrent} reached`); continue; }
+      if (this.runningCount(c.rule.name) >= c.rule.maxConcurrent) { waiting.push(c.key); this.warnOnce(`cap:${c.key}`, `${c.key} matches but waits: rule ${c.rule.name} cap ${c.rule.maxConcurrent} reached`); continue; }
+      if (this.dry) { log(`DRY would pick ${c.key} "${c.issue.title}" via rule ${c.rule.name}${c.rule.role ? ` as ${c.rule.role}` : ''}`); continue; }
+      try { await this.pickUp(c.issue, c.rule); picked.push(c.key); }
+      catch (e) { log(`pickup ${c.key} failed: ${e.message}`); }
     }
     return { scanned: issues.length, candidates: candidates.length, picked, waiting };
   }
@@ -340,37 +350,43 @@ class IssueHerd {
   }
 
   async pickUp(issue, rule) {
-    const key = issue.identifier;
+    // The run key carries the role, so two roles on one issue are two runs: two state entries, two
+    // agent names, two worktrees, two run directories. `issue.identifier` is still what the tracker
+    // is asked about — never the run key. A retry of *this* role finds its own previous run, and
+    // with it the session that may still be up; another role's run is a different key entirely.
+    const key = runKeyFor(issue.identifier, rule.role);
     const previous = this.state.runs[key]; // a run we are retrying; its session may still be up
-    const slug = `${key.toLowerCase()}-${slugify(issue.title, 32)}`.replace(/-+$/, '');
+    const slug = `${key.toLowerCase().replace(/\./g, '-')}-${slugify(issue.title, 32)}`.replace(/-+$/, '');
     const archiveDir = path.join(RUNS_DIR, key); // in the watcher's checkout: issue.json now, result.json copied on finish
     fs.mkdirSync(archiveDir, { recursive: true });
     const run = {
-      rule: rule.name, status: 'starting', issueId: issue.id, title: issue.title, url: issue.url,
+      rule: rule.name, role: rule.role || null, status: 'starting',
+      issueId: issue.id, issueKey: issue.identifier, title: issue.title, url: issue.url,
       startedAt: new Date().toISOString(), archiveDir,
       // `wantBranch` is what we want it called; `branch` is what git says it is, filled in by
       // settleBranch once the worktree exists. Nothing downstream may report a name we only guessed.
-      wantBranch: desiredBranch({ template: rule.branch, issue, slug, worktree: rule.worktree }),
+      wantBranch: desiredBranch({ template: rule.branch, issue, slug, worktree: rule.worktree, role: rule.role }),
       branch: null,
       worktree: rule.worktree, agentName: agentNameFor(key), notified: {},
     };
     this.state.runs[key] = run; saveState(this.state);
-    log(`picking up ${key} "${issue.title}" (rule ${rule.name})`);
+    log(`picking up ${key} "${issue.title}" (rule ${rule.name}${rule.role ? `, role ${rule.role}` : ''})`);
 
     // Claim on Linear first, so a second watcher (or this one after a crash) sees it before any work starts.
     // Nothing has been built yet, so if the claim cannot be made the run is forgotten rather than left
     // behind as `starting` — a stale `starting` run is what resume() trips over on the next start.
-    if (this.tracker && rule.claimLabel) {
+    const claimLabel = claimLabelFor(rule);
+    if (this.tracker && claimLabel) {
       try {
-        const fresh = await this.tracker.issueByKey(key);
+        const fresh = await this.tracker.issueByKey(issue.identifier);
         const why = fresh && alreadyTaken(fresh, rule, await this.tracker.me());
         if (why) throw new Error(`skipped, ${why}`);
-        await this.tracker.addLabel(issue.id, rule.claimLabel);
+        await this.tracker.addLabel(issue.id, claimLabel);
       } catch (e) {
         delete this.state.runs[key]; saveState(this.state);
         throw e;
       }
-      run.claimed = rule.claimLabel; saveState(this.state);
+      run.claimed = claimLabel; saveState(this.state);
     }
 
     try {
@@ -461,9 +477,12 @@ class IssueHerd {
 
       // 5. tell the tracker. The session is up and briefed by now, so nothing here may fail the run.
       if (this.tracker && rule.onPickup.comment) {
-        const host = os.hostname();
-        const how = run.adopted ? 'took this back over' : 'picked this up';
-        try { await this.tracker.comment(issue.id, `🐑 **issue-herd** ${how} on \`${host}\` · herdr workspace \`${run.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`); }
+        // pickupMarker() writes the role into the first words, because this comment is also the
+        // guard: a reader sees who holds which role, and alreadyTaken() greps for its own.
+        const held = [`herdr workspace \`${run.workspaceId}\``, `agent \`${run.agentName}\``, `rule \`${rule.name}\``];
+        if (run.branch) held.push(`branch \`${run.branch}\``);
+        const how = run.adopted ? pickupMarker(rule.role).replace('picked this up', 'took this back over') : pickupMarker(rule.role);
+        try { await this.tracker.comment(issue.id, `🐑 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`); }
         catch (e) { log(`${key}: pickup comment failed: ${e.message}`); }
       }
       if (!sent) {
@@ -495,7 +514,7 @@ class IssueHerd {
       try { await this.tracker.removeLabel(run.issueId, run.claimed); log(`${key}: removed the '${run.claimed}' claim label`); }
       catch (e) { log(`${key}: could not remove the '${run.claimed}' claim label: ${e.message}`); }
     }
-    try { run.issueUpdatedAt = (await this.tracker.issueByKey(key))?.updatedAt || null; } catch { /* finishedAt is the fallback */ }
+    try { run.issueUpdatedAt = (await this.tracker.issueByKey(run.issueKey || issueKeyOf(key)))?.updatedAt || null; } catch { /* finishedAt is the fallback */ }
     saveState(this.state);
   }
 
@@ -669,7 +688,7 @@ class IssueHerd {
     try { fs.mkdirSync(run.archiveDir, { recursive: true }); for (const f of ['result.json', 'brief.md']) { const src = path.join(run.dir, f); if (fs.existsSync(src)) fs.copyFileSync(src, path.join(run.archiveDir, f)); } } catch { /* best effort */ }
     const status = result.status || 'unknown';
     const icon = status === 'pr_open' ? '✅' : status === 'needs_human' ? '🙋' : status === 'nothing_to_do' ? '🤷' : '❌';
-    const lines = [`${icon} **issue-herd** finished ${key} with status \`${status}\`.`];
+    const lines = [`${icon} **issue-herd** finished ${run.issueKey || key}${run.role ? ` as \`${run.role}\`` : ''} with status \`${status}\`.`];
     if (result.prUrl) lines.push(`\nPR: ${result.prUrl}`);
     if (result.branch) lines.push(`Branch: \`${result.branch}\``);
     if (result.summary) lines.push(`\n${result.summary}`);
@@ -867,8 +886,12 @@ class IssueHerd {
   }
 
   logRules() {
-    for (const r of this.cfg.rules) log(`  rule ${r.name}${r.enabled === false ? ' (disabled)' : ''}: ${r.match}  →  ${r.repo}`);
-    log(`  guards: claim label ${this.cfg.defaults.claimLabel || 'off'}, skip issues assigned to others: ${this.cfg.defaults.skipIfAssignedToOthers ? 'on' : 'off'}; caps: ${this.cfg.maxConcurrent} total`);
+    for (const r of this.cfg.rules) {
+      const off = r.enabled === false ? ` (disabled${r.disabledReason ? `: ${r.disabledReason}` : ''})` : '';
+      log(`  rule ${r.name}${r.role ? ` [${r.role}]` : ''}${off}: ${r.match}  →  ${r.repo}`);
+    }
+    const roles = [...new Set(this.cfg.rules.filter((r) => r.enabled !== false && r.role).map((r) => r.role))];
+    log(`  guards: claim label ${this.cfg.defaults.claimLabel || 'off'}${roles.length ? ` scoped to role(s) ${roles.join(', ')}` : ''}, skip issues assigned to others: ${this.cfg.defaults.skipIfAssignedToOthers ? 'on' : 'off'}; caps: ${this.cfg.maxConcurrent} total`);
     if (this.cfg.localOverrides.length) log(`  overrides from ${path.basename(LOCAL_CONFIG_PATH)}: ${this.cfg.localOverrides.join(', ')}`);
   }
 
@@ -916,31 +939,16 @@ function retryable(run, issue) {
 
 /**
  * Is the agent herdr found under this run's name the session for *this* run? Agent names are made
- * from the issue key alone, so two repositories watched on the same machine can both want "gh-20",
- * and adopting the other one's would brief an agent working in someone else's checkout. It is ours
+ * from the run key, so two repositories watched on the same machine can both want "gh-20", and
+ * adopting the other one's would brief an agent working in someone else's checkout. It is ours
  * when it sits inside this repository, or when it is in the workspace the previous attempt made.
+ * (A different role on the same issue is a different run key, so it is never a candidate here.)
  */
 function isOurAgent(agent, repo, previous) {
   const cwd = agent?.foreground_cwd || agent?.cwd;
   const root = path.resolve(repo);
   if (cwd && (path.resolve(cwd) === root || path.resolve(cwd).startsWith(root + path.sep))) return true;
   return !!(previous?.workspaceId && previous.workspaceId === agent?.workspace_id);
-}
-
-const CLAIM_MARKER = '**issue-herd** picked this up';
-
-/** Returns a reason string if some agent or person already owns this issue, else null. */
-function alreadyTaken(issue, rule, viewer) {
-  if (rule.claimLabel && issue.labels.some((l) => l.toLowerCase() === rule.claimLabel.toLowerCase())) return `already carries the '${rule.claimLabel}' claim label`;
-  if ((issue.comments || []).some((c) => c.body.includes(CLAIM_MARKER))) return 'an issue-herd pickup comment is already on it';
-  // Every assignee, not just the one on show: an issue held by you *and* someone else is still
-  // someone else's, and starting an agent on work a person is already doing is the worst outcome.
-  if (rule.skipIfAssignedToOthers && viewer) {
-    const held = issue.assignees || (issue.assignee ? [issue.assignee] : []);
-    const others = held.filter((a) => a.id !== viewer.id);
-    if (others.length) return `assigned to ${others.map((a) => a.displayName || a.name).join(', ')}`;
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------- commands
@@ -1077,18 +1085,25 @@ async function main(argv) {
     const s = loadState();
     const rows = Object.entries(s.runs);
     if (!rows.length) { console.log(`no runs yet in ${REPO}`); return; }
-    console.log(`${'issue'.padEnd(10)} ${'run'.padEnd(14)} ${'agent'.padEnd(8)} ${'ws'.padEnd(4)} ${'rule'.padEnd(12)} ${'started'.padEnd(16)} outcome`);
+    console.log(`${'run key'.padEnd(16)} ${'role'.padEnd(8)} ${'run'.padEnd(14)} ${'agent'.padEnd(8)} ${'ws'.padEnd(4)} ${'rule'.padEnd(12)} ${'started'.padEnd(16)} outcome`);
     for (const [k, r] of rows) {
       let agent = '-';
       if (r.status === 'running') { const a = await herdr.agentGet(r.agentName).catch(() => null); agent = a?.agent_status || 'gone'; }
       const outcome = r.result ? `${r.result.status}${r.result.prUrl ? ' ' + r.result.prUrl : ''}` : (r.error || '');
-      console.log(`${k.padEnd(10)} ${r.status.padEnd(14)} ${agent.padEnd(8)} ${(r.workspaceId || '').padEnd(4)} ${r.rule.padEnd(12)} ${r.startedAt.slice(0, 16)} ${outcome}  ${r.title || ''}`);
+      console.log(`${k.padEnd(16)} ${(r.role || '-').padEnd(8)} ${r.status.padEnd(14)} ${agent.padEnd(8)} ${(r.workspaceId || '').padEnd(4)} ${r.rule.padEnd(12)} ${r.startedAt.slice(0, 16)} ${outcome}  ${r.title || ''}`);
     }
     return;
   }
   if (cmd === 'reset') {
     const key = argv[1]; if (!key) throw new Error('usage: issue-herd reset <KEY>');
-    const s = loadState(); delete s.runs[key]; saveState(s); console.log(`forgot ${key}`); return;
+    // Naming the issue forgets every role's run on it (GH-7 clears GH-7, GH-7.impl, GH-7.review);
+    // naming one run key forgets only that one.
+    const s = loadState();
+    const gone = Object.keys(s.runs).filter((k) => k === key || issueKeyOf(k) === key);
+    for (const k of gone) delete s.runs[k];
+    saveState(s);
+    console.log(gone.length ? `forgot ${gone.join(', ')}` : `no run called ${key}`);
+    return;
   }
   if (cmd === 'smoke') return smoke({ cfg, herdr, argv });
 

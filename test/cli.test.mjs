@@ -116,3 +116,35 @@ test('init warns when the .env.local it just recommended would be committed', (t
   const dir2 = repo(t, { '.gitignore': '.env.local\n' });
   assert.doesNotMatch(run(dir2, ['init', '--tracker', 'linear']).out, /not gitignored/);
 });
+
+test('a role that could not be a label, a branch and a directory is refused by name', (t) => {
+  const dir = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: [{ name: 'rev', match: 'any:true', role: 'code review' }] }) });
+  const r = run(dir, ['status']);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /rule "rev": role "code review"/);
+});
+
+test('two roles pointed at one branch template fail at load, not on the second pickup', (t) => {
+  // git cannot check one branch out into two worktrees. Reported here, where the fix is one line.
+  const rules = [
+    { name: 'impl', match: 'label:ai', role: 'impl' },
+    { name: 'rev', match: 'label:ai', role: 'review' },
+  ];
+  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', defaults: { branch: '{{issueBranchName}}' }, rules }) });
+  const r = run(bad, ['status']);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /both work on branch/);
+  // the default template names the role, so the same two rules are fine on it
+  const ok = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules }) });
+  assert.equal(run(ok, ['status']).status, 0);
+});
+
+test('"roles" switches roles on and off for the project without deleting the rules', (t) => {
+  const rules = [{ name: 'impl', match: 'label:ai', role: 'impl' }, { name: 'rev', match: 'label:ai', role: 'review' }];
+  const dir = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', roles: ['impl'], rules }) });
+  // `match` reaches the tracker, so the config was accepted and the disabled rule is still a rule.
+  const r = run(dir, ['match', 'any:true'], { LINEAR_API_KEY: 'lin_api_nope' });
+  assert.match(r.out, /Linear HTTP 4\d\d|fetch failed/);
+  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', roles: 'impl', rules }) });
+  assert.match(run(bad, ['status']).out, /"roles" must be an array/);
+});

@@ -10,6 +10,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
 - Branch: `{{branch}}` — already created and checked out for you; commit on it, do not create another
 - Run directory: `{{runDir}}`
 - **Result file you must write when finished: `{{resultPath}}`**
+{{roleLine}}
 
 ## Issue description
 
