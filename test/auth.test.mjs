@@ -5,7 +5,7 @@ import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { deviceFlow, loadCredentials, oauthCodeFlow, pkce, resolveCredential, saveCredential, deleteCredential, noCredentialError } from '../src/auth.mjs';
+import { appJwt, deviceFlow, homePath, loadCredentials, oauthCodeFlow, pkce, privateKeyOf, resolveCredential, saveCredential, deleteCredential, noCredentialError, usableCredential } from '../src/auth.mjs';
 
 const dirs = [];
 const tmpFile = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-auth-')); dirs.push(d); return path.join(d, 'creds', 'credentials.json'); };
@@ -132,4 +132,60 @@ test('authorization-code flow: loopback redirect, state check, PKCE verifier in 
   assert.equal(params.client_secret, undefined);
   const challenge = crypto.createHash('sha256').update(params.code_verifier).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   assert.equal(challenge, q.get('code_challenge'));
+});
+
+// ---------------------------------------------------------------- app identities
+
+const keypair = () => crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+
+test('an app signs a short RS256 JWT with its own key, backdated and under ten minutes', () => {
+  const { publicKey, privateKey } = keypair();
+  const now = Date.parse('2026-09-06T12:00:00Z');
+  const jwt = appJwt({ appId: 1234, key: crypto.createPrivateKey(privateKey), now });
+  const [head, body, sig] = jwt.split('.');
+  const un = (s) => JSON.parse(Buffer.from(s, 'base64url').toString());
+  assert.deepEqual(un(head), { alg: 'RS256', typ: 'JWT' });
+  const claims = un(body);
+  assert.equal(claims.iss, '1234', 'the issuer is the app id, as a string');
+  assert.equal(claims.iat, now / 1000 - 60, 'backdated: GitHub rejects a JWT issued in its future');
+  assert.ok(claims.exp - claims.iat <= 600, 'GitHub refuses anything longer than ten minutes');
+  assert.ok(crypto.verify('RSA-SHA256', Buffer.from(`${head}.${body}`), publicKey, Buffer.from(sig, 'base64url')));
+  assert.throws(() => appJwt({ key: crypto.createPrivateKey(privateKey) }), /needs an appId/);
+});
+
+test('the app private key is read from a file or an environment variable, and says so when it is not one', () => {
+  const { privateKey } = keypair();
+  const file = tmpFile().replace('credentials.json', 'app.pem');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, privateKey);
+  assert.equal(privateKeyOf({ privateKeyPath: file }).asymmetricKeyType, 'rsa');
+  // a PEM that came through an environment variable has its newlines escaped
+  assert.equal(privateKeyOf({ privateKey: privateKey.replace(/\n/g, '\\n') }).asymmetricKeyType, 'rsa');
+  assert.throws(() => privateKeyOf({ privateKeyPath: `${file}.nope` }), /cannot read the app private key.*no such file/);
+  fs.writeFileSync(`${file}.txt`, 'not a key');
+  assert.throws(() => privateKeyOf({ privateKeyPath: `${file}.txt` }), /is not a private key/);
+  assert.throws(() => privateKeyOf({ token: 'x' }), /no private key/);
+});
+
+test('a credential with no token is still usable when it can sign for one', () => {
+  const file = tmpFile();
+  // an app identity is an id and a key: nothing that resolveCredential could recognise as a token
+  const App = { ...Fake, envCredential: (env) => (env.FAKE_APP_ID ? { kind: 'app', appId: env.FAKE_APP_ID, privateKeyPath: '/keys/app.pem', source: 'FAKE_APP_ID' } : null) };
+  const fromEnv = resolveCredential(App, { env: { FAKE_APP_ID: '42', FAKE_TOKEN: 'personal' }, file });
+  assert.equal(fromEnv.credential.kind, 'app', 'an app identity wins over a token left over in the shell');
+  assert.equal(fromEnv.source, 'FAKE_APP_ID');
+  assert.equal(resolveCredential(App, { env: { FAKE_TOKEN: 'personal' }, file }).credential.token, 'personal');
+  saveCredential('fake', { kind: 'app', appId: '42', privateKeyPath: '/keys/app.pem' }, file);
+  const saved = resolveCredential(App, { env: {}, file });
+  assert.equal(saved.credential.appId, '42');
+  assert.equal(saved.saved, true);
+  assert.ok(!usableCredential({ kind: 'app', appId: '42' }), 'an app with no key cannot authenticate');
+  assert.ok(!usableCredential(null) && !usableCredential({ token: '' }));
+});
+
+test('a leading ~ in a key path is the home directory (the person typed it, it is not from a repository)', () => {
+  assert.equal(homePath('~/keys/app.pem'), path.join(os.homedir(), 'keys/app.pem'));
+  assert.equal(homePath('  ~  ').trim(), os.homedir());
+  assert.equal(homePath('/abs/app.pem'), '/abs/app.pem');
+  assert.equal(homePath('~notme/app.pem'), '~notme/app.pem');
 });

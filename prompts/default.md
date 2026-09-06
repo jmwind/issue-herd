@@ -7,6 +7,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
 - Issue: {{url}}
 - Team: {{team}} · Project: {{project}} · Priority: {{priority}} · Labels: {{labels}}
 - Repository: `{{repo}}` (you were started in it; worktree mode: {{worktreeMode}})
+- issue-herd is acting on {{tracker}} as: {{actingAs}}
 - Branch: `{{branch}}` — already created and checked out for you; commit on it, do not create another
 - Run directory: `{{runDir}}`
 - **Result file you must write when finished: `{{resultPath}}`**
@@ -42,7 +43,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
 5. **Commit and open a PR.** You are already on `{{branch}}` — commit there, one or a few
    well-described commits, and push it with `git push -u origin HEAD`. Title the PR
    `{{ref}}: <what changed>`. In the body: what and why, how you tested, the issue URL, and the
-   line `Fixes {{ref}}` so the tracker links the PR to the issue. Use `gh pr create`.
+   line `Fixes {{ref}}` so the tracker links the PR to the issue. Use `gh pr create`. {{commitAs}}
    **Do not merge.** Review and merge are a human's job.
 6. **Write the result file** — this is how issue-herd knows you are done and reports back to {{tracker}}.
    Write valid JSON to `{{resultPath}}`:

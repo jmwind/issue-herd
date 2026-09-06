@@ -116,3 +116,17 @@ test('init warns when the .env.local it just recommended would be committed', (t
   const dir2 = repo(t, { '.gitignore': '.env.local\n' });
   assert.doesNotMatch(run(dir2, ['init', '--tracker', 'linear']).out, /not gitignored/);
 });
+
+test('a repository .env cannot choose which private key issue-herd signs with', (t) => {
+  // The app key is read from disk and signed with; a committed file naming ~/.ssh/id_rsa would
+  // make this process a signing oracle for a key it was never given. The key itself may come
+  // through the environment — a repository supplying one is supplying its own app, not taking yours.
+  const dir = repo(t, {
+    '.issue-herd/config.json': config({ tracker: 'github' }),
+    '.env': 'GITHUB_APP_PRIVATE_KEY_PATH=/home/me/.ssh/id_rsa\nGITHUB_APP_ID=1234\n',
+  });
+  const r = run(dir, ['logout', 'github'], { ISSUE_HERD_CREDENTIALS: path.join(dir, 'mine.json') });
+  assert.equal(r.status, 0);
+  assert.match(r.out, /ignoring GITHUB_APP_PRIVATE_KEY_PATH/);
+  assert.doesNotMatch(r.out, /id_rsa/);
+});

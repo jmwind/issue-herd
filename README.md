@@ -232,6 +232,9 @@ The same fields work on every tracker; what they map to on GitHub is in
     "claimLabel": "herdr",            // label added on pickup and checked before pickup; null disables
     "skipIfAssignedToOthers": true,   // leave issues held by other people alone
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
+                                      // "assignToMe" means whoever issue-herd acts as: a person takes the
+                                      // issue, a Linear agent is delegated it (the human stays the assignee),
+                                      // and a GitHub App is skipped — apps cannot be assignees. See App identities
     "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
     "onBlocked": { "comment": true, "notify": true },   // agent hit a permission/question dialog
     "onIdle":    { "comment": true, "notify": true }    // agent stopped without writing result.json
@@ -276,7 +279,9 @@ comments) is the same for all of them.
 
 **Linear** (`"tracker": "linear"`, the default). Issues are known by their key (`DEV-123`), the
 branch is Linear's own branch name, `state` is the team workflow, comments and state changes go to
-the issue. The claim label must exist in Linear.
+the issue. The claim label must exist in Linear. Signed in as an
+[agent](#app-identities-agents-that-are-not-you), pickup delegates the issue instead of assigning
+it: the human stays its owner.
 
 **GitHub Issues** (`"tracker": "github"`). The repository is the `origin` remote of the repo you run
 in; name it explicitly with `{ "type": "github", "repo": "owner/name" }`. Issues are known as `GH-7`
@@ -294,6 +299,8 @@ the default branch is `7-fix-the-thing`. Mapping:
 - `assignee` and `creator` match `@login`. An issue assigned to several people is left alone unless
   every assignee is you.
 - The claim label is created if missing. Pull requests are never treated as issues.
+- Signed in as a [GitHub App](#app-identities-agents-that-are-not-you), comments and labels come
+  from `name[bot]`, but the issue is not assigned: GitHub assignees must be users.
 
 For GitHub Enterprise, set `ISSUE_HERD_GITHUB_HOST=ghe.corp.com` in your shell. That is deliberately
 a machine setting rather than a config key: `config.json` is committed, and this value decides where
@@ -313,13 +320,14 @@ contract; `checkIssue()` tells a new tracker exactly which field it got wrong.
 
 `issue-herd login [linear|github]` obtains a token, proves it works with a `me` call, and saves it
 in `~/.config/issue-herd/credentials.json` (mode 600). Runs before `init` too, when the tracker is
-named. `issue-herd logout` forgets it. At startup the banner says which account is in use and where
-the token came from. Lookup order:
+named. `issue-herd logout` forgets it. At startup the banner says which identity is in use and where
+the credential came from. Lookup order:
 
-1. the environment: `LINEAR_API_KEY`, or `GITHUB_TOKEN` / `GH_TOKEN`, read from the process, then
+1. an app identity assembled from the environment (`GITHUB_APP_ID` + a key; see below)
+2. the environment: `LINEAR_API_KEY`, or `GITHUB_TOKEN` / `GH_TOKEN`, read from the process, then
    `<repo>/.env.local`, then `<repo>/.env`
-2. the saved credential
-3. GitHub only: `gh auth token`, so a machine with `gh` logged in needs no login at all
+3. the saved credential
+4. GitHub only: `gh auth token`, so a machine with `gh` logged in needs no login at all
 
 `login` never copies a token another tool owns: with `gh` logged in it saves nothing and re-reads
 `gh auth token` on every run, so a token `gh` rotates keeps working.
@@ -345,6 +353,62 @@ tracker object. `ISSUE_HERD_OAUTH_PORT` moves the loopback port, `ISSUE_HERD_CRE
 credentials file, and `ISSUE_HERD_GITHUB_HOST` names a GitHub Enterprise host. All of these are read
 from your shell only, never from a repository's `.env`.
 
+### App identities: agents that are not you
+
+By default every comment, claim and pull request comes from your own account, so an issue thread
+reads like one person talking to themselves. Both platforms have a first-class *app* identity that
+fixes that, and neither bills it as a seat: Linear states outright that agents are not billable
+seats, and a GitHub App is not a user and so is not a seat either (worth a glance at your own
+billing page before you rely on it). It is opt-in — a personal token keeps working exactly as it
+did — and the startup banner says which identity a run is acting as.
+
+**Linear** (`issue-herd login linear --app`). Register an OAuth application with agent capabilities
+(Settings → API → OAuth applications, callback `http://localhost:8497/callback`) and put its client
+id in `ISSUE_HERD_LINEAR_CLIENT_ID`. `--app` adds `actor=app` to the authorize URL and asks for the
+`app:assignable` and `app:mentionable` scopes, so the agent gets its own name, avatar and user page,
+can be @mentioned, and writes as itself. Installing needs workspace admin.
+
+The useful part is what `onPickup.assignToMe` becomes: assigning an issue to an agent **delegates**
+it. The human stays the assignee and the owner, and the agent is recorded as the delegate — the
+issue never leaves the person it belongs to just because a machine started working on it.
+
+**GitHub** (`issue-herd login github --app`). Create a GitHub App (Settings → Developer settings →
+GitHub Apps) with repository permissions Issues, Pull requests and Contents = *Read and write*,
+install it on the repositories it should work, and generate a private key. `login --app` asks for
+the App ID and the path to the `.pem`. Everything it writes then appears as `name[bot]` with a bot
+badge, and the installation has **its own hourly API budget** rather than spending yours.
+There is no token to store: the app signs a nine-minute JWT with the key, trades it for an
+installation token that lasts an hour, and renews it — all with Node's `crypto`, still no
+dependencies. Only the *path* to the key is saved, never a copy of the key.
+
+Without a browser flow it can also come from the environment:
+`GITHUB_APP_ID` plus `GITHUB_APP_PRIVATE_KEY` (the PEM, escaped newlines are fine) or
+`GITHUB_APP_PRIVATE_KEY_PATH`, and optionally `GITHUB_APP_INSTALLATION_ID` (otherwise the
+installation is looked up from the repository). `GITHUB_APP_PRIVATE_KEY_PATH` is refused from a
+repository's `.env`, like the `ISSUE_HERD_*` variables: it names a file this process reads and signs
+with, and a committed file does not get to pick which key on your disk that is.
+
+Two things behave differently under a GitHub App, both by GitHub's design rather than ours:
+
+- **It cannot be an issue assignee** — assignees must be users. `onPickup.assignToMe` says so in the
+  log and leaves the issue alone; the claim label is what marks it. Linear has no such limit, so the
+  two trackers legitimately differ here.
+- **Commit authorship is separate from API identity.** Commits carry whatever `user.name` /
+  `user.email` git is configured with in the worktree, and git has no per-worktree config to set
+  without changing the repository you share. So the brief tells the agent which author to commit as
+  (`git -c user.name=… -c user.email=…`), using the bot's own
+  `id+name[bot]@users.noreply.github.com` address.
+
+What is *not* covered yet: the pull request itself. issue-herd's own credential writes the comments,
+the claim label and the state, so the issue thread reads as the bot — but the PR is opened inside the
+worktree by the agent running `gh pr create`, with whatever `gh` is logged in as there, which is you.
+Handing each run a short-lived installation token as `GH_TOKEN` is the next step.
+
+One app per role — implementer, reviewer, triager — is what turns a single bot into something that
+reads like a team in the thread. Each is its own registration and install; two apps are two distinct
+actors, which is also what lets a reviewer app approve an implementer app's pull request, something
+GitHub will never let an account do to its own.
+
 ## How it avoids double work
 
 Three independent guards, checked before every pickup:
@@ -359,6 +423,12 @@ Three independent guards, checked before every pickup:
    you holds the issue, it is theirs. On a tracker with several assignees per issue, one other
    person is enough: an issue shared between you and a colleague is still theirs. `onPickup.assignToMe` makes the agent's issues yours, so the
    rule of thumb is: unassigned or assigned to you means available.
+
+   "You" is whoever issue-herd acts as. Under an [app identity](#app-identities-agents-that-are-not-you)
+   that is the bot, and no issue is ever assigned to it, so an issue assigned to *you* now reads as
+   someone else's and is skipped. Either leave issues unassigned for the agents to take, or set
+   `"skipIfAssignedToOthers": false` and let the claim label do the work — it is the guard that
+   actually prevents double work.
 
 Plus the local `state.json`, which is what stops the same watcher re-picking during a run, and
 whatever your rule says (`not state:started` excludes anything already In Progress).

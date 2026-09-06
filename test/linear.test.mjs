@@ -170,3 +170,48 @@ test('removeLabel of a label Linear does not have is a no-op, not a create', asy
   assert.equal(labels.length, 0);
   assert.equal(calls.filter((c) => c.query.includes('issueRemoveLabel(')).length, 0);
 });
+
+// ---------------------------------------------------------------- app identity (Linear agents)
+
+const viewerIs = (v) => ({ json: { data: { viewer: v } } });
+const agentCred = { kind: 'app', actor: 'app', token: 'lin_oauth_agent' };
+
+test('an actor=app token acts as the agent, not as the person who installed it', async () => {
+  const fetchImpl = fakeFetch(() => viewerIs({ id: 'app-1', name: 'issue-herd', displayName: 'issue-herd', email: null }));
+  const t = new LinearTracker(agentCred, { fetchImpl });
+  const me = await t.me();
+  assert.equal(me.app, true, 'the banner and the brief say the run is a bot, not the owner');
+  assert.equal(me.displayName, 'issue-herd');
+  assert.equal(fetchImpl.calls[0].headers.Authorization, 'Bearer lin_oauth_agent');
+  assert.equal((await new LinearTracker({ kind: 'oauth', token: 'x' }, { fetchImpl: fakeFetch(() => viewerIs({ id: 'u1' })) }).me()).app, false);
+});
+
+test('assigning to an agent delegates: the human keeps the issue', async () => {
+  const fetchImpl = fakeFetch(() => ({ json: { data: { issueUpdate: { success: true } } } }));
+  const t = new LinearTracker(agentCred, { fetchImpl });
+  const what = await t.assign({ id: 'uuid-1' }, { id: 'app-1', displayName: 'issue-herd', app: true });
+  assert.match(what, /delegated to issue-herd \(the assignee is unchanged\)/);
+  assert.deepEqual(fetchImpl.calls[0].json.variables.input, { delegateId: 'app-1' });
+  assert.ok(!JSON.stringify(fetchImpl.calls.map((c) => c.json.variables.input)).includes('assigneeId'), 'an agent must never take the issue off its owner');
+});
+
+test('a person is still assigned the ordinary way', async () => {
+  const fetchImpl = fakeFetch(() => ({ json: { data: { issueUpdate: { success: true } } } }));
+  const t = new LinearTracker({ kind: 'oauth', token: 'x' }, { fetchImpl });
+  assert.equal(await t.assign({ id: 'uuid-1' }, { id: 'u1', displayName: 'jml' }), 'assigned to jml');
+  assert.deepEqual(fetchImpl.calls[0].json.variables.input, { assigneeId: 'u1' });
+});
+
+test('a workspace whose schema has no delegate field falls back to assignment, which Linear itself delegates', async () => {
+  let first = true;
+  const fetchImpl = fakeFetch(() => {
+    if (first) { first = false; return { json: { errors: [{ message: 'Field "delegateId" is not defined by type "IssueUpdateInput".' }] } }; }
+    return { json: { data: { issueUpdate: { success: true } } } };
+  });
+  const t = new LinearTracker(agentCred, { fetchImpl });
+  assert.match(await t.assign({ id: 'uuid-1' }, { id: 'app-1', name: 'issue-herd', app: true }), /delegated/);
+  assert.deepEqual(fetchImpl.calls.map((c) => c.json.variables.input), [{ delegateId: 'app-1' }, { assigneeId: 'app-1' }]);
+  // any other GraphQL error is still an error
+  const boom = new LinearTracker(agentCred, { fetchImpl: fakeFetch(() => ({ json: { errors: [{ message: 'Access denied' }] } })) });
+  await assert.rejects(boom.assign({ id: 'uuid-1' }, { id: 'app-1', app: true }), /Access denied/);
+});

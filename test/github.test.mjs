@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { GitHubTracker, issueNumber, priorityFromLabels, repoFromRemote } from '../src/trackers/github.mjs';
 import { checkIssue } from '../src/tracker.mjs';
 import { compile } from '../src/expr.mjs';
@@ -247,4 +248,85 @@ test('the repository comes from the origin remote in any of its spellings', () =
 test('without a recognisable repository the tracker says how to name one', () => {
   const t = new GitHubTracker('t', { options: { cwd: '/', repo: null }, fetchImpl: fakeFetch(() => null) });
   assert.throws(() => t.check(), /"tracker": \{ "type": "github", "repo": "owner\/name" \}/);
+});
+
+// ---------------------------------------------------------------- app identity
+
+const appKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+const appCred = { kind: 'app', appId: '1234', privateKey: appKey.privateKey };
+const isJwt = (h) => /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/.test(h || '');
+
+/** The three calls an app makes about itself, plus whatever the test adds. */
+function appRoutes(extra = () => null) {
+  return (call) => {
+    const { url, method } = call;
+    if (url.endsWith('/repos/jmwind/issue-herd/installation')) return { json: { id: 99 } };
+    if (url.endsWith('/app/installations/99/access_tokens') && method === 'POST') return { json: { token: 'ghs_installation', expires_at: new Date(Date.now() + 3600e3).toISOString() } };
+    if (url.endsWith('/app')) return { json: { slug: 'issue-herd', name: 'issue-herd' } };
+    if (url.endsWith('/users/issue-herd%5Bbot%5D')) return { json: { id: 555 } };
+    return extra(call);
+  };
+}
+const appTracker = (route = () => null, options = {}) => new GitHubTracker(appCred, { options: { repo: 'jmwind/issue-herd', ...options }, fetchImpl: fakeFetch(appRoutes(route)) });
+
+test('a GitHub App acts as itself: a JWT buys an installation token, and that token does the work', async () => {
+  const t = appTracker(({ url }) => (url.endsWith('/comments') ? { json: { id: 1, html_url: 'https://github.com/c/1' } } : null));
+  const me = await t.me();
+  assert.equal(me.login, 'issue-herd[bot]');
+  assert.equal(me.id, 'issue-herd[bot]', 'the id is the login, as it is for a person, so assignee:me still compares');
+  assert.equal(me.app, true);
+  assert.equal(me.commitEmail, '555+issue-herd[bot]@users.noreply.github.com', 'commits can carry the same identity as the API calls');
+  await t.comment('7', 'hello');
+  const calls = t.fetch.calls;
+  const byUrl = (frag) => calls.filter((c) => c.url.includes(frag));
+  assert.ok(isJwt(byUrl('/app').at(0).headers.authorization), 'asking about the app itself is signed with the private key');
+  assert.equal(byUrl('/access_tokens').length, 1);
+  assert.equal(byUrl('/issues/7/comments').at(0).headers.authorization, 'Bearer ghs_installation', 'the comment comes from the installation, so it is posted by the bot');
+  await t.comment('7', 'again');
+  assert.equal(byUrl('/access_tokens').length, 1, 'the hour-long token is reused, not minted per call');
+});
+
+test('a GitHub App is not an issue assignee, and says so instead of pretending', async () => {
+  const t = appTracker();
+  const what = await t.assign({ id: '7' }, await t.me());
+  assert.match(what, /cannot be an issue assignee.*claim label/);
+  assert.equal(t.fetch.calls.filter((c) => c.url.includes('/assignees')).length, 0);
+  // a person is still assigned, and the log line says who
+  const u = tracker(() => ({ json: {} }));
+  assert.equal(await u.assign({ id: '7' }, { login: 'jmwind' }), 'assigned to @jmwind');
+});
+
+test('an app that is not installed on the repository says how to install it', async () => {
+  const t = new GitHubTracker(appCred, { options: { repo: 'jmwind/issue-herd' }, fetchImpl: fakeFetch(({ url }) => (url.endsWith('/installation') ? { status: 404, json: { message: 'Not Found' } } : null)) });
+  await assert.rejects(t.comment('7', 'hi'), /App 1234 is not installed on jmwind\/issue-herd — install it/);
+});
+
+test('an installation token that dies early is replaced once, not 401ed forever', async () => {
+  let dead = true;
+  let minted = 0;
+  const t = new GitHubTracker(appCred, {
+    options: { repo: 'jmwind/issue-herd' },
+    fetchImpl: fakeFetch(({ url, headers }) => {
+      if (url.endsWith('/installation')) return { json: { id: 99 } };
+      if (url.endsWith('/access_tokens')) { minted++; return { json: { token: `ghs_${minted}`, expires_at: new Date(Date.now() + 3600e3).toISOString() } }; }
+      if (!url.endsWith('/comments')) return null;
+      if (dead && headers.authorization === 'Bearer ghs_1') { dead = false; return { status: 401, json: { message: 'Bad credentials' } }; }
+      return { json: { id: 1, html_url: 'u' } };
+    }),
+  });
+  assert.deepEqual(await t.comment('7', 'hi'), { id: 1, url: 'u' });
+  assert.equal(minted, 2);
+});
+
+test('a GitHub App identity can be assembled from the environment; a plain token is not one', () => {
+  assert.equal(GitHubTracker.envCredential({ GITHUB_TOKEN: 'ghp_x' }), null);
+  assert.equal(GitHubTracker.envCredential({ GITHUB_APP_ID: '1234' }), null, 'an id with no key cannot sign anything');
+  const cred = GitHubTracker.envCredential({ GITHUB_APP_ID: '1234', GITHUB_APP_PRIVATE_KEY_PATH: '~/keys/app.pem', GITHUB_APP_INSTALLATION_ID: '99' });
+  assert.deepEqual(cred, { kind: 'app', appId: '1234', privateKey: null, privateKeyPath: '~/keys/app.pem', installationId: '99', source: 'GITHUB_APP_ID' });
+});
+
+test('a configured installation id is used as it stands, so a repository lookup is not needed', async () => {
+  const t = new GitHubTracker({ ...appCred, installationId: '77' }, { options: { repo: 'jmwind/issue-herd' }, fetchImpl: fakeFetch(({ url }) => (url.endsWith('/app/installations/77/access_tokens') ? { json: { token: 'ghs_x', expires_at: new Date(Date.now() + 3600e3).toISOString() } } : url.endsWith('/comments') ? { json: { id: 1, html_url: 'u' } } : null)) });
+  await t.comment('7', 'hi');
+  assert.ok(!t.fetch.calls.some((c) => c.url.endsWith('/installation')));
 });

@@ -15,6 +15,11 @@
 //                                    // ui.log / ui.open(url) / ui.ask / ui.askSecret) and return a credential
 //                                    // { token, kind, refreshToken?, expiresAt?, ... }. The CLI validates it with
 //                                    // me() and saves it in ~/.config/issue-herd/credentials.json.
+//                                    // `opts.app` asks for the tracker's own app identity (`issue-herd login
+//                                    // <tracker> --app`) rather than the person's account; throw if it has none.
+//   static envCredential(env)        // optional: a credential assembled from several environment variables,
+//                                    // for something that is not one token (GitHub App: id + private key).
+//                                    // Tried before auth.env. Return null when its variables are not set.
 //   static fallback(options)         // optional: a credential found elsewhere on this machine, or null
 //                                    // (GitHub: `gh auth token`). Called after env and the saved credential.
 //                                    // Give it { kind: 'borrowed', source } when another tool owns and may
@@ -33,13 +38,20 @@
 //                                    the constructor succeeded. `login` needs only a token, but the
 //                                    watcher may need more (GitHub: which repository). Called once at startup.
 //   budget()                         optional: one short string about API quota for the heartbeat, or null
-//   async me()                       → User (the account the token belongs to)
+//   async me()                       → User (the account the credential acts as). Two extra fields when the
+//                                    // credential is an app identity rather than a person: `app: true`, which
+//                                    // the banner, the brief and assign() read, and `commitEmail`, the address
+//                                    // a commit must carry for the git trail to match the API identity.
 //   async openIssues({ sinceIso })   → Issue[]   open issues updated since `sinceIso`
 //   async issueByKey(identifier)     → Issue | null   a fresh copy (guards are re-checked right before claiming)
 //   async comment(issueId, body)     markdown comment on the issue
 //   async addLabel(issueId, name)    the claim label; create it if the tracker allows, else throw a clear error
 //   async removeLabel(issueId, name)
-//   async assign(issue, user)        `user` is what me() returned
+//   async assign(issue, user)        `user` is what me() returned. Returns a short phrase for the log saying
+//                                    what it actually did, because an app identity cannot always be an
+//                                    assignee: Linear turns it into delegation (the human keeps the issue),
+//                                    and GitHub refuses outright (assignees must be users), so both differ
+//                                    from "assigned to X" and the log must not claim otherwise.
 //   async setState(issue, name)      move the issue to a workflow state by name (or by contract type, e.g.
 //                                    "started"), and return the state it is now in as { name, type }.
 //                                    A tracker with no such state throws, naming what it does have —

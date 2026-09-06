@@ -5,6 +5,13 @@
 // callback URL http://localhost:8497/callback, public client (PKCE, no secret). Put its client id
 // in LINEAR_CLIENT_ID below or in the ISSUE_HERD_LINEAR_CLIENT_ID environment variable. Without
 // one, `issue-herd login linear` opens the personal-API-keys page and asks for the key instead.
+//
+// `issue-herd login linear --app` signs in as the application itself instead (Linear calls these
+// agents, or app users): one `actor=app` parameter on the authorize URL, plus the two scopes that
+// make the agent mentionable and assignable. Everything it then writes — comments, labels, state —
+// is attributed to the agent rather than to the person who installed it, and Linear does not count
+// an agent as a billable seat. Assigning an issue to an agent *delegates* it: the human stays the
+// assignee and owner, which is what `onPickup.assignToMe` becomes for an app identity.
 
 import { slugify } from '../tracker.mjs';
 import { noCredentialError, oauthCodeFlow, postForm } from '../auth.mjs';
@@ -20,11 +27,16 @@ export class LinearTracker {
   static label = 'Linear';
   static auth = { env: ['LINEAR_API_KEY'], hint: 'a personal API key: Linear → Settings → Security & access → Personal API keys' };
 
-  static async login(ui, { clientId = LINEAR_CLIENT_ID, paste = false, fetchImpl = fetch } = {}) {
+  static async login(ui, { clientId = LINEAR_CLIENT_ID, paste = false, app = false, fetchImpl = fetch } = {}) {
     if (clientId && !paste) {
-      const t = await oauthCodeFlow({ authorizeUrl: AUTHORIZE_URL, tokenUrl: TOKEN_URL, clientId, scope: 'read,write', extra: { prompt: 'consent' }, ui, fetchImpl });
-      return { kind: 'oauth', token: t.access_token, refreshToken: t.refresh_token || null, expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null, clientId };
+      // actor=app authorizes the application rather than the person at the keyboard, so every
+      // comment and delegation afterwards comes from the agent. The two app: scopes are not implied
+      // by read,write — without them Linear will neither mention the agent nor delegate to it.
+      const scope = app ? 'read,write,app:assignable,app:mentionable' : 'read,write';
+      const t = await oauthCodeFlow({ authorizeUrl: AUTHORIZE_URL, tokenUrl: TOKEN_URL, clientId, scope, extra: { prompt: 'consent', ...(app ? { actor: 'app' } : {}) }, ui, fetchImpl });
+      return { kind: app ? 'app' : 'oauth', actor: app ? 'app' : 'user', token: t.access_token, refreshToken: t.refresh_token || null, expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null, clientId };
     }
+    if (app) throw new Error('an app identity needs a Linear OAuth application: register one with agent capabilities (Linear → Settings → API → OAuth applications, callback http://localhost:8497/callback) and set ISSUE_HERD_LINEAR_CLIENT_ID. A personal API key is always a person.');
     ui.log('Create a personal API key named "issue-herd" on the page that opens and paste it here.');
     await ui.open(API_KEYS_PAGE);
     const token = (await ui.askSecret('Linear API key: ')).trim();
@@ -40,11 +52,14 @@ export class LinearTracker {
     this.onCredential = onCredential;
     this.viewer = null;
     this.statesByTeam = new Map();
+    // An `actor=app` token belongs to the application, not to a person: me() says so and assign()
+    // delegates instead of taking the issue off its owner.
+    this.isApp = cred.actor === 'app' || cred.kind === 'app';
   }
 
   authHeader() {
     const t = this.cred.token;
-    return this.cred.kind === 'oauth' || t.startsWith('lin_oauth_') ? `Bearer ${t}` : t;
+    return this.cred.kind === 'oauth' || this.isApp || t.startsWith('lin_oauth_') ? `Bearer ${t}` : t;
   }
 
   /**
@@ -81,10 +96,11 @@ export class LinearTracker {
     return json.data;
   }
 
+  /** The account this credential acts as: a person, or the agent's own app user with `actor=app`. */
   async me() {
     if (!this.viewer) {
       const d = await this.gql('{ viewer { id name displayName email } }');
-      this.viewer = { ...d.viewer, login: null };
+      this.viewer = { ...d.viewer, login: null, app: this.isApp };
     }
     return this.viewer;
   }
@@ -176,10 +192,32 @@ export class LinearTracker {
     await this.gql('mutation($id: String!, $labelId: String!) { issueRemoveLabel(id: $id, labelId: $labelId) { success } }', { id: issueId, labelId });
   }
 
+  /**
+   * `onPickup.assignToMe`. For a person this is what it says. For an agent it is *delegation*:
+   * Linear keeps the human as the issue's assignee and owner and records the app as the delegate,
+   * which is the whole reason to have an app identity — the issue never leaves the person it
+   * belongs to just because a machine started working on it.
+   *
+   * Written as `delegateId` with a fallback, because Linear also documents plain assignment to an
+   * app user as setting the delegate. If this workspace's schema has no such field, the fallback is
+   * that documented behaviour rather than a guess; what must not happen is `assigneeId` on a
+   * workspace where it would overwrite the human, and it cannot, since that path is only reached
+   * after Linear itself rejects the delegation field.
+   */
   async assign(issue, user) {
-    await this.gql('mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }', {
-      id: issue.id, input: { assigneeId: user.id },
-    });
+    const mutation = 'mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }';
+    const name = user.displayName || user.name || user.id;
+    if (!user.app) {
+      await this.gql(mutation, { id: issue.id, input: { assigneeId: user.id } });
+      return `assigned to ${name}`;
+    }
+    try {
+      await this.gql(mutation, { id: issue.id, input: { delegateId: user.id } });
+    } catch (e) {
+      if (!/delegateId/i.test(e.message)) throw e;
+      await this.gql(mutation, { id: issue.id, input: { assigneeId: user.id } });
+    }
+    return `delegated to ${name} (the assignee is unchanged)`;
   }
 }
 

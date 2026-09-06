@@ -9,6 +9,7 @@
 //   issue-herd status          show tracked runs
 //   issue-herd reset <KEY>     forget a run so the issue can be picked up again
 //   issue-herd login [tracker] sign in (browser when possible) and save the token for this machine
+//                             --app signs in as the tool's own app identity instead of as you
 //   issue-herd logout [tracker] forget the saved token
 //   issue-herd smoke           end-to-end test against herdr with a fake issue (no tracker calls)
 //   issue-herd init [--tracker linear|github]   scaffold .issue-herd/ in this repo
@@ -87,14 +88,20 @@ function loadEnv() {
  * per project. It may NOT carry issue-herd's own settings: ISSUE_HERD_CREDENTIALS would move where
  * tokens are written and read, and ISSUE_HERD_GITHUB_HOST where they are sent. A .env is committed,
  * so honouring those would let any repository you clone and run this in redirect your credentials.
+ *
+ * GITHUB_APP_PRIVATE_KEY_PATH is refused for the same reason: it names a file this process reads and
+ * signs a token request with, and a committed file must not get to pick which key on your disk that
+ * is. The key itself in GITHUB_APP_PRIVATE_KEY is allowed — a repository that supplies its own key
+ * is supplying its own app, not reaching for one of yours.
  */
+const REFUSED_FROM_ENV_FILE = /^ISSUE_HERD_|^GITHUB_APP_PRIVATE_KEY_PATH$/;
 function loadEnvFile(file, refused = []) {
   for (const raw of fs.readFileSync(file, 'utf8').split('\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
     if (!m) continue;
-    if (/^ISSUE_HERD_/.test(m[1])) { refused.push(m[1]); continue; }
+    if (REFUSED_FROM_ENV_FILE.test(m[1])) { refused.push(m[1]); continue; }
     let v = m[2].trim();
     if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
     if (process.env[m[1]] === undefined) process.env[m[1]] = v;
@@ -226,12 +233,19 @@ function renderBrief(templatePath, vars) {
   return t.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (vars[k] ?? ''));
 }
 
-function briefVars({ issue, rule, run, tracker }) {
+function briefVars({ issue, rule, run, tracker, viewer = null }) {
   const comments = issue.comments?.length
     ? issue.comments.map((c) => `- **${c.author}** (${c.createdAt.slice(0, 10)}): ${c.body.replace(/\r?\n/g, '\n  ')}`).join('\n')
     : '_none_';
   return {
     tracker,
+    actingAs: viewer ? `${userDisplay(viewer)}${viewer.app ? ` (an app identity: issue-herd's comments on ${tracker} are posted as this bot, not as the owner)` : ''}` : 'the account issue-herd is signed in with',
+    // git in the worktree is still configured with the machine owner's name, and there is no
+    // per-worktree config to change without touching the repository the owner shares. So the agent
+    // is told, once, which author its commits must carry for the trail to match the API identity.
+    commitAs: viewer?.app && viewer.commitEmail
+      ? `Commit as the identity issue-herd acts as, so the commits match the bot that claimed the issue: \`git -c user.name="${viewer.name}" -c user.email="${viewer.commitEmail}" commit …\`.`
+      : '',
     identifier: issue.identifier,
     ref: issue.ref || issue.identifier,
     title: issue.title,
@@ -399,7 +413,8 @@ class IssueHerd {
       run.dir = path.join(workDir, '.issue-herd', 'state', 'runs', key);
       run.resultPath = path.join(run.dir, 'result.json');
       fs.mkdirSync(run.dir, { recursive: true });
-      const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label }));
+      const viewer = this.tracker ? await this.tracker.me().catch(() => null) : null;
+      const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, viewer }));
       run.briefPath = path.join(run.dir, 'brief.md');
       fs.writeFileSync(run.briefPath, brief);
       saveState(this.state);
@@ -416,7 +431,9 @@ class IssueHerd {
         const host = os.hostname();
         await this.tracker.comment(issue.id, `🐑 **issue-herd** picked this up on \`${host}\` · herdr workspace \`${run.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`);
       }
-      if (this.tracker && rule.onPickup.assignToMe) { try { await this.tracker.assign(issue, await this.tracker.me()); } catch (e) { log(`${key}: assign failed: ${e.message}`); } }
+      // What `assignToMe` means depends on who we are: a person takes the issue, a Linear agent is
+      // delegated it and the human keeps it, a GitHub App cannot hold one at all. assign() says which.
+      if (this.tracker && rule.onPickup.assignToMe) { try { const what = await this.tracker.assign(issue, await this.tracker.me()); if (what) log(`${key}: ${what}`); } catch (e) { log(`${key}: assign failed: ${e.message}`); } }
       if (this.tracker && rule.onPickup.state) { try { await this.tracker.setState(issue, rule.onPickup.state); } catch (e) { log(`${key}: state failed: ${e.message}`); } }
 
       this.supervise(key);
@@ -681,8 +698,8 @@ class IssueHerd {
   async loop() {
     log(`issue-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
     this.logRules();
-    const who = await this.tracker.me().then(userDisplay).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
-    log(`  ${trackerBanner(this.tracker)}: ${who} (token from ${this.tracker.source || '?'}) · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
+    const who = await this.tracker.me().then(identityLine).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
+    log(`  ${trackerBanner(this.tracker)}: ${who} (credential from ${this.tracker.source || '?'}) · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
     await this.labelOwnWorkspace();
     await this.resume();
     let nextUpdateCheck = Date.now() + 24 * 3600e3; // startup already checked
@@ -805,9 +822,19 @@ function trackerBanner(tracker) {
   return `${tracker.constructor.label}${what ? ` ${what}` : ''}`;
 }
 
-/** `issue-herd login [tracker] [--paste]` and `issue-herd logout [tracker]`. Works before `init` when the tracker is named. */
+/**
+ * Who the run will be seen as. Worth its own line in the banner and in `login`'s reply: with an app
+ * identity every comment, claim and pull request is the bot's, and the difference between that and
+ * the maintainer's own account is not visible anywhere else until the first comment lands.
+ */
+function identityLine(user) {
+  return `${userDisplay(user)}${user?.app ? ' · app identity (a bot, not a person)' : ''}`;
+}
+
+/** `issue-herd login [tracker] [--paste|--app]` and `issue-herd logout [tracker]`. Works before `init` when the tracker is named. */
 async function auth(cmd, args) {
   const paste = args.includes('--paste');
+  const app = args.includes('--app');
   const named = args.find((a) => !a.startsWith('--'));
   const configured = fs.existsSync(CONFIG_PATH) ? loadConfig().trackerSpec : null;
   if (!named && !configured) throw new Error(`which tracker? issue-herd ${cmd} <${Object.keys(TRACKERS).join('|')}>`);
@@ -819,10 +846,10 @@ async function auth(cmd, args) {
   const shown = file.replace(os.homedir(), '~');
   if (cmd === 'logout') { console.log(deleteCredential(Tracker.id, file) ? `forgot the ${Tracker.label} token in ${shown}` : `no ${Tracker.label} token saved in ${shown}`); return; }
   const options = { ...spec, cwd: REPO };
-  const cred = await Tracker.login(terminalUi(), { paste, ...options });
+  const cred = await Tracker.login(terminalUi(), { paste, app, ...options });
   const tracker = new Tracker(cred, { options });
-  const user = await tracker.me(); // proves the token works before it is saved
-  const who = `${trackerBanner(tracker)}: signed in as ${userDisplay(user)}`;
+  const user = await tracker.me(); // proves the credential works before it is saved
+  const who = `${trackerBanner(tracker)}: signed in as ${identityLine(user)}`;
   if (cred.kind === 'borrowed') {
     // The credential belongs to another tool that can rotate it (`gh`). Copying it here would go
     // stale and, being ahead of the fallback in the lookup order, would keep being used after it did.
@@ -830,7 +857,9 @@ async function auth(cmd, args) {
     return;
   }
   const saved = saveCredential(Tracker.id, { ...cred, user: userDisplay(user) }, file);
-  console.log(`✓ ${who} · ${saved.kind} token saved in ${shown}`);
+  // An app credential is a reference to a key, not a copy of one: say so, so nobody goes looking
+  // for the private key in here or thinks deleting the original is now safe.
+  console.log(`✓ ${who} · ${saved.kind === 'app' && saved.privateKeyPath ? `app id and the path to its key (${saved.privateKeyPath}) saved` : `${saved.kind} token saved`} in ${shown}`);
   for (const name of [].concat(Tracker.auth?.env || [])) if (process.env[name]) console.log(`note: ${name} is set (environment or .env.local) and takes precedence over the saved token`);
 }
 

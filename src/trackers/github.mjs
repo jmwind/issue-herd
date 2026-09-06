@@ -16,10 +16,19 @@
 // Auth: GITHUB_TOKEN / GH_TOKEN, a saved credential, or `gh auth token`. Browser sign-in without
 // `gh` needs an OAuth app with device flow enabled (Settings → Developer settings → OAuth Apps);
 // put its client id in GITHUB_CLIENT_ID below or in ISSUE_HERD_GITHUB_CLIENT_ID.
+//
+// Or a GitHub App (`issue-herd login github --app`, or GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY_PATH),
+// which is the tool's own identity rather than the maintainer's: everything it writes shows as
+// `name[bot]` with a bot badge, it is not a billable seat, and it gets its own hourly API budget
+// instead of spending the person's. There is no token to store — the app signs a nine-minute JWT
+// with its private key, trades it for an installation token that lasts an hour, and renews it. The
+// one thing it cannot do is hold an issue: GitHub assignees must be users, so an app run leans on
+// the claim label instead (see assign()).
 
 import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { slugify } from '../tracker.mjs';
-import { deviceFlow, noCredentialError } from '../auth.mjs';
+import { appJwt, deviceFlow, homePath, noCredentialError, privateKeyOf, usableCredential } from '../auth.mjs';
 
 export const GITHUB_CLIENT_ID = process.env.ISSUE_HERD_GITHUB_CLIENT_ID || '';
 const PRIORITY_LABELS = { p0: 1, p1: 2, p2: 3, p3: 4, urgent: 1, high: 2, medium: 3, low: 4 };
@@ -60,6 +69,23 @@ export class GitHubTracker {
     return trusted;
   }
 
+  /**
+   * A GitHub App identity assembled from the environment: an app id and a private key, which is not
+   * one variable and so cannot come through `auth.env`. `GITHUB_APP_INSTALLATION_ID` is optional —
+   * the installation is looked up from the repository when it is not given.
+   *
+   * GITHUB_APP_PRIVATE_KEY_PATH is refused from a repository's `.env` (see loadEnvFile in the CLI),
+   * for the same reason as ISSUE_HERD_*: it names a file this process reads and signs with, and a
+   * committed .env must not get to choose which key on your disk that is.
+   */
+  static envCredential(env = process.env) {
+    const appId = env.GITHUB_APP_ID;
+    const privateKey = env.GITHUB_APP_PRIVATE_KEY || null;
+    const privateKeyPath = env.GITHUB_APP_PRIVATE_KEY_PATH || null;
+    if (!appId || (!privateKey && !privateKeyPath)) return null;
+    return { kind: 'app', appId, privateKey, privateKeyPath, installationId: env.GITHUB_APP_INSTALLATION_ID || null, source: 'GITHUB_APP_ID' };
+  }
+
   /** The token the `gh` CLI is logged in with, if it is installed and logged in. */
   static fallback(options = {}) {
     let host;
@@ -71,8 +97,9 @@ export class GitHubTracker {
   }
 
   static async login(ui, options = {}) {
-    const { clientId = GITHUB_CLIENT_ID, paste = false, fetchImpl = fetch } = options;
+    const { clientId = GITHUB_CLIENT_ID, paste = false, app = false, fetchImpl = fetch } = options;
     const host = this.host(options);
+    if (app) return this.loginAsApp(ui, options, host);
     if (clientId && !paste) {
       const t = await deviceFlow({ deviceUrl: `https://${host}/login/device/code`, tokenUrl: `https://${host}/login/oauth/access_token`, clientId, scope: 'repo', ui, fetchImpl });
       return { kind: 'oauth', token: t.access_token, refreshToken: t.refresh_token || null, expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null, clientId };
@@ -94,10 +121,34 @@ export class GitHubTracker {
     return { kind: 'apiKey', token };
   }
 
+  /**
+   * `issue-herd login github --app`: register the app yourself, then tell issue-herd its id and
+   * where its key is. Only the path is saved — the key stays the one copy GitHub gave you.
+   *
+   * There is no browser flow to run here on purpose. A GitHub App is created once, by a person with
+   * admin rights, and installed on the repositories it may touch; that is a setup step, not a
+   * sign-in, and pretending otherwise would only hide which permissions were granted.
+   */
+  static async loginAsApp(ui, options, host) {
+    ui.log('A GitHub App is the tool\'s own identity: everything it writes appears as `name[bot]`,');
+    ui.log('it is not a billable seat, and it has its own API rate limit.');
+    ui.log('On the page that opens: New GitHub App → repository permissions Issues, Pull requests and Contents');
+    ui.log('= Read and write → create it, install it on the repositories it should work, then Generate a private key.');
+    await ui.open(`https://${host}/settings/apps`);
+    const appId = (await ui.ask('App ID: ')).trim();
+    if (!/^\d+$/.test(appId)) throw new Error(`the App ID is the number on the app's settings page, not ${JSON.stringify(appId)}`);
+    const keyPath = homePath((await ui.ask('Path to the app private key (.pem): ')).trim());
+    if (!keyPath) throw new Error('no private key given');
+    const cred = { kind: 'app', appId, privateKeyPath: resolve(keyPath) };
+    privateKeyOf(cred);   // fail here, where the person can fix it, rather than on the first poll
+    return cred;
+  }
+
   constructor(credential, { options = {}, fetchImpl = fetch } = {}) {
     const cred = typeof credential === 'string' ? { token: credential } : credential;
-    if (!cred?.token) throw noCredentialError(GitHubTracker);
+    if (!usableCredential(cred)) throw noCredentialError(GitHubTracker);
     this.cred = { ...cred };
+    this.app = cred.kind === 'app';   // no token at rest; one is minted per installation, per hour
     this.options = options;
     this.fetch = fetchImpl;
     this.host = GitHubTracker.host(options);
@@ -113,22 +164,61 @@ export class GitHubTracker {
     this.labelsPending = new Map();   // name -> in-flight ensureLabel(), so two runs cannot both create it
   }
 
-  get token() { return this.cred.token; }
-
   describe() { return this.repo || '(repository unknown)'; }
+
+  /**
+   * The token to put in the next request. A personal one is used as it stands; an app has none, so
+   * this mints an installation token on first use and a minute before each expiry (they last an
+   * hour). The in-flight promise is shared, so a poll and three supervisors do not mint four.
+   */
+  async accessToken() {
+    if (!this.app) return this.cred.token;
+    if (this.installToken && Date.now() < this.installExpiresAt - 60_000) return this.installToken;
+    this.minting ??= (async () => {
+      const id = await this.installationId();
+      const r = await this.request('POST', `${this.api}/app/installations/${id}/access_tokens`, null, { token: this.jwt() });
+      this.installToken = r.token;
+      this.installExpiresAt = Date.parse(r.expires_at) || Date.now() + 3600e3;
+      return this.installToken;
+    })().finally(() => { this.minting = null; });
+    return this.minting;
+  }
+
+  /** A nine-minute JWT signed with the app's private key: how the app asks about itself. */
+  jwt() { return appJwt({ appId: this.cred.appId, key: privateKeyOf(this.cred) }); }
+
+  /** Which installation of the app to act as: the one on this repository, unless it was configured. */
+  async installationId() {
+    if (this.cred.installationId) return this.cred.installationId;
+    this.check();
+    try {
+      const inst = await this.request('GET', `${this.api}/repos/${this.repo}/installation`, null, { token: this.jwt() });
+      this.cred.installationId = inst.id;
+      return inst.id;
+    } catch (e) {
+      if (e.status === 404) throw new Error(`GitHub App ${this.cred.appId} is not installed on ${this.repo} — install it (Settings → Developer settings → GitHub Apps → Install App), or set GITHUB_APP_INSTALLATION_ID`);
+      throw e;
+    }
+  }
 
   /** Throws if this tracker cannot work: the watcher needs a repository (login only needs a token). */
   check() {
     if (!this.repo) throw new Error(`cannot tell which GitHub repository this is (origin is not on ${this.host}); set "tracker": { "type": "github", "repo": "owner/name" } in config.json`);
   }
 
-  async request(method, url, body, { retry = true } = {}) {
-    const headers = { authorization: `Bearer ${this.token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'issue-herd' };
+  async request(method, url, body, { retry = true, token = null } = {}) {
+    const headers = { authorization: `Bearer ${token || await this.accessToken()}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'issue-herd' };
     if (body) headers['content-type'] = 'application/json';
     const res = await this.fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
     const text = await res.text();
     let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
     if (!res.ok) {
+      // An installation token can die before its hour is up (the app is reinstalled, its permissions
+      // change). Throw ours away and mint another once, rather than 401 until the watcher restarts.
+      if (res.status === 401 && retry && this.app && !token) {
+        this.installToken = null;
+        return this.request(method, url, body, { retry: false });
+      }
       // A borrowed token belongs to `gh`, which rotates it. Re-read it once rather than 401 forever.
       if (res.status === 401 && retry && this.cred.kind === 'borrowed') {
         const fresh = GitHubTracker.fallback(this.options);
@@ -152,13 +242,28 @@ export class GitHubTracker {
 
   /** "4832 GraphQL points left" for the watcher's heartbeat, or null before the first poll. */
   budget() {
-    return this.rateLimit ? `${this.rateLimit.remaining} GraphQL points left until ${String(this.rateLimit.resetAt).slice(11, 16)}` : null;
+    // An installation has its own hourly budget, so an app run is not spending the maintainer's.
+    return this.rateLimit ? `${this.rateLimit.remaining} GraphQL points left until ${String(this.rateLimit.resetAt).slice(11, 16)}${this.app ? ' (the installation\'s own budget)' : ''}` : null;
   }
 
+  /**
+   * The account this credential acts as. For an app that is the app itself, asked for with its own
+   * JWT: `slug[bot]` is the login its comments and pull requests carry, and the bot account's
+   * numeric id is what makes a noreply address resolve to it, so a commit made with `commitEmail`
+   * is attributed to the same identity the API writes as. Without the id the commit still lands,
+   * just unlinked, which is why the lookup is allowed to fail.
+   */
   async me() {
     if (!this.viewer) {
-      const d = await this.gql('{ viewer { login name } }');
-      this.viewer = user(d.viewer);
+      if (this.app) {
+        const a = await this.request('GET', `${this.api}/app`, null, { token: this.jwt() });
+        const login = `${a.slug}[bot]`;
+        const id = await this.request('GET', `${this.api}/users/${encodeURIComponent(login)}`).then((u) => u.id).catch(() => null);
+        this.viewer = { id: login, login, name: a.name || login, displayName: login, email: null, app: true, commitEmail: `${id ? `${id}+` : ''}${login}@users.noreply.github.com` };
+      } else {
+        const d = await this.gql('{ viewer { login name } }');
+        this.viewer = user(d.viewer);
+      }
     }
     return this.viewer;
   }
@@ -215,8 +320,16 @@ export class GitHubTracker {
     catch (e) { if (e.status !== 404) throw e; }
   }
 
+  /**
+   * `onPickup.assignToMe`, when there is someone to assign to. A GitHub App is not one: assignees
+   * must be users, and GitHub silently ignores a login it will not accept, so an app run says so
+   * once and leans on the claim label — which is the guard that actually stops double work anyway.
+   * Linear has no such limit, and delegates instead; the two trackers differ here for real reasons.
+   */
   async assign(issue, u) {
+    if (u.app) return 'not assigned: a GitHub App cannot be an issue assignee, so the claim label marks it instead';
     await this.rest('POST', `/issues/${issue.id}/assignees`, { assignees: [u.login || u.id] });
+    return `assigned to @${u.login || u.id}`;
   }
 
   /**

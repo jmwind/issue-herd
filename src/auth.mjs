@@ -1,9 +1,17 @@
 // Credentials: where tokens are kept, how they are found, and the browser flows that obtain them.
 //
 // A tracker's token is looked up in this order (resolveCredential):
+//   0. a credential the tracker assembles from several variables (envCredential), e.g. a GitHub App
 //   1. the environment — the tracker's `auth.env` variables; .env.local / .env are loaded into it first
 //   2. ~/.config/issue-herd/credentials.json (mode 600), written by `issue-herd login`
 //   3. the tracker's own fallback, e.g. GitHub reading `gh auth token`
+//
+// A credential has a `kind`: `apiKey` and `oauth` (from `login`), `env`, `borrowed` (another tool
+// owns and rotates it), or `app` — an *app identity*: the agent acts as the application rather than
+// as the person who installed it, so its comments and pull requests are attributed to a bot and not
+// to the maintainer, and neither platform bills it as a seat. An `app` credential carries no token
+// at rest: GitHub signs a short JWT with the app's private key (appJwt) and trades it for a
+// one-hour installation token; Linear's is an ordinary OAuth token taken with `actor=app`.
 // `issue-herd login` runs the tracker's static login(ui) — a browser OAuth flow when the tracker
 // has a client id, otherwise it opens the page where a token is made and asks for it — validates
 // the result and saves it. The flows here are generic; a tracker picks one in a few lines.
@@ -56,16 +64,30 @@ export function deleteCredential(id, file = credentialsPath()) {
 }
 
 /**
+ * True for a credential that can actually authenticate. Most are a token, but an app identity has
+ * none at rest — it signs a JWT with its private key and mints a short-lived one when it needs one —
+ * so "carries a token" is not the same question as "is usable".
+ */
+export function usableCredential(cred) {
+  return !!(cred && (cred.token || cred.privateKey || cred.privateKeyPath));
+}
+
+/**
  * The credential to use for `Tracker`, or null. Returns { credential, source } where `source`
  * names where it came from for the startup banner ("LINEAR_API_KEY", the file, "gh auth token").
  */
 export function resolveCredential(Tracker, { env = process.env, file = credentialsPath(), options = {} } = {}) {
+  // An app identity is several variables that add up to one credential, so the tracker assembles it.
+  // It goes first because it is the more specific thing to have set up: a GITHUB_TOKEN left over in
+  // a shell should not quietly send the run out under the maintainer's own name.
+  const assembled = Tracker.envCredential?.(env, options);
+  if (usableCredential(assembled)) return { credential: assembled, source: assembled.source || 'the environment' };
   for (const name of [].concat(Tracker.auth?.env || [])) {
     if (env[name]) return { credential: { kind: 'env', token: env[name] }, source: name };
   }
   const all = loadCredentials(file);
   const saved = Object.hasOwn(all, Tracker.id) ? all[Tracker.id] : null;
-  if (saved?.token) return { credential: saved, source: file.replace(os.homedir(), '~'), saved: true };
+  if (usableCredential(saved)) return { credential: saved, source: file.replace(os.homedir(), '~'), saved: true };
   const fb = Tracker.fallback?.(options);
   if (fb?.token) return { credential: fb, source: fb.source || `${Tracker.id} fallback` };
   return null;
@@ -234,4 +256,46 @@ export async function postForm(url, params, fetchImpl = fetch, { tolerate = fals
   if (!json) throw new Error(`${url}: HTTP ${res.status} ${text.slice(0, 200)}`);
   if (!tolerate && (json.error || !res.ok)) throw new Error(`${url}: ${json.error_description || json.error || `HTTP ${res.status}`}`);
   return json;
+}
+
+// ---------------------------------------------------------------- app identities
+
+/** A path a person typed, with a leading `~` expanded. Credentials are kept per user, so `~` is theirs. */
+export function homePath(p) {
+  const s = String(p).trim();
+  return s === '~' || s.startsWith('~/') ? path.join(os.homedir(), s.slice(1)) : s;
+}
+
+/**
+ * The private key behind an `app` credential: inline (`privateKey`, how a PEM arrives in an
+ * environment variable, where its newlines are usually escaped) or a file (`privateKeyPath`).
+ *
+ * The key never enters credentials.json — only the path to it does. A key is not a token: it cannot
+ * be rotated by re-running `login`, it is what the platform hands you once, and copying it into a
+ * second file is one more place to leak it from and one more copy to forget when it is replaced.
+ */
+export function privateKeyOf(cred) {
+  let pem = cred?.privateKey || null;
+  const from = cred?.privateKeyPath ? homePath(cred.privateKeyPath) : null;
+  if (!pem && from) {
+    try { pem = fs.readFileSync(from, 'utf8'); }
+    catch (e) { throw new Error(`cannot read the app private key at ${from}: ${e.code === 'ENOENT' ? 'no such file' : e.message}`); }
+  }
+  if (!pem) throw new Error('this credential has no private key');
+  if (!pem.includes('\n')) pem = pem.replace(/\\n/g, '\n');   // a PEM that came through an env var
+  try { return crypto.createPrivateKey(pem); }
+  catch (e) { throw new Error(`${from || 'the app private key'} is not a private key: ${e.message}`); }
+}
+
+/**
+ * A short RS256 JWT signed with an app's private key: what a GitHub App presents to say "I am app
+ * <id>" before asking for an installation token. GitHub allows at most ten minutes and rejects a
+ * future `iat`, so this backdates a minute and lives for nine — no dependency, `crypto` signs it.
+ */
+export function appJwt({ appId, key, now = Date.now(), ttlSeconds = 540 }) {
+  if (!appId) throw new Error('appJwt needs an appId');
+  const iat = Math.floor(now / 1000) - 60;
+  const seg = (o) => b64url(Buffer.from(JSON.stringify(o)));
+  const signed = `${seg({ alg: 'RS256', typ: 'JWT' })}.${seg({ iat, exp: iat + ttlSeconds, iss: String(appId) })}`;
+  return `${signed}.${b64url(crypto.sign('RSA-SHA256', Buffer.from(signed), key))}`;
 }
