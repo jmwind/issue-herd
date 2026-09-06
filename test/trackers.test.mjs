@@ -2,7 +2,7 @@
 // against it for free; the per-tracker tests (github.test.mjs, linear.test.mjs) cover behaviour.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TRACKERS, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
+import { TRACKERS, isTracker, mergeSpec, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
 import { checkIssue, userDisplay } from '../src/tracker.mjs';
 
 const METHODS = ['me', 'openIssues', 'issueByKey', 'comment', 'addLabel', 'removeLabel', 'assign', 'setState'];
@@ -35,17 +35,37 @@ test('an unknown tracker lists the known ones', () => {
   assert.equal(trackerClass({ type: 'github' }).label, 'GitHub');
 });
 
+test('naming a tracker on the command line keeps the config options for it', () => {
+  // `issue-herd login github` in a GitHub Enterprise repo must sign in to that host, not github.com.
+  const configured = { type: 'github', host: 'ghe.corp.com', repo: 'team/app' };
+  assert.deepEqual(mergeSpec({ type: 'github' }, configured), configured);
+  assert.deepEqual(mergeSpec({ type: 'linear' }, configured), { type: 'linear' }, 'a different tracker keeps nothing');
+  assert.deepEqual(mergeSpec(null, configured), configured);
+  assert.deepEqual(mergeSpec({ type: 'github' }, null), { type: 'github' });
+});
+
+test('isTracker does not walk the prototype chain', () => {
+  assert.ok(isTracker('github') && isTracker('linear'));
+  for (const bad of ['constructor', '__proto__', 'toString', 'hasOwnProperty', '', null, 42]) assert.ok(!isTracker(bad), String(bad));
+});
+
 test('checkIssue rejects the mistakes a new tracker is likely to make', () => {
   const good = {
     id: '1', identifier: 'X-1', ref: 'X-1', title: 't', description: '', url: 'u', priority: 0, priorityLabel: null, estimate: null,
     createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z', branchName: null, labels: [], project: null, team: null,
-    assignee: null, creator: null, state: { id: 's', name: 'Open', type: 'unstarted' }, cycle: null, comments: [],
+    assignees: [], assignee: null, creator: null, state: { id: 's', name: 'Open', type: 'unstarted' }, cycle: null, comments: [],
   };
   assert.equal(checkIssue(good), good);
   assert.throws(() => checkIssue({ ...good, identifier: '#7' }), /not safe for files and branches/);
   assert.throws(() => checkIssue({ ...good, priority: 'high' }), /priority must be 0..4/);
   assert.throws(() => checkIssue({ ...good, state: { name: 'Open', type: 'open' } }), /state.type must be one of/);
   assert.throws(() => checkIssue({ ...good, assignee: { login: 'x' } }), /assignee is missing "id"/);
+  assert.throws(() => checkIssue({ ...good, id: '' }), /id is empty/);
+  const me = { id: 'u', login: 'u', name: 'u', displayName: 'u', email: null };
+  // the guard that leaves other people's issues alone reads assignees, so it must be complete
+  assert.throws(() => checkIssue({ ...good, assignee: me, assignees: [] }), /assignee is not one of assignees/);
+  assert.doesNotThrow(() => checkIssue({ ...good, assignee: me, assignees: [me] }));
+  assert.throws(() => checkIssue({ ...good, comments: [{ body: 'b', author: 'a' }] }), /no createdAt/);
   const { comments, ...missing } = good;
   assert.throws(() => checkIssue(missing), /missing "comments"/);
 });

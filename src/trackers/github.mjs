@@ -19,7 +19,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { slugify } from '../tracker.mjs';
-import { deviceFlow } from '../auth.mjs';
+import { deviceFlow, noCredentialError } from '../auth.mjs';
 
 export const GITHUB_CLIENT_ID = process.env.ISSUE_HERD_GITHUB_CLIENT_ID || '';
 const PRIORITY_LABELS = { p0: 1, p1: 2, p2: 3, p3: 4, urgent: 1, high: 2, medium: 3, low: 4 };
@@ -29,7 +29,7 @@ const PRIORITY_NAMES = ['none', 'Urgent', 'High', 'Medium', 'Low'];
 // the token somewhere else, and a "prefix" carrying a slash or a dot would put a run's directory
 // outside .issue-herd/state/runs/.
 const VALID_HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
-const VALID_REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+const VALID_REPO = /^(?!\.{1,2}$)[A-Za-z0-9._-]+\/(?!\.{1,2}$)[A-Za-z0-9._-]+$/;
 const VALID_PREFIX = /^[A-Za-z][A-Za-z0-9]{0,15}$/;
 
 export class GitHubTracker {
@@ -41,26 +41,49 @@ export class GitHubTracker {
     defaults: { onPickup: { state: null }, onDone: { state: null } },
   };
 
+  /**
+   * The GitHub host this machine trusts: github.com, or whatever ISSUE_HERD_GITHUB_HOST names —
+   * a variable issue-herd deliberately refuses to read from a repository's .env.
+   *
+   * A committed config may *name* the host it expects, but it may not introduce one, because this
+   * value decides where an `Authorization: Bearer <your token>` header is sent, and config.json
+   * travels with the repository. Every entry point resolves the host through here, including the
+   * static ones, so signing in cannot be pointed at someone else's server either.
+   */
+  static host(options = {}) {
+    const trusted = process.env.ISSUE_HERD_GITHUB_HOST || 'github.com';
+    if (!VALID_HOST.test(trusted)) throw new Error(`ISSUE_HERD_GITHUB_HOST is not a hostname: ${JSON.stringify(trusted)}`);
+    const want = options.host;
+    if (want && want !== trusted) {
+      throw new Error(`the config asks to reach GitHub at ${JSON.stringify(want)}, but this machine trusts ${trusted}. A repository cannot redirect your token: if you meant it, set ISSUE_HERD_GITHUB_HOST=${want} in your shell.`);
+    }
+    return trusted;
+  }
+
   /** The token the `gh` CLI is logged in with, if it is installed and logged in. */
-  static fallback({ host = 'github.com' } = {}) {
+  static fallback(options = {}) {
+    let host;
+    try { host = this.host(options); } catch { return null; }   // an untrusted host borrows nothing
     try {
       const token = execFileSync('gh', ['auth', 'token', '-h', host], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
       return token ? { kind: 'borrowed', token, source: 'gh auth token' } : null;
     } catch { return null; }
   }
 
-  static async login(ui, { clientId = GITHUB_CLIENT_ID, paste = false, host = 'github.com', fetchImpl = fetch } = {}) {
+  static async login(ui, options = {}) {
+    const { clientId = GITHUB_CLIENT_ID, paste = false, fetchImpl = fetch } = options;
+    const host = this.host(options);
     if (clientId && !paste) {
       const t = await deviceFlow({ deviceUrl: `https://${host}/login/device/code`, tokenUrl: `https://${host}/login/oauth/access_token`, clientId, scope: 'repo', ui, fetchImpl });
-      return { kind: 'oauth', token: t.access_token };
+      return { kind: 'oauth', token: t.access_token, refreshToken: t.refresh_token || null, expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null, clientId };
     }
     if (!paste) {
-      const found = this.fallback({ host });
+      const found = this.fallback(options);
       if (found) { ui.log('Using the token `gh` is logged in with.'); return found; }
       if (hasGh()) {
         ui.log('Signing in with `gh auth login` (it opens your browser)…');
         execFileSync('gh', ['auth', 'login', '--web', '--hostname', host, '--scopes', 'repo'], { stdio: 'inherit' });
-        const again = this.fallback({ host });
+        const again = this.fallback(options);
         if (again) return again;
       }
     }
@@ -73,11 +96,11 @@ export class GitHubTracker {
 
   constructor(credential, { options = {}, fetchImpl = fetch } = {}) {
     const cred = typeof credential === 'string' ? { token: credential } : credential;
-    if (!cred?.token) throw new Error('no GitHub token — run `issue-herd login github`, `gh auth login`, or put GITHUB_TOKEN in the repository .env.local');
-    this.token = cred.token;
+    if (!cred?.token) throw noCredentialError(GitHubTracker);
+    this.cred = { ...cred };
+    this.options = options;
     this.fetch = fetchImpl;
-    this.host = options.host || 'github.com';
-    if (!VALID_HOST.test(this.host)) throw new Error(`tracker "host" is not a hostname: ${JSON.stringify(options.host)}`);
+    this.host = GitHubTracker.host(options);
     this.prefix = options.prefix || 'GH';
     if (!VALID_PREFIX.test(this.prefix)) throw new Error(`tracker "prefix" must be letters and digits starting with a letter (it names branches and directories): ${JSON.stringify(options.prefix)}`);
     // An unknown repository is not fatal here — `issue-herd login` needs only a token. check() is
@@ -87,8 +110,10 @@ export class GitHubTracker {
     this.api = this.host === 'github.com' ? 'https://api.github.com' : `https://${this.host}/api/v3`;
     this.graphql = this.host === 'github.com' ? 'https://api.github.com/graphql' : `https://${this.host}/api/graphql`;
     this.viewer = null;
-    this.labelsKnown = new Set();
+    this.labelsPending = new Map();   // name -> in-flight ensureLabel(), so two runs cannot both create it
   }
+
+  get token() { return this.cred.token; }
 
   describe() { return this.repo || '(repository unknown)'; }
 
@@ -97,13 +122,18 @@ export class GitHubTracker {
     if (!this.repo) throw new Error(`cannot tell which GitHub repository this is (origin is not on ${this.host}); set "tracker": { "type": "github", "repo": "owner/name" } in config.json`);
   }
 
-  async request(method, url, body) {
+  async request(method, url, body, { retry = true } = {}) {
     const headers = { authorization: `Bearer ${this.token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'issue-herd' };
     if (body) headers['content-type'] = 'application/json';
     const res = await this.fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
     const text = await res.text();
     let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
     if (!res.ok) {
+      // A borrowed token belongs to `gh`, which rotates it. Re-read it once rather than 401 forever.
+      if (res.status === 401 && retry && this.cred.kind === 'borrowed') {
+        const fresh = GitHubTracker.fallback(this.options);
+        if (fresh?.token && fresh.token !== this.cred.token) { this.cred = { ...fresh }; return this.request(method, url, body, { retry: false }); }
+      }
       const e = new Error(`GitHub HTTP ${res.status}: ${json?.message || text.slice(0, 200)}${res.status === 401 ? ' — run `issue-herd login github` or check GITHUB_TOKEN' : ''}`);
       e.status = res.status; throw e;
     }
@@ -115,7 +145,14 @@ export class GitHubTracker {
   async gql(query, variables = {}) {
     const json = await this.request('POST', this.graphql, { query, variables });
     if (json?.errors?.length) throw new Error(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+    // Free to ask for, and the only way to see how much of the hourly budget polling is using.
+    if (json?.data?.rateLimit) this.rateLimit = json.data.rateLimit;
     return json.data;
+  }
+
+  /** "4832 GraphQL points left" for the watcher's heartbeat, or null before the first poll. */
+  budget() {
+    return this.rateLimit ? `${this.rateLimit.remaining} GraphQL points left until ${String(this.rateLimit.resetAt).slice(11, 16)}` : null;
   }
 
   async me() {
@@ -151,15 +188,21 @@ export class GitHubTracker {
     return { id: c.id, url: c.html_url };
   }
 
-  /** The claim label is created on first use; there is no "create it in the UI first" step on GitHub. */
-  async ensureLabel(name) {
-    if (this.labelsKnown.has(name)) return;
-    try { await this.rest('GET', `/labels/${encodeURIComponent(name)}`); }
-    catch (e) {
-      if (e.status !== 404) throw e;
-      await this.rest('POST', '/labels', { name, color: 'c5def5', description: 'set by issue-herd' });
+  /**
+   * The claim label is created on first use; there is no "create it in the UI first" step on GitHub.
+   * The in-flight promise is shared, and a 422 from a racing creator counts as success, because two
+   * runs finishing together would otherwise both see 404 and the loser would fail on "already_exists".
+   */
+  ensureLabel(name) {
+    if (!this.labelsPending.has(name)) {
+      this.labelsPending.set(name, (async () => {
+        try { await this.rest('GET', `/labels/${encodeURIComponent(name)}`); return; }
+        catch (e) { if (e.status !== 404) throw e; }
+        try { await this.rest('POST', '/labels', { name, color: 'c5def5', description: 'set by issue-herd' }); }
+        catch (e) { if (e.status !== 422) throw e; }   // someone created it between our GET and POST
+      })().catch((e) => { this.labelsPending.delete(name); throw e; }));
     }
-    this.labelsKnown.add(name);
+    return this.labelsPending.get(name);
   }
 
   async addLabel(issueId, name) {
@@ -176,13 +219,23 @@ export class GitHubTracker {
     await this.rest('POST', `/issues/${issue.id}/assignees`, { assignees: [u.login || u.id] });
   }
 
-  /** "closed"/"completed" closes, "open"/"unstarted"/… reopens, anything else becomes a label. */
+  /**
+   * GitHub has two states, open and closed. The contract's state types map onto them; a workflow
+   * name from some other tracker throws.
+   *
+   * Guessing was worse than refusing. Treating an unknown name as a label silently created
+   * "In Progress" in the user's repository the first time a Linear-shaped config ran here, and
+   * treating "Done" as closed shut the issue the moment its PR opened, before anyone reviewed it.
+   * `issue-herd init --tracker github` sets these to null; the error says to do the same.
+   */
   async setState(issue, name) {
-    const want = String(name).toLowerCase();
-    if (['closed', 'close', 'completed', 'canceled', 'cancelled', 'done'].includes(want)) { await this.rest('PATCH', `/issues/${issue.id}`, { state: 'closed' }); return { name: 'closed', type: 'completed' }; }
-    if (['open', 'reopen', 'reopened', 'unstarted', 'backlog', 'triage', 'todo'].includes(want)) { await this.rest('PATCH', `/issues/${issue.id}`, { state: 'open' }); return { name: 'open', type: 'unstarted' }; }
-    await this.addLabel(issue.id, String(name));
-    return { name: String(name), type: 'started', label: true };
+    const want = String(name).trim().toLowerCase();
+    const state = ['closed', 'completed', 'canceled'].includes(want) ? 'closed'
+      : ['open', 'triage', 'backlog', 'unstarted', 'started'].includes(want) ? 'open'
+        : null;
+    if (!state) throw new Error(`GitHub has no workflow state "${name}" — an issue is only open or closed. Set this rule's state to null, "open" or "closed".`);
+    await this.rest('PATCH', `/issues/${issue.id}`, { state });
+    return { name: state, type: state === 'closed' ? 'completed' : 'unstarted' };
   }
 
   get owner() { this.check(); return this.repo.split('/')[0]; }
@@ -191,6 +244,7 @@ export class GitHubTracker {
   normalize(n) {
     const labels = (n.labels?.nodes || []).map((l) => l.name);
     const priority = priorityFromLabels(labels);
+    const assignees = (n.assignees?.nodes || []).map(user).filter(Boolean);
     return {
       id: String(n.number),
       identifier: `${this.prefix}-${n.number}`,
@@ -207,7 +261,8 @@ export class GitHubTracker {
       labels,
       project: n.milestone ? { id: String(n.milestone.number), name: n.milestone.title } : null,
       team: { id: this.repo, key: this.name, name: this.repo },
-      assignee: user(pickAssignee(n.assignees?.nodes, this.viewer?.login)),
+      assignees,
+      assignee: pickAssignee(assignees, this.viewer?.login),
       creator: user(n.author),
       state: n.state === 'CLOSED' ? { id: 'closed', name: 'closed', type: 'completed' } : { id: 'open', name: 'open', type: 'unstarted' },
       cycle: null,
@@ -226,6 +281,7 @@ const ISSUE_FIELDS = `{
 }`;
 
 const ISSUES_QUERY = `query($owner: String!, $name: String!, $first: Int!, $after: String, $since: DateTime) {
+  rateLimit { remaining resetAt }
   repository(owner: $owner, name: $name) {
     issues(states: OPEN, first: $first, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }, filterBy: { since: $since }) {
       nodes ${ISSUE_FIELDS}
@@ -240,21 +296,30 @@ function user(u) {
 }
 
 /**
- * GitHub issues can have several assignees; the normalized shape has one. Prefer the token's own
- * account, so an issue you share with someone else still reads as yours — otherwise
- * `skipIfAssignedToOthers` would refuse to pick up an issue that is already assigned to you.
+ * GitHub issues can have several assignees; `assignee` is the one worth showing. Prefer the token's
+ * own account so the brief and `assignee:me` read naturally. This is display only: the guard that
+ * decides whether someone else holds the issue reads the whole `assignees` list, because collapsing
+ * "alex and you" to "you" would let the watcher claim an issue alex is working.
  */
-function pickAssignee(nodes, meLogin) {
-  if (!nodes?.length) return null;
-  return (meLogin && nodes.find((a) => a.login === meLogin)) || nodes[0];
+function pickAssignee(assignees, meLogin) {
+  if (!assignees?.length) return null;
+  return (meLogin && assignees.find((a) => a.login === meLogin)) || assignees[0];
 }
 
+/**
+ * The most urgent priority label on the issue, or 0. The most urgent, not the first: label order
+ * is the repository's, so an issue re-triaged from `low` to `urgent` without the old label being
+ * removed would otherwise read as Low and never match a `priority<=2` rule.
+ */
 export function priorityFromLabels(labels) {
+  let best = 0;
   for (const l of labels) {
     const m = /^(?:priority[:\s-]*)?(p[0-3]|urgent|high|medium|low)$/i.exec(l.trim());
-    if (m) return PRIORITY_LABELS[m[1].toLowerCase()];
+    if (!m) continue;
+    const p = PRIORITY_LABELS[m[1].toLowerCase()];
+    best = best === 0 ? p : Math.min(best, p);
   }
-  return 0;
+  return best;
 }
 
 /** "GH-7", "#7", "7", "owner/repo#7" → 7. */

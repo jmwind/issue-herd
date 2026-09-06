@@ -7,7 +7,7 @@
 // one, `issue-herd login linear` opens the personal-API-keys page and asks for the key instead.
 
 import { slugify } from '../tracker.mjs';
-import { oauthCodeFlow, postForm } from '../auth.mjs';
+import { noCredentialError, oauthCodeFlow, postForm } from '../auth.mjs';
 
 const ENDPOINT = 'https://api.linear.app/graphql';
 const AUTHORIZE_URL = 'https://linear.app/oauth/authorize';
@@ -34,7 +34,7 @@ export class LinearTracker {
 
   constructor(credential, { fetchImpl = fetch, onCredential = null } = {}) {
     const cred = typeof credential === 'string' ? { token: credential } : credential;
-    if (!cred?.token) throw new Error('no Linear token — run `issue-herd login linear` or put LINEAR_API_KEY in the repository .env.local');
+    if (!cred?.token) throw noCredentialError(LinearTracker);
     this.cred = { ...cred };
     this.fetch = fetchImpl;
     this.onCredential = onCredential;
@@ -47,11 +47,19 @@ export class LinearTracker {
     return this.cred.kind === 'oauth' || t.startsWith('lin_oauth_') ? `Bearer ${t}` : t;
   }
 
-  /** OAuth tokens last 24h; renew a minute early, or on a 401, and hand the new one to whoever stores it. */
-  async refresh() {
-    const t = await postForm(TOKEN_URL, new URLSearchParams({ grant_type: 'refresh_token', refresh_token: this.cred.refreshToken, client_id: this.cred.clientId || LINEAR_CLIENT_ID }), this.fetch);
-    Object.assign(this.cred, { token: t.access_token, refreshToken: t.refresh_token || this.cred.refreshToken, expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null });
-    if (this.onCredential) await this.onCredential(this.cred);
+  /**
+   * OAuth tokens last 24h; renew a minute early, or on a 401, and hand the new one to whoever
+   * stores it. The in-flight promise is shared: the watcher polls while several supervisors comment,
+   * so concurrent callers would otherwise each spend the same refresh token — and providers that
+   * rotate it reject all but the first, with the last writer persisting a dead credential.
+   */
+  refresh() {
+    this.refreshing ??= (async () => {
+      const t = await postForm(TOKEN_URL, new URLSearchParams({ grant_type: 'refresh_token', refresh_token: this.cred.refreshToken, client_id: this.cred.clientId || LINEAR_CLIENT_ID }), this.fetch);
+      Object.assign(this.cred, { token: t.access_token, refreshToken: t.refresh_token || this.cred.refreshToken, expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null });
+      if (this.onCredential) await this.onCredential(this.cred);
+    })().finally(() => { this.refreshing = null; });
+    return this.refreshing;
   }
 
   async gql(query, variables = {}, { retry = true } = {}) {
@@ -167,7 +175,7 @@ const ISSUE_FIELDS = `{
   creator { id name displayName email }
   state { id name type }
   cycle { id number isActive }
-  comments(first: 25) { nodes { body createdAt user { name displayName } } }
+  comments(last: 25) { nodes { body createdAt user { name displayName } } }
 }`;
 
 const ISSUES_QUERY = `query($filter: IssueFilter, $first: Int, $after: String) {
@@ -196,6 +204,7 @@ export function normalizeIssue(n) {
     labels: (n.labels?.nodes || []).map((l) => l.name),
     project: n.project || null,
     team: n.team,
+    assignees: n.assignee ? [user(n.assignee)] : [],
     assignee: user(n.assignee),
     creator: user(n.creator),
     state: n.state,

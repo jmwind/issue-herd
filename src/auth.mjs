@@ -24,8 +24,16 @@ export function credentialsPath() {
   return path.join(base, 'issue-herd', 'credentials.json');
 }
 
+/**
+ * Every saved credential, or {} when there is no file yet. A file that exists but does not parse
+ * throws instead of reading as empty: saving is a read-modify-write of the whole file, so treating
+ * a truncated or hand-edited one as empty would quietly delete every other tracker's token —
+ * including a refresh token that cannot be re-derived.
+ */
 export function loadCredentials(file = credentialsPath()) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return {}; }
+  try { return JSON.parse(text); } catch (e) { throw new Error(`${file} is not valid JSON (${e.message}). Fix or delete it, then sign in again.`); }
 }
 
 /** Save `cred` under the tracker id. The file is created 0600 in a 0700 directory. Returns what was saved. */
@@ -40,9 +48,10 @@ export function saveCredential(id, cred, file = credentialsPath()) {
 
 export function deleteCredential(id, file = credentialsPath()) {
   const all = loadCredentials(file);
-  if (!(id in all)) return false;
+  if (!Object.hasOwn(all, id)) return false;
   delete all[id];
   fs.writeFileSync(file, JSON.stringify(all, null, 2) + '\n', { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch { /* not every fs has modes */ }
   return true;
 }
 
@@ -54,7 +63,8 @@ export function resolveCredential(Tracker, { env = process.env, file = credentia
   for (const name of [].concat(Tracker.auth?.env || [])) {
     if (env[name]) return { credential: { kind: 'env', token: env[name] }, source: name };
   }
-  const saved = loadCredentials(file)[Tracker.id];
+  const all = loadCredentials(file);
+  const saved = Object.hasOwn(all, Tracker.id) ? all[Tracker.id] : null;
   if (saved?.token) return { credential: saved, source: file.replace(os.homedir(), '~'), saved: true };
   const fb = Tracker.fallback?.(options);
   if (fb?.token) return { credential: fb, source: fb.source || `${Tracker.id} fallback` };
@@ -70,7 +80,9 @@ export function noCredentialError(Tracker) {
 
 /** Open a URL in the default browser. Best effort; the URL is always printed as well. */
 export function openBrowser(url) {
-  const cmd = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  // On Windows the URL is quoted: cmd.exe treats a bare `&` as a command separator, and every OAuth
+  // URL has several, so an unquoted one opens a truncated page and runs the rest as commands.
+  const cmd = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', `"${url}"`]] : ['xdg-open', [url]];
   return new Promise((resolve) => {
     try { const c = spawn(cmd[0], cmd[1], { stdio: 'ignore', detached: true }); c.on('error', () => resolve(false)); c.on('spawn', () => { c.unref(); resolve(true); }); }
     catch { resolve(false); }
@@ -123,7 +135,10 @@ export function pkce() {
 
 export const OAUTH_PORT = Number(process.env.ISSUE_HERD_OAUTH_PORT) || 8497;
 
-const DONE_PAGE = (msg) => `<!doctype html><meta charset="utf-8"><title>issue-herd</title><body style="font:16px system-ui;padding:3rem"><h2>issue-herd</h2><p>${msg}</p></body>`;
+/** Escaped: `msg` can carry an `error_description` the provider (or any page that can reach the
+ *  loopback port while a sign-in is open) chose, and this is served as HTML on localhost. */
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const DONE_PAGE = (msg) => `<!doctype html><meta charset="utf-8"><title>issue-herd</title><body style="font:16px system-ui;padding:3rem"><h2>issue-herd</h2><p>${esc(msg)}</p></body>`;
 
 /**
  * Authorization-code flow with a loopback redirect: start a local server on `port`, send the
@@ -143,7 +158,12 @@ export async function oauthCodeFlow({ authorizeUrl, tokenUrl, clientId, clientSe
 
   const code = await new Promise((resolve, reject) => {
     const servers = [];
-    const finish = (err, value) => { for (const s of servers) { try { s.close(); } catch { /* never listened */ } } clearTimeout(timer); err ? reject(err) : resolve(value); };
+    // closeAllConnections too: close() only stops accepting, and browsers keep the callback socket
+    // (and often a speculative one) alive, which would hold the process open long after we are done.
+    const finish = (err, value) => {
+      for (const s of servers) { try { s.closeAllConnections?.(); s.close(); } catch { /* never listened */ } }
+      clearTimeout(timer); err ? reject(err) : resolve(value);
+    };
     const timer = setTimeout(() => finish(new Error('timed out waiting for the browser to come back')), timeoutMs);
     const handler = (req, res) => {
       const u = new URL(req.url, redirectUri);
@@ -164,7 +184,12 @@ export async function oauthCodeFlow({ authorizeUrl, tokenUrl, clientId, clientSe
     for (const host of ['127.0.0.1', '::1']) {
       const s = http.createServer(handler);
       servers.push(s); // tracked before listen(), so finish() closes it even if it never came up
-      s.on('error', (e) => { if (host === '127.0.0.1') finish(new Error(`cannot listen on ${redirectUri}: ${e.message}`)); });
+      // Losing 127.0.0.1 is fatal. So is losing ::1 to something already holding it: browsers may
+      // resolve "localhost" to either, so a squatter on the other address would receive the code.
+      // A machine with no IPv6 at all (EADDRNOTAVAIL / EAFNOSUPPORT) is fine and common.
+      s.on('error', (e) => {
+        if (host === '127.0.0.1' || e.code === 'EADDRINUSE') finish(new Error(`cannot listen on ${host === '::1' ? `[::1]:${port}` : redirectUri}: ${e.message}${e.code === 'EADDRINUSE' ? ' — something else is using that port; close it or set ISSUE_HERD_OAUTH_PORT' : ''}`));
+      });
       s.listen(port, host, () => { if (++listening === 1) { ui.log(`Opening your browser to sign in (waiting on ${redirectUri})`); ui.open(url.toString()); } });
     }
   });
@@ -183,10 +208,13 @@ export async function deviceFlow({ deviceUrl, tokenUrl, clientId, scope, ui, fet
   if (!clientId) throw new Error('deviceFlow needs a clientId');
   const start = await postForm(deviceUrl, new URLSearchParams({ client_id: clientId, scope }), fetchImpl);
   const verify = start.verification_uri_complete || start.verification_uri;
+  if (!/^https:\/\//i.test(String(verify || ''))) throw new Error(`the token server asked us to open ${JSON.stringify(verify)}, which is not an https URL`);
   ui.log(`Enter this code in your browser: ${start.user_code}`);
   await ui.open(verify);
-  let interval = (start.interval || 5) * 1000;
-  const deadline = Date.now() + (start.expires_in || 900) * 1000;
+  // The server dictates the pace, so clamp it: {"interval": 0} would be a hot POST loop, and a
+  // huge expires_in would keep it running for years.
+  let interval = Math.min(Math.max((Number(start.interval) || 5) * 1000, 5000), 60_000);
+  const deadline = Date.now() + Math.min(Math.max(Number(start.expires_in) || 900, 60), 1800) * 1000;
   while (Date.now() < deadline) {
     await sleep(interval);
     const r = await postForm(tokenUrl, new URLSearchParams({ client_id: clientId, device_code: start.device_code, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }), fetchImpl, { tolerate: true });

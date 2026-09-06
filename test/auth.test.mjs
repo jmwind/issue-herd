@@ -7,7 +7,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { deviceFlow, loadCredentials, oauthCodeFlow, pkce, resolveCredential, saveCredential, deleteCredential, noCredentialError } from '../src/auth.mjs';
 
-const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lh-auth-')), 'creds', 'credentials.json');
+const dirs = [];
+const tmpFile = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-auth-')); dirs.push(d); return path.join(d, 'creds', 'credentials.json'); };
+// these files hold (fake) tokens; do not leave them in $TMPDIR
+test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 const Fake = { id: 'fake', label: 'Fake', auth: { env: ['FAKE_TOKEN', 'FAKE_ALT'], hint: 'a fake token' }, fallback: () => ({ token: 'from-fallback', source: 'fake cli' }) };
 
 test('credentials are saved per tracker, private to the user, and can be forgotten', () => {
@@ -39,6 +42,17 @@ test('resolution order: environment, then the saved credential, then the tracker
   assert.match(noCredentialError(Fake).message, /issue-herd login fake.*FAKE_TOKEN.*a fake token/);
 });
 
+test('a credentials file that exists but does not parse refuses to load', () => {
+  // saving is a read-modify-write of the whole file, so reading a truncated one as {} would delete
+  // every other tracker's token — including a refresh token that cannot be re-derived.
+  const file = tmpFile();
+  saveCredential('linear', { kind: 'oauth', token: 'a', refreshToken: 'r' }, file);
+  fs.writeFileSync(file, '{"linear":{"kind"');
+  assert.throws(() => loadCredentials(file), /is not valid JSON/);
+  assert.throws(() => saveCredential('github', { token: 'b' }, file), /is not valid JSON/);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"linear":{"kind"', 'the damaged file is left alone');
+});
+
 test('PKCE: S256 challenge of a base64url verifier, no padding', () => {
   const { verifier, challenge, method } = pkce();
   assert.equal(method, 'S256');
@@ -68,14 +82,30 @@ test('device flow: shows the code, opens the page, polls until the token arrives
   assert.match(ui.logs[0], /ABCD-1234/);
   assert.deepEqual(fetchImpl.calls[0].params, { client_id: 'cid', scope: 'repo' });
   assert.equal(fetchImpl.calls[1].params.grant_type, 'urn:ietf:params:oauth:grant-type:device_code');
-  assert.deepEqual(waits, [1000, 1000, 6000]);
-  await assert.rejects(deviceFlow({ deviceUrl: 'd', tokenUrl: 't', clientId: 'cid', ui, fetchImpl: formFetch((u) => (u === 'd' ? { json: { device_code: 'x', interval: 0 } } : { json: { error: 'access_denied', error_description: 'you said no' } })), sleep: async () => {} }), /you said no/);
+  // the server asked for 1s; we never poll faster than 5s, and slow_down adds 5s more
+  assert.deepEqual(waits, [5000, 5000, 10000]);
+  await assert.rejects(deviceFlow({ deviceUrl: 'd', tokenUrl: 't', clientId: 'cid', ui, fetchImpl: formFetch((u) => (u === 'd' ? { json: { device_code: 'x', interval: 0, verification_uri: 'https://github.com/login/device' } } : { json: { error: 'access_denied', error_description: 'you said no' } })), sleep: async () => {} }), /you said no/);
 });
 
 const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
 
-test('authorization-code flow: loopback redirect, state check, PKCE verifier in the exchange', async () => {
+test('the callback page escapes what the provider sent it', async () => {
   const port = await freePort();
+  let opened;
+  const ui = { log() {}, open: async (u) => { opened = new URL(u); } };
+  const flow = oauthCodeFlow({ authorizeUrl: 'https://x/a', tokenUrl: 'https://x/t', clientId: 'cid', scope: 's', port, ui, fetchImpl: formFetch(() => ({ json: { access_token: 'x' } })), timeoutMs: 5000 });
+  const failed = flow.then(() => null, (e) => e);   // attach before the request that rejects it
+  while (!opened) await new Promise((r) => setTimeout(r, 10));
+  const res = await fetch(`http://127.0.0.1:${port}/callback?error=denied&error_description=${encodeURIComponent('<script>alert(1)</script>')}`);
+  const body = await res.text();
+  assert.doesNotMatch(body, /<script>/);
+  assert.match(body, /&lt;script&gt;/);
+  assert.match((await failed).message, /denied/);
+});
+
+test('authorization-code flow: loopback redirect, state check, PKCE verifier in the exchange', async (t) => {
+  const port = await freePort();
+  t.after(() => { /* the flow closes its own servers; this fails the test loudly if it ever does not */ });
   let authorizeUrl;
   const ui = { log() {}, open: async (u) => { authorizeUrl = new URL(u); } };
   const fetchImpl = formFetch(() => ({ json: { access_token: 'lin_oauth_x', refresh_token: 'r', expires_in: 86399 } }));

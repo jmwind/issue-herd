@@ -76,6 +76,41 @@ test('a plain 401 on an API key says where the key comes from', async () => {
   await assert.rejects(t.me(), /Linear HTTP 401: Authentication required — run `issue-herd login linear`/);
 });
 
+test('concurrent calls share one refresh, so a rotating refresh token is spent once', async () => {
+  // the watcher polls while several supervisors comment; each would otherwise spend the same
+  // refresh token, and a provider that rotates it rejects all but the first.
+  let refreshes = 0;
+  const fetchImpl = fakeFetch(({ url }) => {
+    if (url.endsWith('/oauth/token')) {
+      refreshes++;
+      if (refreshes > 1) return { status: 400, json: { error: 'invalid_grant' } };
+      return { json: { access_token: 'new', refresh_token: 'r2', expires_in: 86400 } };
+    }
+    return { json: { data: { viewer: { id: 'u1' } } } };
+  });
+  const saved = [];
+  const t = new LinearTracker({ kind: 'oauth', token: 'old', refreshToken: 'r1', expiresAt: Date.now() + 10_000, clientId: 'cid' }, { fetchImpl, onCredential: (c) => saved.push({ ...c }) });
+  await Promise.all([t.gql('{a}'), t.gql('{b}'), t.gql('{c}')]);
+  assert.equal(refreshes, 1);
+  assert.equal(saved.length, 1);
+  assert.equal(t.cred.refreshToken, 'r2');
+});
+
+test('assignees carries the one assignee Linear allows', () => {
+  const issue = normalizeIssue(node);
+  assert.equal(issue.assignees.length, 1);
+  assert.equal(issue.assignees[0].id, issue.assignee.id);
+  assert.deepEqual(normalizeIssue({ ...node, assignee: null }).assignees, []);
+});
+
+test('the newest comments are fetched, because the claim marker is the newest comment', async () => {
+  // `first: 25` returned the OLDEST 25, so on a thread longer than that the pickup guard could not
+  // see its own marker and a second machine would take the issue.
+  const fetchImpl = fakeFetch(() => ({ json: { data: { issue: node } } }));
+  await new LinearTracker('lin_api_x', { fetchImpl }).issueByKey('DEV-12');
+  assert.match(fetchImpl.calls[0].json.query, /comments\(last: 25\)/);
+});
+
 test('assign takes the user me() returned', async () => {
   const fetchImpl = fakeFetch(() => ({ json: { data: { issueUpdate: { success: true } } } }));
   await new LinearTracker('lin_api_x', { fetchImpl }).assign({ id: 'uuid-1' }, { id: 'u1', email: 'x' });

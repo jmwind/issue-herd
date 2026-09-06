@@ -78,23 +78,41 @@ test('with several assignees the token\'s own account wins', async () => {
   assert.equal(t.normalize({ ...node, assignees: { nodes: [] } }).assignee, null);
 });
 
-test('config values that end up in URLs and paths are validated, not trusted', () => {
-  // config.json is committed and read from whatever repo the watcher is run in.
+test('a repository cannot redirect the token to another host', async () => {
+  // config.json is committed, so this value travels with whatever repo you run in. Verified end to
+  // end: before this check, `me()` sent `Authorization: Bearer <real token>` to the named host.
   const make = (options) => () => new GitHubTracker('t', { options: { repo: 'o/r', ...options }, fetchImpl: fakeFetch(() => null) });
-  assert.throws(make({ host: 'evil.com/api/v3?' }), /"host" is not a hostname/);
-  assert.throws(make({ host: 'https://evil.com' }), /"host" is not a hostname/);
+  assert.throws(make({ host: 'evil.example.com' }), /this machine trusts github\.com/);
+  assert.throws(make({ host: 'evil.com/api/v3?' }), /this machine trusts github\.com/);
+  await assert.rejects(GitHubTracker.login({ log() {}, open() {} }, { host: 'evil.example.com' }), /this machine trusts github\.com/);
+  assert.equal(GitHubTracker.fallback({ host: 'evil.example.com' }), null, 'and borrows no token for it either');
+  assert.doesNotThrow(make({ host: 'github.com' }), 'naming the default host is fine');
+  // An enterprise host is opted into on the machine, by a variable a repo's .env cannot set.
+  process.env.ISSUE_HERD_GITHUB_HOST = 'ghe.corp.com';
+  try {
+    const t = new GitHubTracker('t', { options: { repo: 'x/y', host: 'ghe.corp.com' }, fetchImpl: fakeFetch(() => null) });
+    assert.equal(t.api, 'https://ghe.corp.com/api/v3');
+    assert.equal(t.graphql, 'https://ghe.corp.com/api/graphql');
+    assert.throws(make({ host: 'github.com' }), /this machine trusts ghe\.corp\.com/);
+  } finally { delete process.env.ISSUE_HERD_GITHUB_HOST; }
+});
+
+test('config values that reach paths and branch names are validated', () => {
+  const make = (options) => () => new GitHubTracker('t', { options: { repo: 'o/r', ...options }, fetchImpl: fakeFetch(() => null) });
   assert.throws(make({ prefix: '../..' }), /"prefix" must be letters and digits/);
   assert.throws(make({ prefix: 'a/b' }), /"prefix" must be letters and digits/);
-  assert.doesNotThrow(make({ host: 'ghe.corp.com:8443', prefix: 'GH2' }));
+  assert.doesNotThrow(make({ prefix: 'GH2' }));
   // A repo that cannot be trusted into a URL is treated as unknown, which check() then refuses.
-  assert.equal(new GitHubTracker('t', { options: { repo: 'o/r?x=1' }, fetchImpl: fakeFetch(() => null) }).repo, null);
+  for (const repo of ['o/r?x=1', '../..', 'a/b/c', 'o r/x']) {
+    assert.equal(new GitHubTracker('t', { options: { repo }, fetchImpl: fakeFetch(() => null) }).repo, null, repo);
+  }
 });
 
 test('the token `gh` owns is marked borrowed, so login re-reads it instead of copying it', () => {
+  // Asserted without needing `gh` to be logged in here: the shape is what stops `login` saving a
+  // copy that goes stale, so it must hold on CI too.
   const fb = GitHubTracker.fallback({ host: 'github.com' });
-  if (!fb) return; // `gh` is not logged in on this machine
-  assert.equal(fb.kind, 'borrowed');
-  assert.equal(fb.source, 'gh auth token');
+  assert.ok(fb === null || (fb.kind === 'borrowed' && fb.source === 'gh auth token'), JSON.stringify(fb));
 });
 
 test('openIssues asks for open issues since a date and follows pages', async () => {
@@ -135,7 +153,6 @@ test('writes go through REST by issue number', async () => {
   await t.assign(issue, await t.me());
   assert.deepEqual(await t.setState(issue, 'closed'), { name: 'closed', type: 'completed' });
   assert.deepEqual(await t.setState(issue, 'open'), { name: 'open', type: 'unstarted' });
-  assert.equal((await t.setState(issue, 'in progress')).label, true);
   assert.deepEqual(seen, [
     'POST /issues/7/comments',
     'GET /labels/herdr', 'POST /labels', 'POST /issues/7/labels',
@@ -143,7 +160,6 @@ test('writes go through REST by issue number', async () => {
     'DELETE /issues/7/labels/herdr',
     'POST https://api.github.com/graphql', 'POST /issues/7/assignees',
     'PATCH /issues/7', 'PATCH /issues/7',
-    'GET /labels/in%20progress', 'POST /issues/7/labels',
   ]);
   const calls = t.fetch.calls;
   assert.deepEqual(calls[0].body, { body: 'hello' });
@@ -151,6 +167,7 @@ test('writes go through REST by issue number', async () => {
   assert.deepEqual(calls[3].body, { labels: ['herdr'] });
   assert.deepEqual(calls[7].body, { assignees: ['jmwind'] });
   assert.deepEqual(calls[8].body, { state: 'closed' });
+  assert.deepEqual(calls[9].body, { state: 'open' });
 });
 
 test('HTTP errors say what happened and, on 401, what to do', async () => {
@@ -158,11 +175,64 @@ test('HTTP errors say what happened and, on 401, what to do', async () => {
   await assert.rejects(t.me(), /GitHub HTTP 401: Bad credentials — run `issue-herd login github`/);
 });
 
-test('priority comes from labels when the repo uses them', () => {
+test('a token borrowed from gh is re-read once on 401 rather than failing forever', async () => {
+  // `gh` rotates its token; the watcher polls for days, so a captured copy goes stale.
+  let calls = 0;
+  const fetchImpl = fakeFetch(() => (++calls === 1 ? { status: 401, json: { message: 'Bad credentials' } } : { json: { data: { viewer: { login: 'jmwind', name: 'JM' } } } }));
+  const t = new GitHubTracker({ kind: 'borrowed', token: 'stale' }, { options: { repo: 'o/r' }, fetchImpl });
+  const orig = GitHubTracker.fallback;
+  GitHubTracker.fallback = () => ({ kind: 'borrowed', token: 'fresh', source: 'gh auth token' });
+  try {
+    assert.equal((await t.me()).login, 'jmwind');
+    assert.equal(fetchImpl.calls[1].headers.authorization, 'Bearer fresh');
+  } finally { GitHubTracker.fallback = orig; }
+});
+
+test('an unchanged borrowed token is not retried in a loop', async () => {
+  const fetchImpl = fakeFetch(() => ({ status: 401, json: { message: 'Bad credentials' } }));
+  const t = new GitHubTracker({ kind: 'borrowed', token: 'same' }, { options: { repo: 'o/r' }, fetchImpl });
+  const orig = GitHubTracker.fallback;
+  GitHubTracker.fallback = () => ({ kind: 'borrowed', token: 'same' });
+  try {
+    await assert.rejects(t.me(), /GitHub HTTP 401/);
+    assert.equal(fetchImpl.calls.length, 1);
+  } finally { GitHubTracker.fallback = orig; }
+});
+
+test('priority comes from labels when the repo uses them, most urgent wins', () => {
   assert.equal(priorityFromLabels(['bug', 'P0']), 1);
   assert.equal(priorityFromLabels(['priority-low']), 4);
   assert.equal(priorityFromLabels(['Priority: Medium']), 3);
   assert.equal(priorityFromLabels(['bug']), 0);
+  // label order is the repository's, so an issue re-triaged from low to urgent without the old
+  // label removed must still read as urgent, or a priority<=2 rule would never match it
+  assert.equal(priorityFromLabels(['low', 'urgent']), 1);
+  assert.equal(priorityFromLabels(['urgent', 'low']), 1);
+});
+
+test('two runs creating the claim label at once do not fight', async () => {
+  // both see 404, both POST; the loser gets 422 already_exists, which is success, not a failure
+  let posts = 0;
+  const t = tracker(({ method, url }) => {
+    if (method === 'GET' && url.includes('/labels/')) return { status: 404, json: { message: 'Not Found' } };
+    if (method === 'POST' && (url.endsWith('/labels') && !url.includes('/issues/'))) return ++posts === 1 ? { json: { name: 'herdr' } } : { status: 422, json: { message: 'Validation Failed' } };
+    return { json: {} };
+  });
+  await Promise.all([t.addLabel('7', 'herdr'), t.addLabel('8', 'herdr')]);
+  assert.equal(posts, 1, 'the in-flight create is shared');
+  const t2 = tracker(({ method, url }) => {
+    if (method === 'GET' && url.includes('/labels/')) return { status: 404, json: { message: 'Not Found' } };
+    if (method === 'POST' && (url.endsWith('/labels') && !url.includes('/issues/'))) return { status: 422, json: { message: 'Validation Failed' } };
+    return { json: {} };
+  });
+  await assert.doesNotReject(t2.addLabel('7', 'herdr'));
+});
+
+test('a label lookup that fails for any other reason is not swallowed', async () => {
+  const t = tracker(() => ({ status: 500, json: { message: 'Server Error' } }));
+  await assert.rejects(t.addLabel('7', 'herdr'), /GitHub HTTP 500/);
+  const t2 = tracker(({ method }) => (method === 'DELETE' ? { status: 500, json: { message: 'Server Error' } } : { json: {} }));
+  await assert.rejects(t2.removeLabel('7', 'herdr'), /GitHub HTTP 500/, 'only 404 is tolerated on removal');
 });
 
 test('the repository comes from the origin remote in any of its spellings', () => {
@@ -172,12 +242,6 @@ test('the repository comes from the origin remote in any of its spellings', () =
   assert.equal(repoFromRemote('git@gitlab.com:x/y.git'), null);
   assert.equal(repoFromRemote('git@ghe.corp.com:x/y.git', 'ghe.corp.com'), 'x/y');
   assert.equal(repoFromRemote(''), null);
-});
-
-test('a GitHub Enterprise host changes the API base', () => {
-  const t = new GitHubTracker('t', { options: { repo: 'x/y', host: 'ghe.corp.com' }, fetchImpl: fakeFetch(() => null) });
-  assert.equal(t.api, 'https://ghe.corp.com/api/v3');
-  assert.equal(t.graphql, 'https://ghe.corp.com/api/graphql');
 });
 
 test('without a recognisable repository the tracker says how to name one', () => {

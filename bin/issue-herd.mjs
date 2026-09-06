@@ -31,8 +31,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { compile } from '../src/expr.mjs';
 import { mergeConfig, overridePaths } from '../src/config.mjs';
-import { TRACKERS, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
-import { userDisplay } from '../src/tracker.mjs';
+import { TRACKERS, isTracker, mergeSpec, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
+import { slugify, userDisplay } from '../src/tracker.mjs';
 import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCredential, saveCredential, terminalUi } from '../src/auth.mjs';
 import { Herdr, agentNameFor } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
@@ -77,33 +77,49 @@ function live(text) {
 function readJson(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } }
 function writeJson(p, v) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(v, null, 2) + '\n'); }
 function loadEnv() {
-  for (const file of ENV_FILES) if (fs.existsSync(file)) loadEnvFile(file);
+  const refused = [];
+  for (const file of ENV_FILES) if (fs.existsSync(file)) loadEnvFile(file, refused);
+  if (refused.length) console.error(`issue-herd: ignoring ${refused.join(', ')} from the repository's .env — issue-herd's own settings come from your shell, not from a repository`);
 }
-function loadEnvFile(file) {
+/**
+ * A repository's .env may carry the tracker's token, because that is the documented way to keep one
+ * per project. It may NOT carry issue-herd's own settings: ISSUE_HERD_CREDENTIALS would move where
+ * tokens are written and read, and ISSUE_HERD_GITHUB_HOST where they are sent. A .env is committed,
+ * so honouring those would let any repository you clone and run this in redirect your credentials.
+ */
+function loadEnvFile(file, refused = []) {
   for (const raw of fs.readFileSync(file, 'utf8').split('\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
     if (!m) continue;
+    if (/^ISSUE_HERD_/.test(m[1])) { refused.push(m[1]); continue; }
     let v = m[2].trim();
     if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
     if (process.env[m[1]] === undefined) process.env[m[1]] = v;
   }
 }
-function slugify(s, max = 40) {
-  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/g, '');
-}
 /** The sidebar label for the watcher's own herdr workspace. */
 function watchLabel(name) { return `${name}Watch`; }
-function expandTilde(p) { return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p; }
-/** Resolve a config path: ~ and absolute as-is; relative first against <repo>/.issue-herd, then the package. */
+/**
+ * Resolve a path named by config (`prompt`, `instructionsFile`): under <repo>/.issue-herd first,
+ * then the package's own prompts/.
+ *
+ * Confined on purpose. config.json is committed, so the repository you run in chooses these values,
+ * and whatever they name is read and pasted into the brief an unattended agent is told to follow.
+ * Were an absolute path or a leading ~ allowed, `"instructionsFile":
+ * "~/.config/issue-herd/credentials.json"` would copy your tokens into a file inside the working
+ * tree that agent commits from.
+ */
 function expand(p) {
-  p = expandTilde(p);
-  if (path.isAbsolute(p)) return p;
-  const inRepo = path.join(CONFIG_DIR, p);
+  const inRepo = path.resolve(CONFIG_DIR, p);
+  if (inRepo !== CONFIG_DIR && !inRepo.startsWith(CONFIG_DIR + path.sep)) {
+    throw new Error(`config path "${p}" must stay inside ${path.relative(REPO, CONFIG_DIR)}/`);
+  }
   if (fs.existsSync(inRepo)) return inRepo;
-  const inPkg = path.join(PKG_DIR, p);
-  return fs.existsSync(inPkg) ? inPkg : inRepo;
+  const inPkg = path.resolve(PKG_DIR, p);
+  if (inPkg.startsWith(PKG_DIR + path.sep) && fs.existsSync(inPkg)) return inPkg;
+  return inRepo;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Run git in `cwd`. Returns trimmed stdout, or null if git failed — callers must tolerate null. */
@@ -156,7 +172,6 @@ function loadConfig() {
   cfg.name = String(cfg.name || path.basename(REPO)).trim() || 'issue-herd';
   cfg.trackerSpec = trackerSpec(cfg.tracker);
   cfg.Tracker = trackerClass(cfg.trackerSpec);
-  cfg.defaults.trackerLabel = cfg.Tracker.label;   // every rule inherits it, for the brief and the logs
   cfg.rules = (raw.rules || []).map((r, i) => {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
     const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
@@ -199,12 +214,12 @@ function renderBrief(templatePath, vars) {
   return t.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (vars[k] ?? ''));
 }
 
-function briefVars({ issue, rule, run }) {
+function briefVars({ issue, rule, run, tracker }) {
   const comments = issue.comments?.length
     ? issue.comments.map((c) => `- **${c.author}** (${c.createdAt.slice(0, 10)}): ${c.body.replace(/\r?\n/g, '\n  ')}`).join('\n')
     : '_none_';
   return {
-    tracker: rule.trackerLabel,
+    tracker,
     identifier: issue.identifier,
     ref: issue.ref || issue.identifier,
     title: issue.title,
@@ -319,7 +334,7 @@ class IssueHerd {
       const label = `${key} ${issue.title}`.slice(0, 48);
       let ws;
       if (rule.worktree === 'herdr') {
-        ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `linear/${slug}`, label });
+        ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `herd/${slug}`, label });
         run.worktreePath = ws.path;
       } else {
         ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { HERD_ISSUE: key } });
@@ -351,14 +366,14 @@ class IssueHerd {
       run.dir = path.join(workDir, '.issue-herd', 'state', 'runs', key);
       run.resultPath = path.join(run.dir, 'result.json');
       fs.mkdirSync(run.dir, { recursive: true });
-      const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run }));
+      const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label }));
       run.briefPath = path.join(run.dir, 'brief.md');
       fs.writeFileSync(run.briefPath, brief);
       saveState(this.state);
       log(`${key}: working tree ${workDir}`);
 
       // 4. prompt
-      await this.herdr.prompt(run.agentName, `You are working ${rule.trackerLabel} issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`);
+      await this.herdr.prompt(run.agentName, `You are working ${this.cfg.Tracker.label} issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`);
       const st = await this.herdr.waitAgent(run.agentName, { until: ['working'], timeoutMs: 30_000 });
       log(`${key}: prompted (state ${st})`);
       run.status = 'running'; saveState(this.state);
@@ -369,10 +384,7 @@ class IssueHerd {
         await this.tracker.comment(issue.id, `🐑 **issue-herd** picked this up on \`${host}\` · herdr workspace \`${run.workspaceId}\` · rule \`${rule.name}\`${run.branch ? ` · branch \`${run.branch}\`` : ''}\n\nI'll post the PR link here when it is ready.`);
       }
       if (this.tracker && rule.onPickup.assignToMe) { try { await this.tracker.assign(issue, await this.tracker.me()); } catch (e) { log(`${key}: assign failed: ${e.message}`); } }
-      if (this.tracker && rule.onPickup.state) {
-        try { logStateChange(key, rule, await this.tracker.setState(issue, rule.onPickup.state)); }
-        catch (e) { log(`${key}: state failed: ${e.message}`); }
-      }
+      if (this.tracker && rule.onPickup.state) { try { await this.tracker.setState(issue, rule.onPickup.state); } catch (e) { log(`${key}: state failed: ${e.message}`); } }
 
       this.supervise(key);
     } catch (e) {
@@ -548,7 +560,7 @@ class IssueHerd {
     log(`${key}: done (${status}) ${result.prUrl || ''}`);
     await this.report(key, rule, rule.onDone, lines.join('\n'), 'done');
     if (this.tracker && rule.onDone.state && status === 'pr_open') {
-      try { logStateChange(key, rule, await this.tracker.setState({ ...readJson(path.join(run.archiveDir, 'issue.json'), {}), id: run.issueId }, rule.onDone.state)); }
+      try { await this.tracker.setState({ ...readJson(path.join(run.archiveDir, 'issue.json'), {}), id: run.issueId }, rule.onDone.state); }
       catch (e) { log(`${key}: onDone state failed: ${e.message}`); }
     }
     if (rule.onDone.closeWorkspace && run.workspaceId) { try { await this.herdr.closeWorkspace(run.workspaceId); } catch { /* ignore */ } }
@@ -624,7 +636,7 @@ class IssueHerd {
     log(`issue-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
     this.logRules();
     const who = await this.tracker.me().then(userDisplay).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
-    log(`  ${trackerBanner(this.cfg, this.tracker)}: ${who} (token from ${this.tracker.source || '?'}) · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
+    log(`  ${trackerBanner(this.tracker)}: ${who} (token from ${this.tracker.source || '?'}) · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
     await this.labelOwnWorkspace();
     await this.resume();
     let nextUpdateCheck = Date.now() + 24 * 3600e3; // startup already checked
@@ -637,7 +649,7 @@ class IssueHerd {
         const r = await this.pollOnce();
         if (r.picked.length) log(`poll #${polls}: ${r.scanned} open issues, ${r.candidates} matched, picked ${r.picked.join(', ')}`);
         const running = await this.runningSummary();
-        summary = `${hms()} poll #${polls} · ${r.scanned} open · ${r.candidates} matched · ${r.picked.length} picked${r.waiting.length ? ` · ${r.waiting.length} waiting for a slot` : ''} · running ${running.length}${running.length ? `: ${running.join(' · ')}` : ''} · next in ${this.cfg.pollSeconds}s`;
+        summary = `${hms()} poll #${polls} · ${r.scanned} open · ${r.candidates} matched · ${r.picked.length} picked${r.waiting.length ? ` · ${r.waiting.length} waiting for a slot` : ''} · running ${running.length}${running.length ? `: ${running.join(' · ')}` : ''} · next in ${this.cfg.pollSeconds}s${this.tracker.budget?.() ? ` · ${this.tracker.budget()}` : ''}`;
       } catch (e) {
         this.warnOnce(`poll:${e.message}`, `poll #${polls} failed: ${e.message} (further identical failures show only in the live line)`);
         summary = `${hms()} poll #${polls} FAILED (${e.message.slice(0, 60)}) · retry in ${this.cfg.pollSeconds}s`;
@@ -651,22 +663,19 @@ class IssueHerd {
 
 function prio(issue) { return issue.priority === 0 ? 5 : issue.priority; }
 
-/**
- * Say so when a tracker without workflow states turned a `state` into a label. Silence would be
- * worse: GitHub creates the label, so a config written for Linear quietly grows an "In Progress"
- * label in the repository instead of failing.
- */
-function logStateChange(key, rule, state) {
-  if (state?.label) log(`${key}: ${rule.trackerLabel} has no workflow states — applied "${state.name}" as a label instead`);
-}
-
 const CLAIM_MARKER = '**issue-herd** picked this up';
 
 /** Returns a reason string if some agent or person already owns this issue, else null. */
 function alreadyTaken(issue, rule, viewer) {
   if (rule.claimLabel && issue.labels.some((l) => l.toLowerCase() === rule.claimLabel.toLowerCase())) return `already carries the '${rule.claimLabel}' claim label`;
   if ((issue.comments || []).some((c) => c.body.includes(CLAIM_MARKER))) return 'an issue-herd pickup comment is already on it';
-  if (rule.skipIfAssignedToOthers && issue.assignee && viewer && issue.assignee.id !== viewer.id) return `assigned to ${issue.assignee.displayName || issue.assignee.name}`;
+  // Every assignee, not just the one on show: an issue held by you *and* someone else is still
+  // someone else's, and starting an agent on work a person is already doing is the worst outcome.
+  if (rule.skipIfAssignedToOthers && viewer) {
+    const held = issue.assignees || (issue.assignee ? [issue.assignee] : []);
+    const others = held.filter((a) => a.id !== viewer.id);
+    if (others.length) return `assigned to ${others.map((a) => a.displayName || a.name).join(', ')}`;
+  }
   return null;
 }
 
@@ -682,8 +691,12 @@ config.local.json
 /** `issue-herd init [--tracker linear|github]`. Asks which tracker on a terminal when not told. */
 async function init(args = []) {
   const flag = args.indexOf('--tracker');
-  let type = flag >= 0 ? args[flag + 1] : args.find((a) => TRACKERS[a]);
-  if (!type && !fs.existsSync(CONFIG_PATH) && process.stdin.isTTY) type = (await ask(`Which issue tracker? [${Object.keys(TRACKERS).join('/')}] (linear) `)).trim();
+  if (flag >= 0 && !args[flag + 1]) throw new Error(`--tracker needs a name: ${Object.keys(TRACKERS).join(' | ')}`);
+  let type = flag >= 0 ? args[flag + 1] : args.find((a) => isTracker(a));
+  // Re-running init in a repo that is already set up must not re-scaffold it as a different tracker.
+  const already = fs.existsSync(CONFIG_PATH) ? loadConfig().trackerSpec.type : null;
+  if (!type && already) type = already;
+  if (!type && process.stdin.isTTY) type = (await ask(`Which issue tracker? [${Object.keys(TRACKERS).join('/')}] (linear) `)).trim();
   const Tracker = trackerClass(trackerSpec(type || 'linear'));
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   const made = [];
@@ -704,6 +717,11 @@ async function init(args = []) {
     fs.appendFileSync(ex, `${sep}# issue-herd: ${Tracker.label} token — ${Tracker.auth.hint}.\n# Put the real value in .env.local, never here; or skip this and run \`issue-herd login\`.\n${envName}=\n`);
     made.push(`.env.example (+ ${envName})`);
   }
+  // We just told them to put a live token in .env.local. Say so if git would commit it — this
+  // directory's own .gitignore cannot cover a file at the repo root, and we do not edit theirs.
+  if (envName && git(['check-ignore', '-q', '.env.local'], REPO) === null) {
+    console.log(`\n⚠ .env.local is not gitignored in this repository. Add it to ${path.join(REPO, '.gitignore')} before you put a token there, or use \`issue-herd login\` instead, which keeps the token outside the repo.`);
+  }
   console.log(made.length ? `wrote in ${REPO} for ${Tracker.label}:\n  ${made.join('\n  ')}` : `nothing to do; ${path.relative(REPO, CONFIG_DIR)} already initialised`);
   console.log(`\nnext: \`issue-herd login\` (or put ${envName} in ${path.join(REPO, '.env.local')}), edit .issue-herd/config.json and instructions.md, then \`issue-herd match "label:ai"\``);
   console.log(`per-machine settings (e.g. a claim label that names this machine) go in .issue-herd/config.local.json, which is gitignored`);
@@ -723,19 +741,20 @@ function makeTracker(cfg) {
   return tracker;
 }
 
-function trackerBanner(cfg, tracker) {
-  const what = tracker?.describe?.();
-  return `${cfg.Tracker.label}${what ? ` ${what}` : ''}`;
+function trackerBanner(tracker) {
+  const what = tracker.describe?.();
+  return `${tracker.constructor.label}${what ? ` ${what}` : ''}`;
 }
 
 /** `issue-herd login [tracker] [--paste]` and `issue-herd logout [tracker]`. Works before `init` when the tracker is named. */
 async function auth(cmd, args) {
   const paste = args.includes('--paste');
   const named = args.find((a) => !a.startsWith('--'));
-  let spec;
-  if (named) spec = trackerSpec(named);
-  else if (fs.existsSync(CONFIG_PATH)) spec = loadConfig().trackerSpec;
-  else throw new Error(`which tracker? issue-herd ${cmd} <${Object.keys(TRACKERS).join('|')}>`);
+  const configured = fs.existsSync(CONFIG_PATH) ? loadConfig().trackerSpec : null;
+  if (!named && !configured) throw new Error(`which tracker? issue-herd ${cmd} <${Object.keys(TRACKERS).join('|')}>`);
+  // Naming the tracker must not throw away the config's options for it, or `login github` in a
+  // GitHub Enterprise repo would sign in to github.com and save a token the watcher cannot use.
+  const spec = mergeSpec(named ? trackerSpec(named) : null, configured);
   const Tracker = trackerClass(spec);
   const file = credentialsPath();
   const shown = file.replace(os.homedir(), '~');
@@ -744,7 +763,7 @@ async function auth(cmd, args) {
   const cred = await Tracker.login(terminalUi(), { paste, ...options });
   const tracker = new Tracker(cred, { options });
   const user = await tracker.me(); // proves the token works before it is saved
-  const who = `${trackerBanner({ Tracker }, tracker)}: signed in as ${userDisplay(user)}`;
+  const who = `${trackerBanner(tracker)}: signed in as ${userDisplay(user)}`;
   if (cred.kind === 'borrowed') {
     // The credential belongs to another tool that can rotate it (`gh`). Copying it here would go
     // stale and, being ahead of the fallback in the lookup order, would keep being used after it did.
@@ -816,7 +835,7 @@ async function main(argv) {
     const issues = await tracker.openIssues({ sinceIso: new Date(Date.now() - cfg.lookbackDays * 86400e3).toISOString() });
     const hits = issues.filter((i) => rule.test(i, { viewer }));
     for (const i of hits) console.log(`${i.identifier.padEnd(10)} ${(i.state?.name || '').padEnd(12)} [${i.labels.join(',')}] ${i.assignee?.displayName || '-'}  ${i.title}`);
-    console.log(`${hits.length} of ${issues.length} open ${trackerBanner(cfg, tracker)} issues match (as ${userDisplay(viewer)})`);
+    console.log(`${hits.length} of ${issues.length} open ${trackerBanner(tracker)} issues match (as ${userDisplay(viewer)})`);
     return;
   }
 

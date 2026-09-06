@@ -42,9 +42,9 @@ issue-herd update
 Same as rerunning the install; it prints the old and new version. (`npm update -g` does not
 reliably refresh packages installed from a git URL, so use this.)
 
-You will not have to remember: every command checks GitHub for a newer version and prints one
-reminder line if there is one, and the running watcher re-checks once a day and also sends a herdr
-notification. The check is a 4-second fetch of `package.json` on `main`, silent when offline. Set
+You will not have to remember: the watching commands (`issue-herd`, `once`, `dry-run`, `match`,
+`status`, `reset`) check GitHub for a newer version and print one reminder line if there is one,
+and the running watcher re-checks once a day and also sends a herdr notification. The check is a 4-second fetch of `package.json` on `main`, silent when offline. Set
 `ISSUE_HERD_NO_UPDATE_CHECK=1` to turn it off.
 
 ## Release a change (maintainers)
@@ -54,6 +54,11 @@ Edit, commit as usual, then:
 ```bash
 npm run release
 ```
+
+**Rename the GitHub repository to `issue-herd` before the first release under this name.** The
+update check and `issue-herd update` both point at `jmwind/issue-herd`; until that repository
+exists they get a 404, which `newerVersion` cannot tell from "no newer version", so every install
+would silently believe it is up to date forever.
 
 That runs the tests, bumps the patch version in `package.json`, commits it, tags `vX.Y.Z`, and
 pushes commits and tags. Everyone picks it up with `issue-herd update`. Use
@@ -92,7 +97,7 @@ missing `.gitignore`. Then:
 3. Edit `.issue-herd/config.json` (the rules) and `.issue-herd/instructions.md` (what the agent
    must know about this repo: checks to run, things never to run, branch and PR conventions, when
    to stop and ask). Commit both.
-4. Smoke-test the herdr plumbing without touching Linear (opens a workspace, starts Claude, has it
+4. Smoke-test the herdr plumbing without touching the tracker (opens a workspace, starts Claude, has it
    write the result file, finalizes): `issue-herd smoke`. Close the workspace it leaves open when
    you have looked at it.
 5. Optional: preview what the config's rules would pick up, with no side effects: `issue-herd dry-run`.
@@ -266,22 +271,34 @@ branch is Linear's own branch name, `state` is the team workflow, comments and s
 the issue. The claim label must exist in Linear.
 
 **GitHub Issues** (`"tracker": "github"`). The repository is the `origin` remote of the repo you run
-in; name it explicitly with `{ "type": "github", "repo": "owner/name" }`, and add `"host"` for
-GitHub Enterprise. Issues are known as `GH-7` (change the prefix with `"prefix"`), referenced as
-`#7` in PR text so `Fixes #7` closes them, and the default branch is `7-fix-the-thing`. Mapping:
-`team` is the repository (`team:issue-herd`), `project` is the milestone, `state` is `open` or
-`closed` (there are no workflow states, so `init` sets `onPickup.state` and `onDone.state` to
-`null`; a state name given anyway is applied as a label, `"closed"` closes the issue), `priority`
-is read from labels named `P0`–`P3` or `urgent` / `high` / `medium` / `low` (`priority: high` works
-too), `estimate` and `cycle` are empty, `assignee`/`creator` match `@login`. The claim label is
-created if missing. Pull requests are never treated as issues.
+in; name it explicitly with `{ "type": "github", "repo": "owner/name" }`. Issues are known as `GH-7`
+(change the prefix with `"prefix"`), referenced as `#7` in PR text so `Fixes #7` closes them, and
+the default branch is `7-fix-the-thing`. Mapping:
+
+- `team` is the repository (`team:issue-herd`) and `project` is the milestone.
+- `state` is `open` or `closed`. There are no workflow states, so `init` sets `onPickup.state` and
+  `onDone.state` to `null`. Any other state name is **refused**, with an error naming what GitHub
+  has: it will not invent a label or close your issue on a guess.
+- `priority` comes from labels named `P0`–`P3` or `urgent` / `high` / `medium` / `low`
+  (`priority: high` works too). The most urgent label on the issue wins. With no such label the
+  priority is "none", so a `priority<=2` rule matches nothing in a repository that does not use them.
+- `estimate` and `cycle` are always empty, so any rule using them matches nothing.
+- `assignee` and `creator` match `@login`. An issue assigned to several people is left alone unless
+  every assignee is you.
+- The claim label is created if missing. Pull requests are never treated as issues.
+
+For GitHub Enterprise, set `ISSUE_HERD_GITHUB_HOST=ghe.corp.com` in your shell. That is deliberately
+a machine setting rather than a config key: `config.json` is committed, and this value decides where
+your token is sent, so a repository you clone may *name* the host it expects but not introduce one.
+For the same reason a repository's `.env` cannot set any `ISSUE_HERD_*` variable, and `prompt` and
+`instructionsFile` must point inside `.issue-herd/`.
 
 **Adding a tracker** is one file. Write `src/trackers/<name>.mjs` against the contract documented
 at the top of [`src/tracker.mjs`](src/tracker.mjs) — a class with `me`, `openIssues`,
 `issueByKey`, `comment`, `addLabel`, `removeLabel`, `assign`, `setState` and a static `login` —
 returning the normalized issue shape, then add it to `src/trackers/index.mjs`.
-[`github.mjs`](src/trackers/github.mjs) is the model: about 200 lines, one read query and a few
-writes, no dependencies. `test/trackers.test.mjs` checks every registered tracker against the
+[`github.mjs`](src/trackers/github.mjs) is the model: one read query and a few writes, no
+dependencies. `test/trackers.test.mjs` checks every registered tracker against the
 contract; `checkIssue()` tells a new tracker exactly which field it got wrong.
 
 ## Signing in
@@ -295,6 +312,9 @@ the token came from. Lookup order:
    `<repo>/.env.local`, then `<repo>/.env`
 2. the saved credential
 3. GitHub only: `gh auth token`, so a machine with `gh` logged in needs no login at all
+
+`login` never copies a token another tool owns: with `gh` logged in it saves nothing and re-reads
+`gh auth token` on every run, so a token `gh` rotates keeps working.
 
 How `login` gets the token, per tracker:
 
@@ -312,8 +332,10 @@ then set `LINEAR_CLIENT_ID` in `src/trackers/linear.mjs` (Linear → Settings �
 applications, callback `http://localhost:8497/callback`, public client) and `GITHUB_CLIENT_ID` in
 `src/trackers/github.mjs` (GitHub → Settings → Developer settings → OAuth Apps, enable device flow).
 Until then the same flows can be tried with the `ISSUE_HERD_LINEAR_CLIENT_ID` and
-`ISSUE_HERD_GITHUB_CLIENT_ID` environment variables; `ISSUE_HERD_OAUTH_PORT` moves the loopback
-port and `ISSUE_HERD_CREDENTIALS` the credentials file.
+`ISSUE_HERD_GITHUB_CLIENT_ID` environment variables, or per repository with a `clientId` in the
+tracker object. `ISSUE_HERD_OAUTH_PORT` moves the loopback port, `ISSUE_HERD_CREDENTIALS` the
+credentials file, and `ISSUE_HERD_GITHUB_HOST` names a GitHub Enterprise host. All of these are read
+from your shell only, never from a repository's `.env`.
 
 ## How it avoids double work
 
@@ -326,7 +348,8 @@ Three independent guards, checked before every pickup:
 2. **Pickup comment marker.** The "issue-herd picked this up" comment is also detected, so an
    issue claimed by an older version without the label is still skipped.
 3. **Assigned to someone else** (`skipIfAssignedToOthers`, default true). If a human other than
-   you holds the issue, it is theirs. `onPickup.assignToMe` makes the agent's issues yours, so the
+   you holds the issue, it is theirs. On a tracker with several assignees per issue, one other
+   person is enough: an issue shared between you and a colleague is still theirs. `onPickup.assignToMe` makes the agent's issues yours, so the
    rule of thumb is: unassigned or assigned to you means available.
 
 Plus the local `state.json`, which is what stops the same watcher re-picking during a run, and

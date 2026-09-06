@@ -32,6 +32,10 @@ test('people match by login too, with or without the @, and "me" by login when t
   assert.ok(compile('assignee:@jmwind').test(gh, ghCtx));
   assert.ok(compile('assignee:jmwind').test(gh, ghCtx));
   assert.ok(!compile('assignee:me').test(gh, { viewer: { id: 'other', login: 'other' }, now }));
+  // a tracker whose id is not the login (a numeric account id, say) still resolves "me" by login
+  const numeric = { ...issue, assignee: { id: 4711, login: 'jmwind', name: 'JM', displayName: 'jmwind', email: null } };
+  assert.ok(compile('assignee:me').test(numeric, { viewer: { id: 'u-me', login: 'jmwind', email: null }, now }));
+  assert.ok(!compile('assignee:me').test(numeric, { viewer: { id: 'u-me', login: 'someone', email: null }, now }));
 });
 
 test('tokenizer handles quotes, operators and parens', () => {
