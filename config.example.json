@@ -4,7 +4,7 @@
   "lookbackDays": 30,
   "maxConcurrent": 3,
   "defaults": {
-    "worktree": "claude",
+    "worktree": "self",
     "branch": "{{issueBranchName}}",
     "permissionMode": "auto",
     "claudeArgs": [],
@@ -13,10 +13,25 @@
     "instructionsFile": "instructions.md",
     "claimLabel": "herdr",
     "skipIfAssignedToOthers": true,
-    "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
-    "onDone": { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
-    "onBlocked": { "comment": true, "notify": true },
-    "onIdle": { "comment": true, "notify": true }
+    "onPickup": {
+      "comment": true,
+      "state": "In Progress",
+      "assignToMe": true
+    },
+    "onDone": {
+      "comment": true,
+      "state": "In Review",
+      "notify": true,
+      "closeWorkspace": false
+    },
+    "onBlocked": {
+      "comment": true,
+      "notify": true
+    },
+    "onIdle": {
+      "comment": true,
+      "notify": true
+    }
   },
   "rules": [
     {

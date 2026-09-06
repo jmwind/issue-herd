@@ -4,7 +4,7 @@
   "lookbackDays": 30,
   "maxConcurrent": 3,
   "defaults": {
-    "worktree": "claude",
+    "worktree": "self",
     "branch": "{{issueBranchName}}",
     "permissionMode": "auto",
     "claudeArgs": [],

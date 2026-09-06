@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // issue-herd — watch an issue tracker (Linear or GitHub Issues); when an issue matches a rule, open
-// a herdr workspace, start Claude Code in it (worktree mode), brief it, and report back to the issue.
+// a git worktree and a herdr workspace, start Claude Code in it, brief it, and report back.
 //
 //   issue-herd                 run the watcher (foreground; run it inside a herdr pane)
 //   issue-herd once            one poll, then exit
@@ -37,6 +37,7 @@ import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCrede
 import { Herdr, agentNameFor } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
+import { makeWorktree } from '../src/worktree.mjs';
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = findRepoRoot(process.cwd());
@@ -137,7 +138,13 @@ const DEFAULTS = {
   lookbackDays: 30,
   maxConcurrent: 3,
   defaults: {
-    worktree: 'claude',            // "claude" (claude --worktree), "herdr" (herdr worktree create), or "none"
+    // Who creates the git worktree a run works in. "self" is issue-herd, with one `git worktree
+    // add` on the branch below, so the directory and the branch are both settled before the agent
+    // starts and nothing downstream has to discover or correct them. "herdr" hands the job to
+    // `herdr worktree create`. "none" runs in the checkout you started the watcher in, on whatever
+    // branch it is already on, and never renames anything.
+    worktree: 'self',
+    worktreeDir: '.issue-herd/worktrees',   // where "self" puts them, relative to the repo (gitignored)
     // The branch a run works on, as a template over {{issueBranchName}} / {{slug}} / {{key}} / {{KEY}}.
     // The tracker's own branch name is the default (Linear's auto-links a PR back to the issue;
     // GitHub's is what its "create a branch" button would name). In "herdr" mode it is passed to
@@ -162,6 +169,8 @@ const DEFAULTS = {
   rules: [],
 };
 
+const WORKTREE_MODES = new Set(['self', 'herdr', 'none']);
+
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no config at ${CONFIG_PATH}`);
   const readConfigFile = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { throw new Error(`${path.relative(REPO, p)} is not valid JSON: ${e.message}`); } };
@@ -176,6 +185,9 @@ function loadConfig() {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
     const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
     for (const k of ['onPickup', 'onDone', 'onBlocked', 'onIdle']) rule[k] = { ...cfg.defaults[k], ...(r[k] || {}) };
+    if (!WORKTREE_MODES.has(rule.worktree)) {
+      throw new Error(`rule "${rule.name}": unknown worktree mode ${JSON.stringify(rule.worktree)} — use "self" (issue-herd creates it), "herdr", or "none"`);
+    }
     try { rule.compiled = compile(rule.match); } catch (e) { throw new Error(`rule "${rule.name}": ${e.message}`); }
     rule.instructions = [rule.instructions, readInstructions(rule.instructionsFile)].filter(Boolean).join('\n\n');
     return rule;
@@ -336,6 +348,11 @@ class IssueHerd {
       if (rule.worktree === 'herdr') {
         ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `herd/${slug}`, label });
         run.worktreePath = ws.path;
+      } else if (rule.worktree === 'self') {
+        const made = makeWorktree({ git, repo: rule.repo, dir: rule.worktreeDir, slug, branch: run.wantBranch || `herd/${slug}` });
+        run.worktreePath = made.path;
+        log(`${key}: worktree ${made.created ? 'created' : 'reused'} at ${made.path}`);
+        ws = await this.workspaceIn(made.path, rule.repo, label);
       } else {
         ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { HERD_ISSUE: key } });
       }
@@ -347,22 +364,30 @@ class IssueHerd {
 
       // 2. start claude
       const agentArgs = ['--name', key];
-      if (rule.worktree === 'claude') agentArgs.push('--worktree', slug);
       if (rule.permissionMode) agentArgs.push('--permission-mode', rule.permissionMode);
       agentArgs.push(...(rule.claudeArgs || []));
       await sleep(1500); // let the shell reach its prompt
       await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs });
       log(`${key}: claude started as agent "${run.agentName}"`);
 
-      // 3. brief — written INSIDE the working tree Claude actually uses (herdr reports it), under the
-      // gitignored .issue-herd/state/, so reading and writing it needs no permission dialog. A path in the
-      // main checkout does not work when Claude runs in a worktree.
-      const workDir = run.worktreePath || await this.agentCwd(run.agentName, rule);
+      // 3. brief — written INSIDE the working tree the agent actually uses, under the gitignored
+      // .issue-herd/state/, so reading and writing it needs no permission dialog. A path in the main
+      // checkout does not work from a worktree.
+      let workDir = run.worktreePath;
+      if (workDir) {
+        // We know where we put it, but a Claude Code setting that forces its own worktree can still
+        // move the agent, and the brief has to be written where the agent really is. herdr wins.
+        const seen = await this.herdr.agentGet(run.agentName).then((a) => a?.foreground_cwd || a?.cwd).catch(() => null);
+        if (seen && path.resolve(seen) !== path.resolve(workDir)) {
+          log(`${key}: the agent is in ${seen}, not the worktree we made; using that`);
+          workDir = seen;
+        }
+      } else {
+        workDir = await this.agentCwd(run.agentName, rule);
+      }
       run.workDir = workDir;
-      // Settle the branch before the brief is rendered and before Linear is told: both quote it.
+      // Settle the branch before the brief is rendered and before the tracker is told: both quote it.
       this.settleBranch(key, run, rule, workDir);
-      // Now that the worktree exists, give it a herdr workspace of its own so the sidebar shows its branch.
-      await this.adoptWorktree(key, run, rule, workDir, label);
       run.dir = path.join(workDir, '.issue-herd', 'state', 'runs', key);
       run.resultPath = path.join(run.dir, 'result.json');
       fs.mkdirSync(run.dir, { recursive: true });
@@ -414,15 +439,15 @@ class IssueHerd {
   /**
    * Reconcile the branch we wanted with the branch that exists, and record the truth in run.branch.
    *
-   * In "claude" mode the worktree is created by `claude --worktree <slug>`, which names the branch
-   * itself — so the only way to get the name we want is to rename onto it, and the only way to know
-   * the name is to ask git. Renaming is safe here: this runs before the agent is prompted, so the
-   * branch has no commits of ours and no upstream. Anything that goes wrong is a log line, never a
-   * failed run — a run on an unexpected branch name is fine, a run whose brief lies is not.
+   * We create the worktree on the branch we want, so this is normally just the confirmation step:
+   * ask git, record what it says, move on. It still matters. A Claude Code setting that forces its
+   * own worktree can put the agent somewhere we did not choose, and then renaming onto the name we
+   * promised is how the brief, the pickup comment and the PR keep telling the same story. Anything
+   * that goes wrong is a log line, never a failed run — a run on an unexpected branch name is fine,
+   * a run whose brief lies is not.
    *
-   * The one thing it must never do is rename a branch in the maintainer's own checkout. `agentCwd`
-   * falls back to the repo root when Claude has not moved into a worktree before its timeout, so a
-   * workDir equal to the repo is read but never renamed.
+   * The one thing it must never do is rename a branch in the maintainer's own checkout, which is
+   * why a workDir equal to the repo is read but never renamed.
    */
   settleBranch(key, run, rule, workDir) {
     if (rule.worktree === 'none') { run.branch = null; return null; }
@@ -440,34 +465,20 @@ class IssueHerd {
   }
 
   /**
-   * In "claude" mode the herdr workspace is created at the repo root *before* Claude makes its
-   * worktree, so herdr's sidebar shows the repo's branch (main), not the run's. Once the worktree
-   * exists and its branch is settled, re-home the run: open the checkout as a herdr worktree
-   * workspace (herdr then shows the real branch and groups it under the repo), move Claude's pane
-   * into it, and drop the placeholder. If the user already opened that checkout themselves (herdr's
-   * New button does this), Claude joins their workspace as a second tab and their shell is kept.
-   * Best effort: a run left in the placeholder workspace is still a perfectly good run.
+   * A herdr workspace sitting in `dir`. `worktree open` is preferred because herdr then shows the
+   * run's real branch and groups it under the repo, and it hands back a fresh shell pane to start
+   * the agent in. A plain workspace is the fallback: if you already had that checkout open, herdr
+   * returns your workspace and your shell, which is not ours to start an agent in.
    */
-  async adoptWorktree(key, run, rule, workDir, label) {
-    if (rule.worktree !== 'claude' || path.resolve(workDir) === path.resolve(rule.repo)) return;
-    const placeholder = { workspaceId: run.workspaceId, paneId: run.paneId };
+  async workspaceIn(dir, repo, label) {
     try {
-      const wt = await this.herdr.openWorktree({ cwd: rule.repo, path: workDir, label });
-      if (!wt.workspaceId || wt.workspaceId === placeholder.workspaceId) return;
-      const moved = await this.herdr.movePaneToWorkspace(placeholder.paneId, wt.workspaceId);
-      if (!moved.changed) { log(`${key}: herdr did not move pane ${placeholder.paneId}; staying in workspace ${placeholder.workspaceId}`); return; }
-      Object.assign(run, { workspaceId: wt.workspaceId, tabId: moved.tabId, paneId: moved.paneId });
-      saveState(this.state);
-      if (wt.alreadyOpen) {
-        try { await this.herdr.renameWorkspace(wt.workspaceId, label); } catch { /* keep their name */ }
-      } else if (wt.paneId) {
-        try { await this.herdr.closePane(wt.paneId); } catch { /* a spare shell is harmless */ }
-      }
-      if (moved.closedWorkspaceId !== placeholder.workspaceId) { try { await this.herdr.closeWorkspace(placeholder.workspaceId); } catch { /* ignore */ } }
-      log(`${key}: moved into herdr worktree workspace ${wt.workspaceId} pane ${run.paneId}${wt.alreadyOpen ? ' (it was already open)' : ''}`);
+      const wt = await this.herdr.openWorktree({ cwd: repo, path: dir, label });
+      if (wt.paneId && !wt.alreadyOpen) return wt;
+      if (wt.alreadyOpen) log(`  ${dir} is already open in herdr; giving the run its own workspace`);
     } catch (e) {
-      log(`${key}: could not give the worktree its own herdr workspace: ${e.message}`);
+      log(`  herdr worktree open failed (${e.message}); using a plain workspace`);
     }
+    return this.herdr.createWorkspace({ cwd: dir, label });
   }
 
   async startAgentWithRetry(opts) {
@@ -686,6 +697,8 @@ const GITIGNORE = `# issue-herd. config.json, instructions.md and prompts/ are c
 state/
 # per-machine overrides of config.json
 config.local.json
+# the git worktrees issue-herd creates for runs
+worktrees/
 `;
 
 /** `issue-herd init [--tracker linear|github]`. Asks which tracker on a terminal when not told. */

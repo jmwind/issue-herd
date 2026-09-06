@@ -201,21 +201,28 @@ The same fields work on every tracker; what they map to on GitHub is in
   "lookbackDays": 30,         // only consider issues updated in this window
   "maxConcurrent": 3,         // global cap on running agents
   "defaults": {               // every rule inherits these
-    "worktree": "claude",     // "claude": claude --worktree <slug> (Claude names the branch worktree/<slug>)
-                              // "herdr":  herdr worktree create (herdr shows it as a worktree)
-                              // "none":   pass no worktree flag. If your Claude Code settings default to
-                              //           worktree mode, Claude still creates one with a random name.
+    "worktree": "self",       // who creates the git worktree the run works in.
+                              // "self":  issue-herd does, with one `git worktree add` on the branch below.
+                              //          The directory and the branch are settled before the agent starts,
+                              //          so nothing downstream has to discover or correct them.
+                              // "herdr": herdr worktree create (herdr shows it as a worktree)
+                              // "none":  no worktree. The run works in the checkout you started the
+                              //          watcher in, on whatever branch it is already on, and nothing is
+                              //          ever renamed. If your Claude Code settings default to worktree
+                              //          mode, Claude still makes one with a name of its own choosing.
+    "worktreeDir": ".issue-herd/worktrees",  // where "self" puts them, relative to the repo. Must stay
+                              // inside the repo, because config.json is committed and this is a path we
+                              // create directories in. `init` gitignores it.
     "branch": "{{issueBranchName}}", // what the run's branch is called. The tracker's own branch name is the
                               // default: Linear's auto-links a PR back to the issue, GitHub's is what its
                               // "create a branch" button would name (7-fix-the-thing). Templates may use
                               // {{issueBranchName}}, {{slug}}, {{key}} (dev-3298), {{KEY}} (DEV-3298),
-                              // e.g. "claude/{{slug}}" or "linear/{{slug}}". In "herdr" mode it is passed
-                              // to `herdr worktree create --branch`; in "claude" mode the worktree is
-                              // renamed onto it before the agent is prompted. null accepts whatever the
-                              // tool named it. Ignored when "worktree" is "none" — that run works on the
-                              // branch the repo is already on, and renaming it would move your checkout.
-                              // Whatever happens, the brief, the Linear comment and result.json all quote
-                              // the branch `git` actually reports, never a name issue-herd hoped for.
+                              // e.g. "claude/{{slug}}" or "herd/{{slug}}". The worktree is created on this
+                              // branch, so it is right from the start. null accepts whatever git picks.
+                              // Ignored when "worktree" is "none" — that run works on the branch the repo
+                              // is already on, and renaming it would move your checkout. Whatever happens,
+                              // the brief, the pickup comment and result.json all quote the branch `git`
+                              // actually reports, never a name issue-herd hoped for.
     "permissionMode": "auto",         // claude --permission-mode. auto = unattended (the point of a watcher);
                                       // acceptEdits still asks before every command; see `claude --help`
     "claudeArgs": [],         // extra flags for claude, e.g. ["--model", "opus"]
@@ -359,18 +366,17 @@ whatever your rule says (`not state:started` excludes anything already In Progre
 
 1. Poll the tracker for open issues; evaluate each rule; the first matching rule wins, then the
    guards above are applied. Urgent first, then oldest first.
-2. `herdr workspace create --cwd <repo> --label "<KEY> <title>" --no-focus` (or `herdr worktree
-   create` in herdr worktree mode).
-3. `herdr agent start <key> --kind claude --pane <pane> -- --name KEY --worktree <slug> --permission-mode …`,
-   then ask herdr which directory Claude is now working in (the worktree it created).
-4. Settle the branch: ask git what the worktree is actually on and, if `branch` asks for a different
-   name and that name is free, rename onto it. This happens before the brief is written and before
-   the tracker is told, so all three quote the same, existing branch.
-   Then give the worktree a herdr workspace of its own: the workspace from step 2 sits at the repo
-   root, so the sidebar would show `main`. issue-herd runs `herdr worktree open --path <worktree>`
-   (herdr shows the real branch and groups it under the repo), moves Claude's pane into it with
-   `herdr pane move`, and closes the placeholder. If you had already opened that checkout yourself,
-   Claude joins it as a second tab and your shell stays.
+2. `git worktree add -b <branch> .issue-herd/worktrees/<slug>` — issue-herd makes the worktree, on
+   the branch the rule asked for. An existing directory for that issue is reused rather than
+   duplicated, and an existing branch is attached to rather than clobbered.
+3. `herdr worktree open --path <worktree>` gives it a workspace, so the sidebar shows the run's real
+   branch and groups it under the repo. If you already had that checkout open, the run gets its own
+   workspace and your shell is left alone.
+4. `herdr agent start <key> --kind claude --pane <pane> -- --name KEY --permission-mode …` — started
+   in a pane that is already in the worktree, so no `--worktree` flag and nothing to discover
+   afterwards. issue-herd then asks git what branch the worktree is on and records the answer, which
+   is the confirmation step rather than a correction: the brief, the pickup comment and the PR all
+   quote what git reports, never a name issue-herd hoped for.
 5. Render the brief template into `<working tree>/.issue-herd/state/runs/<KEY>/brief.md` with the
    issue, comments, and your `instructions.md`, then `herdr agent prompt <key> "read the brief at …
    and follow it"`. The brief and `result.json` live inside Claude's own working tree (gitignored)

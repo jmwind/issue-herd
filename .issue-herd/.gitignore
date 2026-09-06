@@ -3,3 +3,5 @@
 state/
 # per-machine overrides of config.json
 config.local.json
+# the git worktrees issue-herd creates for runs
+worktrees/
