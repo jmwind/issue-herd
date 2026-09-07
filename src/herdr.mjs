@@ -150,10 +150,33 @@ export class Herdr {
     });
   }
 
-  /** `agent read` prints plain text, not JSON. */
+  /**
+   * `agent read` prints plain text, not JSON. `recent-unwrapped` is the agent's alternate-screen
+   * history, which herdr can only capture by scrolling the pane, so it refuses with
+   * `agent_not_idle` while the agent is working. That is exactly when a person wants to look, so
+   * fall back to the visible screen: fewer lines, but what is on the pane right now.
+   */
   async readAgent(target, lines = 60) {
-    const { stdout } = await execFileP(this.bin, ['agent', 'read', target, '--source', 'recent-unwrapped', '--lines', String(lines), '--format', 'text'], { env: this.env, timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
-    return String(stdout);
+    try {
+      return await this.readAgentSource(target, 'recent-unwrapped', lines);
+    } catch (err) {
+      if (err.code !== 'agent_not_idle') throw err;
+      return this.readAgentSource(target, 'visible', lines);
+    }
+  }
+
+  async readAgentSource(target, source, lines) {
+    try {
+      const { stdout } = await execFileP(this.bin, ['agent', 'read', target, '--source', source, '--lines', String(lines), '--format', 'text'], { env: this.env, timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+      return String(stdout);
+    } catch (err) {
+      const detail = err.stderr ? parseJsonLoose(err.stderr) : null;
+      const msg = detail?.error?.message || detail?.error?.code || err.stderr?.trim() || err.message;
+      const e = new Error(`herdr agent read: ${msg}`);
+      e.code = detail?.error?.code;
+      e.detail = detail;
+      throw e;
+    }
   }
 
   async notify(title, body, { sound = 'none' } = {}) {
