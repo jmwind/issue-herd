@@ -153,6 +153,21 @@ export function checkRoleBranches(rules) {
   return rules;
 }
 
+/**
+ * `basedOn` names a role, and the role has to be one this project actually runs — otherwise the
+ * reviewer silently gets the default branch instead of the code it was sent to review, and the
+ * only evidence is one line in the log. A role that is switched off by `"roles"` still counts: the
+ * rule is there, and turning it back on must not need a second edit somewhere else.
+ */
+export function checkBasedOn(rules) {
+  const declared = new Set(rules.map((r) => r.role).filter(Boolean));
+  for (const r of rules) {
+    if (!r.basedOn || declared.has(r.basedOn)) continue;
+    throw new Error(`rule "${r.name}": "basedOn" is ${JSON.stringify(r.basedOn)}, which no rule has as its "role" (roles here: ${[...declared].join(', ') || 'none'})`);
+  }
+  return rules;
+}
+
 /** Run statuses that are over, and so can be followed by another pass of the same role. */
 const FINISHED = new Set(['done', 'stopped', 'merged']);
 

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ROLE_RE, ROLE_SEPARATOR,
-  alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, issueKeyOf,
+  alreadyTaken, applyRoles, checkBasedOn, checkRoleBranches, claimLabelFor, issueKeyOf,
   heldByAPerson, nextPass, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker,
   runKeyFor, workspaceLabel,
 } from '../src/claim.mjs';
@@ -132,6 +132,16 @@ test('two roles pointed at one branch is caught at config load, not on the secon
   // And rules that never get a worktree have no branch to collide over.
   checkRoleBranches([{ ...impl, worktree: 'none' }, { ...rev, worktree: 'none' }]);
   checkRoleBranches([impl, { ...rev, enabled: false }]);
+});
+
+test('"basedOn" has to name a role some rule runs, or the reviewer quietly gets main', () => {
+  const impl = rule({ name: 'impl', role: 'impl' });
+  const rev = rule({ name: 'rev', role: 'review', basedOn: 'impl' });
+  checkBasedOn([impl, rev]);
+  assert.throws(() => checkBasedOn([impl, { ...rev, basedOn: 'implementer' }]),
+    /rule "rev": "basedOn" is "implementer", which no rule has as its "role" \(roles here: impl, review\)/);
+  // A role switched off by "roles" is still a role this project has: turning it back on is one edit.
+  checkBasedOn([{ ...impl, enabled: false }, rev]);
 });
 
 // ---------------------------------------------------------------- picking a poll's candidates

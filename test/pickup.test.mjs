@@ -141,7 +141,7 @@ test('a reviewer on another provider is started in that provider\'s own dialect'
   const start = herdr.calls().split('\n').find((l) => l.startsWith('agent start'));
   assert.ok(start, `no agent start in:\n${herdr.calls()}`);
   assert.match(start, /--kind codex/);
-  assert.match(start, /-- --model gpt-5-codex -c model_reasoning_effort="high" --sandbox workspace-write --approve-for-me/);
+  assert.match(start, /-- --model gpt-5-codex -c model_reasoning_effort="high" --approve-for-me$/);
   // none of Claude Code's flags reach it
   assert.doesNotMatch(start, /--permission-mode/);
   assert.doesNotMatch(start, /--name SMOKE/);

@@ -32,3 +32,19 @@ issue-herd works its own GitHub issues with this file. Keep it short and concret
 
 - The change needs a registered OAuth application, a new tracker's real API, or a design decision
   about the tracker contract.
+
+## The three roles on this repository
+
+Every issue here is shared by three agents, each holding its own claim (`herdr:impl`,
+`herdr:review`, `herdr:usability`). The wiring is in `.issue-herd/config.json`; your brief says
+which role you are.
+
+- **`impl`** builds the change and opens the PR. When the PR is up and the checks above pass, hand
+  off: `gh issue edit <n> --add-label ready-for-review`. That label is the only thing that starts
+  the two reviewers — without it, nobody reviews you.
+- **`review`** (tech lead) and **`usability`** read that PR and report back as a comment on the
+  issue. They do not commit, push, merge, or touch labels: the handoff is the implementer's to
+  make and the merge is a human's.
+
+Spend the main agent on thinking. Bulk reading — finding a symbol, summarising a file, checking how
+a convention is used elsewhere — goes to sub-agents where your agent has them.

@@ -186,6 +186,10 @@ test('"basedOn" names another role, checked at config load', (t) => {
   // a worktree cannot start from itself
   const self = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('review') }) });
   assert.match(run(self, ['status']).out, /"basedOn" is its own role/);
+
+  // and it cannot start from a role no rule runs — that reviewer would silently get main
+  const missing = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('implementer') }) });
+  assert.match(run(missing, ['status']).out, /no rule has as its "role"/);
 });
 
 test('"basedOn" is refused where issue-herd does not make the worktree', (t) => {
