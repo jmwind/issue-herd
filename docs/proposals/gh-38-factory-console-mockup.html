@@ -1,315 +1,263 @@
 <meta charset="utf-8">
 <title>Factory Floor</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&display=swap">
 <style>
+/* Factorio GUI idiom, single dark theme by design: bevelled grey frames, inset content panes,
+   orange headings, green confirm / red cancel buttons, machine status lights, module slots. */
 :root{
-  --paper:#F6F2ED; --paper-2:#EFE9E1; --paper-3:#E6DFD5; --rule:#DCD3C7; --ink:#141210; --ink-2:#4B443E; --ink-3:#847A70;
-  --ember:#C2521A; --ember-soft:#F3DDD0;
-  --ok:#3A7D4F; --ok-soft:#DCEBDF; --warn:#B7841C; --warn-soft:#F4E7C7; --alert:#B23A2E; --alert-soft:#F2D8D3; --idle:#6E7B8B; --idle-soft:#E2E6EA;
-  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; --display:"Fraunces",Georgia,serif;
-  color-scheme:light;
+  --ground:#171717; --frame:#313131; --frame-2:#3B3B3B; --inset:#242424; --inset-2:#1D1D1D;
+  --hi:#5C5C5C; --lo:#0F0F0F; --edge:#0A0A0A;
+  --text:#E8E8E8; --muted:#A3A3A3; --dim:#7A7A7A; --heading:#FFE6C0;
+  --orange:#E39827; --orange-2:#FFB43C; --green:#5EB663; --green-2:#7ED184; --red:#C43B3B; --red-2:#E05252; --yellow:#F2C94C;
+  --led-g:#59D95E; --led-r:#FF4D4D; --led-y:#FFD24D; --led-x:#6A6A6A;
+  --font:"Titillium Web","Trebuchet MS",system-ui,sans-serif;
+  color-scheme:dark;
 }
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --paper:#161412; --paper-2:#1E1B18; --paper-3:#28241F; --rule:#332E28; --ink:#F6F2ED; --ink-2:#CFC6BA; --ink-3:#8F857A;
-  --ember:#E0692C; --ember-soft:#3C2418;
-  --ok:#6CBF84; --ok-soft:#1E3326; --warn:#E0AE45; --warn-soft:#3A2E13; --alert:#E5665A; --alert-soft:#3D1F1B; --idle:#9AA6B3; --idle-soft:#262B31;
-  color-scheme:dark;}}
-:root[data-theme="dark"]{
-  --paper:#161412; --paper-2:#1E1B18; --paper-3:#28241F; --rule:#332E28; --ink:#F6F2ED; --ink-2:#CFC6BA; --ink-3:#8F857A;
-  --ember:#E0692C; --ember-soft:#3C2418;
-  --ok:#6CBF84; --ok-soft:#1E3326; --warn:#E0AE45; --warn-soft:#3A2E13; --alert:#E5665A; --alert-soft:#3D1F1B; --idle:#9AA6B3; --idle-soft:#262B31;
-  color-scheme:dark;}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0}
-body{background:var(--paper);color:var(--ink);font:13px/1.45 var(--sans);overflow:hidden}
+body{margin:0;background:var(--ground);background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:32px 32px;color:var(--text);font:15px/1.35 var(--font)}
 a{color:inherit}
-.app{height:100vh;display:grid;grid-template-rows:auto 1fr auto;min-width:0}
-/* ---------- top bar ---------- */
-.top{display:flex;align-items:center;gap:18px;padding:8px 16px;border-bottom:1px solid var(--rule);background:var(--paper-2)}
-.wordmark{font:600 20px/1 var(--display);letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
-.wordmark svg{width:20px;height:20px}
-.tabs{display:flex;gap:4px;margin-left:8px}
-.tab{padding:5px 10px;border-radius:6px;border:1px solid transparent;display:flex;gap:8px;align-items:center;cursor:pointer;color:var(--ink-2)}
-.tab[aria-selected="true"]{background:var(--paper);border-color:var(--rule);color:var(--ink);font-weight:500}
-.tab .n{font:500 11px var(--mono);padding:1px 6px;border-radius:99px;background:var(--paper-3)}
-.tab .n.hot{background:var(--alert-soft);color:var(--alert)}
-.spacer{flex:1}
-.filters{display:flex;align-items:center;gap:14px;color:var(--ink-2)}
-.filters label{display:flex;gap:6px;align-items:center;cursor:pointer}
-.live{display:flex;align-items:center;gap:6px;font:12px var(--mono);color:var(--ink-3)}
-.live i{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
-kbd{font:11px var(--mono);border:1px solid var(--rule);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--ink-3)}
-/* ---------- body grid ---------- */
-.main{display:grid;grid-template-columns:240px minmax(0,1fr) 300px;min-height:0}
-.rail,.inbox{min-height:0;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:16px}
-.rail{border-right:1px solid var(--rule)}
-.inbox{border-left:1px solid var(--rule);background:var(--paper-2)}
-h2{font:500 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px}
-.factory h1{font:600 22px/1.1 var(--display);margin:0 0 2px}
-.factory .sub{color:var(--ink-3);font:12px var(--mono)}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12px}
-.kv dt{color:var(--ink-3)}.kv dd{margin:0;font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rules{display:flex;flex-direction:column;gap:6px}
-.rule{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper)}
-.rule .role{font:500 11px var(--mono);padding:1px 6px;border-radius:4px;background:var(--paper-3);align-self:start}
-.rule .role.impl{background:var(--ember-soft);color:var(--ember)}
-.rule .who{font-size:12px}
-.rule .who b{font-weight:500}
-.rule .match{grid-column:2;font:11px var(--mono);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rule .cap{grid-column:2;font-size:11px;color:var(--ink-2)}
-.meter{height:6px;border-radius:3px;background:var(--paper-3);overflow:hidden}
-.meter i{display:block;height:100%;background:var(--ember)}
-.caps{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px}
-.caps .num{font:500 18px var(--mono);font-variant-numeric:tabular-nums}
-.caps .l{color:var(--ink-3);font-size:11px}
-/* ---------- board ---------- */
-.board{min-height:0;min-width:0;display:flex;flex-direction:column;overflow:hidden}
-.board-head{display:grid;grid-template-columns:var(--cols);gap:0 8px;padding:8px 16px;font:500 11px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--paper)}
-.rows{overflow:auto;min-height:0}
-:root{--cols:64px minmax(100px,1fr) 228px 52px 56px 108px 92px 52px}
-.row{display:grid;grid-template-columns:var(--cols);gap:0 8px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--rule);cursor:pointer;position:relative}
-.row:hover{background:var(--paper-2)}
-.row[aria-selected="true"]{background:var(--paper-2);box-shadow:inset 3px 0 0 var(--ember)}
-.row.closed{opacity:.6}
-.key{font:500 12px var(--mono)}
-.key a{text-decoration:none;color:var(--ink)}
-.key a:hover{color:var(--ember);text-decoration:underline}
-.title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.title small{color:var(--ink-3);margin-left:6px}
-.lanes{display:flex;gap:4px}
-.lane{display:flex;align-items:center;gap:4px;padding:2px 6px;border-radius:99px;font:10.5px var(--mono);border:1px solid var(--rule);color:var(--ink-2);white-space:nowrap}
-.lane i{width:7px;height:7px;border-radius:50%;background:var(--idle)}
-.lane.working{border-color:transparent;background:var(--ok-soft);color:var(--ok)}.lane.working i{background:var(--ok);animation:pulse 1.6s infinite}
-.lane.blocked,.lane.question{border-color:transparent;background:var(--alert-soft);color:var(--alert)}.lane.blocked i,.lane.question i{background:var(--alert)}
-.lane.done{background:var(--paper-3);border-color:transparent}.lane.done i{background:var(--ink-3)}
-.lane.merged{border-color:transparent;background:var(--ok-soft);color:var(--ok)}.lane.merged i{background:var(--ok)}
-.lane.awaiting{border-color:transparent;background:var(--warn-soft);color:var(--warn)}.lane.awaiting i{background:var(--warn)}
-.lane.none{color:var(--ink-3);border-style:dashed}.lane.none i{background:transparent;border:1px solid var(--rule)}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-@media (prefers-reduced-motion:reduce){.lane.working i{animation:none}}
-.num{font:12px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink-2)}
-.spark{display:flex;align-items:flex-end;gap:2px;height:20px}
-.spark i{width:3px;background:var(--ink-3);border-radius:1px;opacity:.75}
-.spark i.now{background:var(--ember);opacity:1}
-.size{display:flex;flex-direction:column;gap:2px;line-height:1.2}
-.size .diff{font:11px var(--mono);white-space:nowrap}.size .diff b{font-weight:500;color:var(--ok)}.size .diff s{text-decoration:none;color:var(--alert)}
-.size .cx{font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.size .cx b{font:500 10px var(--mono);padding:0 5px;border-radius:3px;background:var(--paper-3);color:var(--ink-2);margin-right:4px}
-.pr{display:flex;flex-direction:column;gap:2px;font-size:11px;line-height:1.2}
-.pr a{font:500 12px var(--mono);text-decoration:none}
-.pr a:hover{color:var(--ember)}
-.pr .st{display:flex;gap:6px;color:var(--ink-3)}
-.pr .st .ok{color:var(--ok)}.pr .st .warn{color:var(--warn)}.pr .st .alert{color:var(--alert)}
-.acts{display:flex;gap:4px;justify-content:flex-end}
-.btn{font:500 11px var(--sans);padding:4px 8px;border-radius:5px;border:1px solid var(--rule);background:var(--paper);color:var(--ink-2);cursor:pointer;white-space:nowrap}
-.btn:hover{border-color:var(--ink-3);color:var(--ink)}
-.btn:focus-visible,.tab:focus-visible,.row:focus-visible{outline:2px solid var(--ember);outline-offset:1px}
-.btn.primary{background:var(--ember);border-color:var(--ember);color:#fff}
-.btn.primary:hover{filter:brightness(.92);color:#fff}
-.btn.danger{color:var(--alert)}.btn.danger:hover{border-color:var(--alert)}
-.btn.icon{padding:3px 5px;font-family:var(--mono)}
-/* ---------- detail drawer ---------- */
-.drawer{border-top:1px solid var(--rule);background:var(--paper-2);padding:12px 16px;display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:18px;font-size:12px}
-.drawer h3{margin:0 0 6px;font:500 12px var(--sans);display:flex;justify-content:space-between;align-items:baseline}
-.drawer h3 small{color:var(--ink-3);font:11px var(--mono)}
-.tl{display:flex;flex-direction:column;gap:5px}
-.tl .r{display:grid;grid-template-columns:70px 1fr 48px;gap:8px;align-items:center;font:11px var(--mono)}
-.tl .bar{height:10px;border-radius:2px;background:var(--paper-3);position:relative;overflow:hidden}
-.tl .bar i{position:absolute;top:0;bottom:0;border-radius:2px}
-.tl .bar i.w{background:var(--ok)}.tl .bar i.b{background:var(--alert)}.tl .bar i.q{background:var(--warn)}.tl .bar i.d{background:var(--ink-3);opacity:.5}
-.tl .lbl{color:var(--ink-2)}.tl .t{color:var(--ink-3);text-align:right}
-.legend{display:flex;gap:10px;font:11px var(--mono);color:var(--ink-3);margin-top:6px}
-.legend i{display:inline-block;width:10px;height:8px;border-radius:2px;vertical-align:middle;margin-right:4px}
-.facts{display:grid;grid-template-columns:auto 1fr;gap:3px 12px}
-.facts dt{color:var(--ink-3)}.facts dd{margin:0;font-family:var(--mono);font-size:11px}
-.summary{color:var(--ink-2);max-width:60ch}
-.checks{display:flex;flex-direction:column;gap:3px;font:11px var(--mono)}
-.checks .ok::before{content:"✓ ";color:var(--ok)}.checks .warn::before{content:"◔ ";color:var(--warn)}
-.drawer .foot{grid-column:1/-1;display:flex;gap:6px;align-items:center;border-top:1px dashed var(--rule);padding-top:10px;color:var(--ink-3)}
-/* ---------- inbox ---------- */
-.inbox h2{display:flex;justify-content:space-between}
-.inbox h2 .n{font:500 11px var(--mono);background:var(--alert-soft);color:var(--alert);padding:0 6px;border-radius:99px;letter-spacing:0}
-.card{border:1px solid var(--rule);border-radius:8px;background:var(--paper);padding:10px 12px;display:flex;flex-direction:column;gap:6px}
-.card.alert{border-left:3px solid var(--alert)}.card.warn{border-left:3px solid var(--warn)}.card.ok{border-left:3px solid var(--ok)}
-.card .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
-.card .hd b{font:500 12px var(--mono)}.card .hd small{color:var(--ink-3);font:11px var(--mono);white-space:nowrap}
-.card p{margin:0;color:var(--ink-2)}
-.card pre{margin:0;font:11px/1.4 var(--mono);background:var(--paper-3);padding:6px 8px;border-radius:4px;color:var(--ink-2);white-space:pre-wrap;max-height:64px;overflow:hidden}
-.card .acts{justify-content:flex-start}
-.quiet{color:var(--ink-3);font-size:12px}
-/* ---------- footer ---------- */
-.foot{display:flex;gap:16px;align-items:center;padding:6px 16px;border-top:1px solid var(--rule);font:11px var(--mono);color:var(--ink-3);background:var(--paper-2);white-space:nowrap;overflow:hidden}
-.foot .log{overflow:hidden;text-overflow:ellipsis}
-.foot .tag{color:var(--ember)}
-@media (max-width:1180px){.main{grid-template-columns:220px minmax(0,1fr) 280px}:root{--cols:60px minmax(90px,1fr) 228px 48px 0 100px 84px 52px}.spark{display:none}}
+.bevel{background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge)}
+.inset{background:var(--inset);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi)}
+/* ---- review page chrome ---- */
+.intro{max-width:1180px;margin:0 auto;padding:26px 20px 6px}
+.intro h1{margin:0;font:700 20px var(--font);color:var(--heading)}
+.intro p{margin:6px 0 0;color:var(--muted);max-width:70ch}
+.gallery{display:flex;gap:28px;justify-content:center;flex-wrap:wrap;padding:20px}
+.shot{display:flex;flex-direction:column;align-items:center;gap:10px}
+.shot figcaption{font:600 12px var(--font);color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.phone{width:390px;height:800px;padding:8px;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge),0 18px 40px rgba(0,0,0,.6)}
+.screen{position:relative;height:100%;display:flex;flex-direction:column;background:var(--inset-2);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);overflow:hidden}
+@media (max-width:720px){
+  .intro{display:none}.gallery{padding:0;flex-direction:column;gap:0}.shot{width:100%}
+  .shot figcaption{width:100%;padding:10px 16px;background:var(--frame);box-shadow:inset 0 1px 0 var(--hi)}
+  .phone{width:100%;height:auto;min-height:100vh;padding:0;box-shadow:none}
+}
+/* ---- title bar (Factorio frame header: heading, drag stripes, buttons) ---- */
+.titlebar{display:flex;align-items:center;gap:10px;padding:8px 10px 6px;background:var(--frame);box-shadow:inset 0 -1px 0 var(--lo)}
+.titlebar h1{margin:0;font:700 17px var(--font);color:var(--heading);white-space:nowrap}
+.drag{flex:1;height:12px;background:repeating-linear-gradient(135deg,var(--hi) 0 2px,transparent 2px 6px);opacity:.55;min-width:16px}
+.tbtn{width:28px;height:28px;border:0;color:var(--text);font:700 14px var(--font);cursor:pointer;display:grid;place-items:center}
+.tbtn.red{background:var(--red)}
+/* dropdown = surface/factory picker */
+.picker{display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;color:var(--text);font:600 15px var(--font);cursor:pointer;background:var(--frame-2);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge)}
+.picker small{font-weight:400;color:var(--muted)}
+.picker .chev{color:var(--orange-2);font-size:12px}
+.tick{margin-left:auto;font:600 12px var(--font);color:var(--muted);display:flex;align-items:center;gap:6px}
+.body{overflow:auto;flex:1;padding:10px;display:flex;flex-direction:column;gap:12px}
+/* section = Factorio subpanel with a subheader */
+.sec{padding:0}
+.sub{display:flex;align-items:center;gap:8px;padding:4px 2px 6px;font:700 13px var(--font);color:var(--heading);letter-spacing:.02em}
+.sub .n{font:600 12px var(--font);padding:0 7px;background:var(--frame-2);color:var(--text);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo)}
+.sub .n.hot{background:var(--red);color:#fff}
+.sub .more{margin-left:auto;font:600 12px var(--font);color:var(--orange-2);text-decoration:none}
+.pane{padding:8px;display:flex;flex-direction:column;gap:8px}
+/* status LED (assembling machine status) */
+.led{width:10px;height:10px;border-radius:50%;background:var(--led-x);box-shadow:inset 0 0 0 1px rgba(0,0,0,.6);flex:none}
+.led.g{background:var(--led-g);box-shadow:0 0 6px var(--led-g),inset 0 0 0 1px rgba(0,0,0,.4);animation:blink 1.4s infinite}
+.led.r{background:var(--led-r);box-shadow:0 0 6px var(--led-r),inset 0 0 0 1px rgba(0,0,0,.4)}
+.led.y{background:var(--led-y);box-shadow:0 0 6px var(--led-y),inset 0 0 0 1px rgba(0,0,0,.4)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.led.g{animation:none}}
+/* alert cards */
+.alert{padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge)}
+.alert .k{display:flex;align-items:center;gap:8px}
+.alert .k b{font:700 14px var(--font);color:var(--heading)}
+.alert .k small{margin-left:auto;font:600 12px var(--font);color:var(--muted)}
+.alert p{margin:0;font-size:14px}
+.alert code{font:600 13px var(--font);color:var(--orange-2)}
+.alert pre{margin:0;padding:6px 8px;font:13px/1.35 var(--font);color:var(--muted);background:var(--inset);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);white-space:pre-wrap;max-height:56px;overflow:hidden}
+.acts{display:flex;gap:8px;align-items:center}
+.btn{font:700 14px var(--font);padding:7px 14px;border:0;min-height:36px;cursor:pointer;color:var(--text);background:var(--frame-2);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge)}
+.btn.confirm{background:linear-gradient(var(--green-2),var(--green));color:#0D2611;box-shadow:inset 1px 1px 0 #A8E8AD,inset -1px -1px 0 #2E6B36,0 0 0 1px var(--edge)}
+.btn.cancel{background:linear-gradient(var(--red-2),var(--red));color:#fff;box-shadow:inset 1px 1px 0 #F08A8A,inset -1px -1px 0 #6E1E1E,0 0 0 1px var(--edge)}
+.btn.tool{background:linear-gradient(var(--orange-2),var(--orange));color:#2A1A05;box-shadow:inset 1px 1px 0 #FFD48A,inset -1px -1px 0 #8A5A12,0 0 0 1px var(--edge)}
+.btn:focus-visible,.row:focus-visible,.picker:focus-visible,.opt:focus-visible{outline:2px solid var(--orange-2);outline-offset:2px}
+/* machine rows: LED, key + title, module slots for the three roles, elapsed */
+.row{display:grid;grid-template-columns:auto 1fr auto;grid-template-rows:auto auto;gap:2px 10px;align-items:center;padding:8px;text-decoration:none;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge)}
+.row .led{grid-column:1;grid-row:1/3}
+.row .t{grid-column:2;grid-row:1;min-width:0;font:600 15px var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t b{font-weight:700;color:var(--orange-2);margin-right:7px}
+.row .s{grid-column:2;grid-row:2;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.row .e{grid-column:3;grid-row:1/3;font:600 13px var(--font);color:var(--muted);display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+.row .e::after{content:"›";font-size:20px;color:var(--dim)}
+.row.working .s{color:var(--green-2)}.row.awaiting .s{color:var(--yellow)}
+/* module slots: impl · review · usability */
+.slots{display:inline-flex;gap:3px}
+.slots i{width:14px;height:14px;background:var(--inset);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);display:grid;place-items:center}
+.slots i::after{content:"";width:8px;height:8px;display:block;background:transparent}
+.slots i.g::after{background:var(--led-g)}.slots i.r::after{background:var(--led-r)}.slots i.y::after{background:var(--led-y)}.slots i.d::after{background:#8C8C8C}
+.legend{display:flex;flex-wrap:wrap;gap:10px 14px;padding:6px 2px 0;font:600 12px var(--font);color:var(--dim)}
+.legend span{display:flex;align-items:center;gap:5px}
+.foot{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;color:var(--muted);font-size:13px}
+.foot a{color:var(--orange-2);text-decoration:none;font-weight:700}
+/* ---- entity GUI (detail) ---- */
+.ehead{padding:8px 10px 0;display:flex;flex-direction:column;gap:6px}
+.ehead .key{font:700 12px var(--font);color:var(--orange-2);letter-spacing:.04em}
+.ehead h2{margin:0;font:700 18px/1.2 var(--font);color:var(--heading);text-wrap:balance}
+.status{display:flex;align-items:center;gap:8px;font-size:14px}
+.status b{font-weight:700}
+.status small{color:var(--muted);margin-left:auto;font-size:13px}
+.links{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.links a{text-decoration:none;text-align:center;padding:8px 4px;font:700 14px var(--font);color:var(--text);background:var(--frame-2);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge)}
+.links a small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.role{display:grid;grid-template-columns:82px 1fr auto;gap:8px;align-items:center;font-size:14px}
+.role .n{font-weight:700}.role .n small{display:block;font-weight:400;font-size:11px;color:var(--muted)}
+.bar{height:10px;position:relative;overflow:hidden;background:var(--inset-2);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi)}
+.bar i{position:absolute;top:1px;bottom:1px}
+.bar i.g{background:var(--green)}.bar i.r{background:var(--red-2)}.bar i.y{background:var(--yellow)}.bar i.d{background:#5A5A5A}
+.role .v{font:600 13px var(--font);color:var(--muted);text-align:right;white-space:nowrap}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0;font-size:14px}
+.facts dt{color:var(--muted)}.facts dd{margin:0}
+.facts dd b{color:var(--green-2)}.facts dd s{text-decoration:none;color:var(--red-2)}
+.summary{margin:0;font-size:14px;color:var(--muted)}
+.checks{display:flex;flex-direction:column;gap:3px;font-size:14px}
+.checks span::before{content:"✓ ";color:var(--green-2);font-weight:700}
+/* ---- picker sheet ---- */
+.dimmer{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+.sheet{position:absolute;left:0;right:0;bottom:0;padding:0 0 10px;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge),0 -12px 30px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:8px}
+.sheet .titlebar{padding:8px 10px}
+.sheet .pane{padding:0 10px}
+.opt{display:grid;grid-template-columns:auto 1fr auto;grid-template-rows:auto auto;gap:1px 10px;align-items:center;padding:8px;background:var(--frame-2);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge);cursor:pointer}
+.opt .led{grid-column:1;grid-row:1/3}
+.opt .n{grid-column:2;grid-row:1;font:700 15px var(--font)}
+.opt .m{grid-column:2;grid-row:2;font-size:12px;color:var(--muted)}
+.opt .c{grid-column:3;grid-row:1/3;display:flex;gap:5px}
+.opt.on{box-shadow:inset 0 0 0 2px var(--orange-2),0 0 0 1px var(--edge)}
+.opt.stale .m{color:var(--red-2)}
+.pill{white-space:nowrap;font:600 12px var(--font);padding:0 7px;background:var(--inset);color:var(--text);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi)}
+.pill.hot{background:var(--red);color:#fff;box-shadow:none}
+.team{display:flex;flex-direction:column;gap:5px;font-size:13px}
+.team div{display:grid;grid-template-columns:76px 1fr;gap:8px;align-items:baseline}
+.team b{color:var(--orange-2)}
+.team span{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.team span em{font-style:normal;color:var(--text)}
 </style>
 
-<div class="app">
-  <header class="top">
-    <div class="wordmark" title="issue-herd factory console">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="4" width="3" height="12" fill="currentColor"/><rect x="15" y="4" width="3" height="12" fill="currentColor"/><path d="M6 10h7l-2.5-2.5M13 10l-2.5 2.5" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      Factory Floor
-    </div>
-    <nav class="tabs" role="tablist" aria-label="Factories">
-      <button class="tab" role="tab" aria-selected="false">All <span class="n">4 running</span><span class="n hot">3 need you</span></button>
-      <button class="tab" role="tab" aria-selected="true">issue-herd <span class="n">2 running</span><span class="n hot">1</span></button>
-      <button class="tab" role="tab" aria-selected="false">gustkit <span class="n">2 running</span><span class="n hot">2</span></button>
-    </nav>
-    <div class="spacer"></div>
-    <div class="filters">
-      <label><input type="checkbox"> show closed <kbd>c</kbd></label>
-      <label><input type="checkbox" checked> mine only</label>
-      <span class="live"><i></i> live · herdr 0.8.2 · jml-mbp</span>
-    </div>
-  </header>
-
-  <div class="main">
-    <!-- ---------- factory rail ---------- -->
-    <aside class="rail">
-      <div class="factory">
-        <h1>issue-herd</h1>
-        <div class="sub">GitHub · jmwind/issue-herd · main</div>
-      </div>
-      <section>
-        <h2>Watcher</h2>
-        <dl class="kv">
-          <dt>version</dt><dd>0.2.4 (latest)</dd>
-          <dt>workspace</dt><dd>w1B issue-herdWatch</dd>
-          <dt>poll</dt><dd>every 30s · #49 · 14:38:32</dd>
-          <dt>open issues</dt><dd>10 · 1 matched</dd>
-          <dt>API</dt><dd>4,812 / 5,000 left</dd>
-          <dt>token</dt><dd>@jmwind via gh auth</dd>
-        </dl>
-      </section>
-      <section>
-        <h2>Capacity</h2>
-        <div class="caps">
-          <div><div class="num">2<span style="color:var(--ink-3)">/3</span></div><div class="l">running · global cap</div></div>
-          <div><div class="num">1</div><div class="l">awaiting merge</div></div>
-        </div>
-        <div class="meter" style="margin-top:8px"><i style="width:66%"></i></div>
-      </section>
-      <section>
-        <h2>Team · 3 roles</h2>
-        <div class="rules">
-          <div class="rule"><span class="role impl">impl</span><span class="who"><b>claude</b> · fable-5-1</span><span class="match">label:ai and not label:ready-for-review</span><span class="cap">implement · 1/2 running · 1 pass</span></div>
-          <div class="rule"><span class="role">review</span><span class="who"><b>codex</b> · gpt-6-astra · high</span><span class="match">label:ai and label:ready-for-review</span><span class="cap">tech-lead · basedOn impl · 0/2</span></div>
-          <div class="rule"><span class="role">usability</span><span class="who"><b>claude</b> · opus · high</span><span class="match">label:ai and label:ready-for-review</span><span class="cap">usability · basedOn impl · 1/2</span></div>
-        </div>
-      </section>
-      <section>
-        <h2>Guards</h2>
-        <dl class="kv">
-          <dt>claim</dt><dd>herdr:&lt;role&gt;</dd>
-          <dt>assigned to others</dt><dd>skip</dd>
-          <dt>on merge</dt><dd>notify only</dd>
-        </dl>
-      </section>
-    </aside>
-
-    <!-- ---------- issue board ---------- -->
-    <section class="board" aria-label="Issues">
-      <div class="board-head">
-        <span>issue</span><span></span><span>roles · impl / review / usability</span><span>elapsed</span><span>activity 2h</span><span>change</span><span>pull request</span><span></span>
-      </div>
-      <div class="rows" id="rows"></div>
-      <div class="drawer" id="drawer">
-        <div>
-          <h3>GH-35 · timeline <small>started 13:02 · 1h 36m</small></h3>
-          <div class="tl">
-            <div class="r"><span class="lbl">impl</span><div class="bar"><i class="w" style="left:0;width:38%"></i><i class="b" style="left:38%;width:4%"></i><i class="w" style="left:42%;width:14%"></i><i class="d" style="left:56%;width:44%"></i></div><span class="t">41m</span></div>
-            <div class="r"><span class="lbl">review</span><div class="bar"><i class="w" style="left:58%;width:11%"></i><i class="d" style="left:69%;width:31%"></i></div><span class="t">9m</span></div>
-            <div class="r"><span class="lbl">usability</span><div class="bar"><i class="w" style="left:58%;width:9%"></i><i class="q" style="left:67%;width:3%"></i><i class="w" style="left:70%;width:6%"></i><i class="d" style="left:76%;width:24%"></i></div><span class="t">13m</span></div>
-            <div class="r"><span class="lbl">you</span><div class="bar"><i class="q" style="left:38%;width:4%"></i><i class="q" style="left:82%;width:2%"></i></div><span class="t">6m</span></div>
-          </div>
-          <div class="legend"><span><i style="background:var(--ok)"></i>working</span><span><i style="background:var(--alert)"></i>blocked</span><span><i style="background:var(--warn)"></i>waiting on you</span><span><i style="background:var(--ink-3);opacity:.5"></i>done</span></div>
-        </div>
-        <div>
-          <h3>Change <small>212 + · 64 − · 6 files</small></h3>
-          <dl class="facts">
-            <dt>complexity</dt><dd>M · 2 modules, tests 1:3, no new deps</dd>
-            <dt>commits</dt><dd>3 on 35-keep-up-to-date-with-main</dd>
-            <dt>tests</dt><dd>npm test · 148 pass · 0 fail</dd>
-            <dt>touched</dt><dd>bin/, src/branch.mjs, docs/how-it-works.md</dd>
-          </dl>
-          <p class="summary" style="margin:8px 0 0">Runs were cut from the local checkout, which drifts. Every run is now cut from the tip of origin/main and the watcher's own checkout is fast-forwarded onto it.</p>
-        </div>
-        <div>
-          <h3>PR #36 <small>opened 13:45 · merged 14:19</small></h3>
-          <div class="checks">
-            <span class="ok">test (node 22) · 48s</span>
-            <span class="ok">review: OK TO MERGE TO MAIN · codex</span>
-            <span class="ok">usability: OK · opus</span>
-            <span class="ok">merged by @jmwind</span>
-          </div>
-          <div class="acts" style="margin-top:10px;justify-content:flex-start">
-            <button class="btn">Open issue ↗</button><button class="btn">Open PR ↗</button><button class="btn">Open workspace w1X</button><button class="btn danger">Exit agents &amp; clean up</button>
-          </div>
-        </div>
-        <div class="foot"><span>brief.md · result.json · issue-herd.log for this run</span><span class="spacer"></span><span>press <kbd>esc</kbd> to close</span></div>
-      </div>
-    </section>
-
-    <!-- ---------- needs you ---------- -->
-    <aside class="inbox" aria-label="Waiting on you">
-      <h2>Waiting on you <span class="n">3</span></h2>
-      <div class="card alert">
-        <div class="hd"><b>DEV-3314 · impl</b><small>blocked 14m · gustkit</small></div>
-        <p>Agent is waiting for approval in workspace w1K.</p>
-        <pre>Allow Bash: npm install --workspace demo/web
-  [y] yes  [a] always for this session  [n] no</pre>
-        <div class="acts"><button class="btn primary">Open workspace</button><button class="btn">Read scrollback</button><button class="btn danger">Exit agent</button></div>
-      </div>
-      <div class="card warn">
-        <div class="hd"><b>DEV-3317 · impl</b><small>asked 32m ago · gustkit</small></div>
-        <p>Agent stopped without a result and is asking a question.</p>
-        <pre>Do you want the screenshots in docs/demo/ or attached to the Linear issue as files?</pre>
-        <div class="acts"><button class="btn primary">Open workspace</button><button class="btn">Reply…</button></div>
-      </div>
-      <div class="card ok">
-        <div class="hd"><b>GH-22 · PR #25</b><small>ready 1h 12m</small></div>
-        <p>Approved by review and usability, checks green. Waiting for your merge.</p>
-        <div class="acts"><button class="btn primary">Merge on GitHub ↗</button><button class="btn">Diff</button><button class="btn danger">Exit agent</button></div>
-      </div>
-      <h2 style="margin-top:6px">Finished, still holding</h2>
-      <div class="card">
-        <div class="hd"><b>GH-37 · impl</b><small>nothing_to_do · 3m run</small></div>
-        <p>Result written 24 min ago. Workspace w25 and its worktree are still open.</p>
-        <div class="acts"><button class="btn">Read result</button><button class="btn danger">Exit &amp; close</button></div>
-      </div>
-      <p class="quiet">Everything else is working or merged. Blocked and idle agents also post to the issue and notify herdr, as before.</p>
-    </aside>
-  </div>
-
-  <footer class="foot">
-    <span class="tag">14:38:41</span><span class="log">GH-38@impl working · GH-35 merged #36 · DEV-3314@impl blocked — waiting for approval in w1K · GH-22 awaiting merge #25</span><span class="spacer"></span><span>mockup · example figures</span>
-  </footer>
+<div class="intro">
+  <h1>Factory Floor · mobile first, in Factorio's design language</h1>
+  <p>Three screens. The overview carries only what changes what you do next: alerts that need a person, machines that are assembling, and today's output. Every agent is an assembling machine with a status light, every role a module slot, every factory a surface. Detail is one tap away.</p>
 </div>
 
-<script>
-const rows = [
-  {k:'GH-38',t:'Web based factory view',lanes:[['impl','working','12m'],['review','none','—'],['usability','none','—']],el:'12m',act:[0,0,0,0,0,0,0,0,0,0,1,3,4],size:null,pr:null,sel:false},
-  {k:'GH-22',t:'Automatically exit agent when PR is merged',lanes:[['impl','awaiting','58m'],['review','done','11m'],['usability','done','9m']],el:'2h 40m',act:[2,4,4,1,0,3,4,2,0,0,0,0,0],size:['+188','−41','5','M','new config key, 1 module'],pr:['#25','open',['ok','checks','ok','approved','warn','awaiting merge']]},
-  {k:'GH-35',t:'Keep up to date with main',lanes:[['impl','merged','41m'],['review','done','9m'],['usability','done','13m']],el:'1h 36m',act:[4,4,3,4,1,0,2,3,1,0,0,0,0],size:['+212','−64','6','M','2 modules, tests 1:3'],pr:['#36','merged',['ok','merged 14:19']],sel:true},
-  {k:'GH-37',t:'codex review not starting, argument error',lanes:[['impl','done','3m'],['review','none','—'],['usability','none','—']],el:'3m',act:[0,0,0,0,0,0,0,0,0,0,0,3,0],size:['+0','−0','0','—','nothing_to_do'],pr:null},
-  {k:'GH-29',t:'We need a logo for this issue-herd project',lanes:[['impl','merged','1h 04m'],['review','done','14m'],['usability','done','12m']],el:'3h 10m',act:[3,4,4,4,2,3,1,0,0,0,0,0,0],size:['+96','−2','9','S','assets only, README'],pr:['#32','merged',['ok','merged 12:02']]},
-  {k:'GH-28',t:'Update this repo with 3 roles',lanes:[['impl','merged','22m'],['review','none','—'],['usability','none','—']],el:'1h 02m',act:[4,3,1,0,0,0,0,0,0,0,0,0,0],size:['+61','−18','3','S','config + docs'],pr:['#30','merged',['ok','merged 11:20']],closed:true},
-  {k:'GH-10',t:'Role-scoped claims so several agents can hold one issue',lanes:[['impl','merged','2h 51m'],['review','none','—'],['usability','none','—']],el:'4h 05m',act:[0,0,0,0,0,0,0,0,0,0,0,0,0],size:['+742','−138','14','L','new module, contract change, 3 trackers'],pr:['#14','merged',['ok','merged yesterday']],closed:true},
-];
-const glyph={working:'',blocked:'',question:'',done:'',merged:'',awaiting:'',none:''};
-const el=document.getElementById('rows');
-el.innerHTML=rows.map(r=>`
-<div class="row${r.closed?' closed':''}" role="button" tabindex="0" aria-selected="${!!r.sel}" ${r.closed?'hidden':''}>
-  <span class="key"><a href="#" title="Open issue on GitHub">${r.k}</a></span>
-  <span class="title">${r.t}${r.closed?'<small>closed</small>':''}</span>
-  <span class="lanes">${r.lanes.map(([n,s,t])=>`<span class="lane ${s}" title="${n}: ${s}"><i></i>${n}${t!=='—'?' '+t:''}</span>`).join('')}</span>
-  <span class="num">${r.el}</span>
-  <span class="spark" title="minutes working per 10-minute bucket">${r.act.map((v,i)=>`<i style="height:${Math.max(2,v*5)}px" class="${i===r.act.length-1&&v?'now':''}"></i>`).join('')}</span>
-  <span class="size">${r.size?`<span class="diff"><b>${r.size[0]}</b> <s>${r.size[1]}</s> · ${r.size[2]} files</span><span class="cx" title="${r.size[4]}"><b>${r.size[3]}</b>${r.size[4]}</span>`:'<span class="cx">no branch yet</span>'}</span>
-  <span class="pr">${r.pr?`<a href="#" title="Open pull request">${r.pr[0]}</a><span class="st">${chunk(r.pr[2]).map(([c,t])=>`<span class="${c}">${t}</span>`).join('')}</span>`:'<span class="cx" style="color:var(--ink-3)">no PR</span>'}</span>
-  <span class="acts"><button class="btn icon" title="Open herdr workspace">⌘</button><button class="btn icon danger" title="Exit agent">⏻</button></span>
-</div>`).join('');
-function chunk(a){const o=[];for(let i=0;i<a.length;i+=2)o.push([a[i],a[i+1]]);return o}
-document.querySelector('.filters input').addEventListener('change',e=>{document.querySelectorAll('.row.closed').forEach(r=>r.hidden=!e.target.checked)});
-el.addEventListener('click',e=>{const r=e.target.closest('.row');if(!r||e.target.closest('button,a'))return;document.querySelectorAll('.row').forEach(x=>x.setAttribute('aria-selected','false'));r.setAttribute('aria-selected','true')});
-</script>
+<div class="gallery">
+
+<!-- ================= 1. OVERVIEW ================= -->
+<figure class="shot" id="overview">
+<div class="phone"><div class="screen">
+  <div class="titlebar">
+    <button class="picker" aria-haspopup="dialog" title="Choose factory">issue-herd <small>GitHub</small><span class="chev">▼</span></button>
+    <span class="drag"></span>
+    <span class="tick"><i class="led g" style="animation:none"></i>14:38</span>
+  </div>
+  <div class="body">
+    <section class="sec">
+      <div class="sub"><i class="led r" style="animation:none"></i>Alerts <span class="n hot">2</span></div>
+      <div class="inset pane">
+        <div class="alert">
+          <div class="k"><i class="led g"></i><b>GH-22 · PR #25</b><small>ready 1h 12m</small></div>
+          <p>Approved and checks green. Only your merge is missing.</p>
+          <div class="acts"><button class="btn confirm">✓ Merge on GitHub</button><button class="btn">Later</button></div>
+        </div>
+        <div class="alert">
+          <div class="k"><i class="led y"></i><b>GH-37 · impl</b><small>finished 24m ago</small></div>
+          <p>Ended with <code>nothing_to_do</code>. Still holding workspace w25.</p>
+          <div class="acts"><button class="btn">Read result</button><button class="btn cancel">✕ Exit &amp; close</button></div>
+        </div>
+      </div>
+    </section>
+    <section class="sec">
+      <div class="sub">Assembling <span class="n">2</span></div>
+      <div class="inset pane">
+        <a class="row working" href="#detail"><i class="led g"></i><span class="t"><b>GH-38</b>Web based factory view</span><span class="e">12m</span><span class="s"><span class="slots"><i class="g"></i><i></i><i></i></span>impl working</span></a>
+        <a class="row awaiting" href="#detail"><i class="led y"></i><span class="t"><b>GH-22</b>Automatically exit agent when PR is merged</span><span class="e">2h 40m</span><span class="s"><span class="slots"><i class="d"></i><i class="d"></i><i class="d"></i></span>output full · awaiting your merge</span></a>
+      </div>
+      <div class="legend"><span><i class="led g" style="animation:none"></i>working</span><span><i class="led r"></i>waiting for input</span><span><i class="led y"></i>idle, asking</span><span><i class="led"></i>done</span><span><span class="slots"><i></i></span>role not started</span></div>
+    </section>
+    <section class="sec">
+      <div class="sub">Output today <span class="n">3</span><a class="more" href="#">Show all</a></div>
+      <div class="inset pane">
+        <a class="row" href="#detail"><i class="led"></i><span class="t"><b>GH-35</b>Keep up to date with main</span><span class="e">1h 36m</span><span class="s"><span class="slots"><i class="d"></i><i class="d"></i><i class="d"></i></span>merged #36 · 14:19</span></a>
+        <a class="row" href="#detail"><i class="led"></i><span class="t"><b>GH-29</b>We need a logo for this project</span><span class="e">3h 10m</span><span class="s"><span class="slots"><i class="d"></i><i class="d"></i><i class="d"></i></span>merged #32 · 12:02</span></a>
+      </div>
+      <div class="foot"><span>1 more today · 2 earlier this week</span></div>
+    </section>
+  </div>
+</div></div>
+<figcaption>1 · Overview</figcaption>
+</figure>
+
+<!-- ================= 2. DETAIL (entity GUI) ================= -->
+<figure class="shot" id="detail">
+<div class="phone"><div class="screen">
+  <div class="titlebar">
+    <h1>GH-35</h1><span class="drag"></span>
+    <a class="tbtn red bevel" href="#overview" title="Close" style="text-decoration:none">✕</a>
+  </div>
+  <div class="ehead">
+    <h2>Keep up to date with main</h2>
+    <div class="status"><i class="led"></i><b>Merged</b> at 14:19 <small>1h 36m end to end · you waited 6m</small></div>
+  </div>
+  <div class="body">
+    <div class="links">
+      <a href="#">Issue <small>#35</small></a><a href="#">Pull request <small>#36 merged</small></a><a href="#">Workspace <small>w1X open</small></a>
+    </div>
+    <section class="sec">
+      <div class="sub">Modules <span class="n">3 roles</span><span class="more" style="color:var(--muted)">13:02 → 14:38</span></div>
+      <div class="inset pane">
+        <div class="role"><span class="n">impl<small>claude · fable</small></span><div class="bar"><i class="g" style="left:0;width:38%"></i><i class="r" style="left:38%;width:4%"></i><i class="g" style="left:42%;width:14%"></i><i class="d" style="left:56%;width:44%"></i></div><span class="v">41m · PR</span></div>
+        <div class="role"><span class="n">review<small>codex · astra</small></span><div class="bar"><i class="g" style="left:58%;width:11%"></i><i class="d" style="left:69%;width:31%"></i></div><span class="v">9m · OK</span></div>
+        <div class="role"><span class="n">usability<small>claude · opus</small></span><div class="bar"><i class="g" style="left:58%;width:9%"></i><i class="y" style="left:67%;width:3%"></i><i class="g" style="left:70%;width:6%"></i><i class="d" style="left:76%;width:24%"></i></div><span class="v">13m · OK</span></div>
+        <div class="role"><span class="n">you</span><div class="bar"><i class="y" style="left:38%;width:4%"></i><i class="y" style="left:82%;width:2%"></i></div><span class="v">6m</span></div>
+      </div>
+    </section>
+    <section class="sec">
+      <div class="sub">Recipe output <span class="n">3 commits</span></div>
+      <div class="inset pane">
+        <dl class="facts">
+          <dt>size</dt><dd><b>+212</b> <s>−64</s> · 6 files · <b style="color:var(--orange-2)">M</b></dd>
+          <dt>why M</dt><dd>2 modules, tests 1:3, no new deps</dd>
+          <dt>tests</dt><dd>npm test · 148 pass · 0 fail</dd>
+          <dt>touched</dt><dd>bin/, src/branch.mjs, docs/</dd>
+        </dl>
+        <p class="summary">Runs were cut from the local checkout, which drifts. Every run is now cut from the tip of origin/main and the watcher's own checkout is fast-forwarded onto it.</p>
+      </div>
+    </section>
+    <section class="sec">
+      <div class="sub">Pull request #36 <span class="more" style="color:var(--muted)">opened 13:45</span></div>
+      <div class="inset pane checks"><span>test (node 22) · 48s</span><span>review: OK TO MERGE TO MAIN</span><span>usability: OK</span><span>merged by @jmwind 14:19</span></div>
+    </section>
+    <div class="acts"><button class="btn cancel" style="flex:1">✕ Exit agents &amp; clean up</button></div>
+  </div>
+</div></div>
+<figcaption>2 · Issue detail</figcaption>
+</figure>
+
+<!-- ================= 3. FACTORY PICKER (surfaces) ================= -->
+<figure class="shot" id="picker">
+<div class="phone"><div class="screen">
+  <div class="titlebar">
+    <button class="picker">issue-herd <small>GitHub</small><span class="chev">▼</span></button><span class="drag"></span><span class="tick"><i class="led g" style="animation:none"></i>14:38</span>
+  </div>
+  <div class="body"><section class="sec"><div class="sub"><i class="led r"></i>Alerts <span class="n hot">2</span></div><div class="inset pane"><div class="alert"><div class="k"><i class="led g"></i><b>GH-22 · PR #25</b><small>ready 1h 12m</small></div><p>Approved and checks green. Only your merge is missing.</p></div></div></section></div>
+  <div class="dimmer"></div>
+  <div class="sheet" role="dialog" aria-label="Factories on jml-mbp">
+    <div class="titlebar"><h1>Factories on jml-mbp</h1><span class="drag"></span><button class="tbtn red bevel" title="Close">✕</button></div>
+    <div class="pane">
+      <div class="opt on"><i class="led g" style="animation:none"></i><span class="n">issue-herd</span><span class="c"><span class="pill">2 assembling</span><span class="pill hot">2 alerts</span></span><span class="m">GitHub · jmwind/issue-herd · polled 6s ago</span></div>
+      <div class="opt"><i class="led g" style="animation:none"></i><span class="n">gustkit</span><span class="c"><span class="pill">2 assembling</span><span class="pill hot">2 alerts</span></span><span class="m">Linear · DEV · polled 12s ago</span></div>
+      <div class="opt stale"><i class="led r"></i><span class="n">seapeople</span><span class="c"><span class="pill">0 assembling</span></span><span class="m">Linear · SP · watcher not seen for 2h</span></div>
+    </div>
+    <div class="pane">
+      <div class="sub">issue-herd · 3 roles <span class="n">cap 3</span></div>
+      <div class="inset pane team">
+        <div><b>impl</b><span><em>claude fable-5-1</em> · label:ai and not label:ready-for-review</span></div>
+        <div><b>review</b><span><em>codex gpt-6-astra</em> · high · basedOn impl</span></div>
+        <div><b>usability</b><span><em>claude opus</em> · high · basedOn impl</span></div>
+      </div>
+      <div class="acts" style="margin-top:8px"><button class="btn">Open watcher</button><button class="btn">Config</button></div>
+    </div>
+  </div>
+</div></div>
+<figcaption>3 · Factory picker</figcaption>
+</figure>
+
+</div>

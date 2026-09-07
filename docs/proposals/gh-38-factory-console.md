@@ -28,33 +28,54 @@ Every number in the mockup maps to a source that is already there:
 | terminal tail for a blocked agent | `herdr agent read <name>` (already used for the blocked comment) | on demand |
 | exit an agent | `Herdr.stopAgent()` (sends `/exit`, waits), then optional `workspace close` and `git worktree remove` | existing code |
 
-## UX
+## UX (revision 2: mobile first, essentialist)
 
-One page, no page scroll. Three regions, each scrolls on its own if it has to:
+The first cut was a desktop control room. The owner's review: mobile is the first client, one
+machine runs several factories so a picker is required, and detail may live one tap away as long
+as the overview carries what matters. So the console is three screens, and the overview is built
+from one question: *what changes what I do next?*
 
-1. **Factory rail** (left). One factory at a time, picked from the tabs in the header: tracker and
-   repo, watcher health (version, last poll, API budget, token source), capacity meter against the
-   caps, and the team as condensed rule cards: role, agent and model, the match expression, and how
-   many of its slots are in use. Guards in one line.
-2. **Issue board** (centre). One row per issue, closed ones hidden behind a filter. Columns: key
-   (click → issue), title, one lane chip per role with its live state and time on task, elapsed,
-   a two-hour activity sparkline, size (`+212 −64 · 6 files` and a T-shirt complexity with the
-   reason on hover), PR (click → PR, with checks / review / merge state underneath), and two icon
-   actions: open the herdr workspace, exit the agent. Clicking a row opens a detail drawer below
-   the list: a per-role timeline (working / blocked / waiting on you / done as bars on one time
-   axis, plus a "you" row so the human wait is visible), the change facts and result summary, and
-   the PR's checks with the full action set.
-3. **Waiting on you** (right). An inbox ordered by urgency: blocked agents with the dialog text
-   pulled from the terminal, agents that asked a question, PRs that are approved and green and
-   only need your merge, and finished runs still holding a workspace. Every card has the one
-   action that clears it. A second group, "finished, still holding", is where exit-and-clean-up
-   lives.
+**1. Overview.** A factory picker in the top bar (current factory, its tracker, a chevron), a
+live dot, and three sections:
 
-Header: factory tabs with running and needs-you counts, `show closed` and `mine only` filters,
-a live indicator with the herdr version and hostname. Footer: the watcher's live line, so the
-console shows the same thing the pane does.
+- **Needs you.** One card per thing only a person can clear, most urgent first: a PR that is
+  approved and green, an agent blocked on a dialog (with the dialog text), an agent that asked a
+  question, a finished run still holding a workspace. Each card is one line of *why* and one
+  primary action. If this section is empty the factory is running by itself, which is the whole
+  point, and the screen says so.
+- **In flight.** One row per open issue: key, title, three role dots in a fixed order
+  (impl · review · usability, coloured by state), a short state phrase ("impl working",
+  "awaiting your merge"), elapsed, chevron. That is all. Size, PR checks, timelines and summaries
+  are on the detail screen.
+- **Done today.** The same rows for what merged today, then a one-line count for the rest and
+  "show all" as the closed filter.
 
-Keyboard: `j`/`k` rows, `enter` drawer, `o` issue, `p` PR, `w` workspace, `c` closed, `esc`.
+**2. Issue detail.** Title and one status line ("Merged at 14:19 · 1h 36m end to end · you
+waited 6m"), three link tiles (issue, PR with its state, workspace), then cards: roles with agent,
+a timeline bar and outcome per role plus a "you" row for human wait; change (size, why the
+T-shirt grade, tests, files) with the result summary; the PR's checks and verdicts. One danger
+action at the bottom: exit agents and clean up.
+
+**3. Factory picker.** A bottom sheet listing every factory on the machine with tracker, repo,
+when it last polled, and its running and needs-you counts; a watcher not seen for a while is
+marked stale. Below the list, the selected factory's team in three lines (role, agent and model,
+match), and buttons to open the watcher pane and the config.
+
+Not on any screen: the watcher banner, API budget, guards, per-rule caps, sparklines. They were
+in the first mockup and none of them changes what you do next; they belong in a "factory" screen
+later if they earn it.
+
+**Look and feel: Factorio.** The owner asked for the game's design language in full, and it
+maps onto the domain without strain: a factory is a surface, an agent run is an assembling machine
+with a status light (green working, red waiting for input, yellow idle, grey done), the three
+roles are its three module slots, the rule's `match` is its recipe, merged PRs are output.
+Concretely: dark bevelled grey frames with a striped drag handle in the title bar, inset content
+panes, warm orange headings, Titillium Web (the game's own face), green confirm and red cancel
+buttons, orange for the selected item, and alerts as the first section because that is where the
+game puts them too. Single dark theme by design.
+
+Desktop gets the same app with room to spare: the three screens become three columns. Keyboard
+shortcuts come with it, not before.
 
 ### Beyond the ask: what an "insane" console could add
 
