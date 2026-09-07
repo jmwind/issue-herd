@@ -8,8 +8,8 @@ import { mergeConfig } from '../config.mjs';
 import { exitCommandFor } from '../agents.mjs';
 import { resolveCredential } from '../auth.mjs';
 import { trackerClass, trackerSpec } from '../trackers/index.mjs';
-import { GitHubTracker } from '../trackers/github.mjs';
-import { prState } from '../pr.mjs';
+import { GitHubTracker, repoFromGit } from '../trackers/github.mjs';
+import { prForBranch, prState } from '../pr.mjs';
 import { credentialsPath } from '../auth.mjs';
 import { isStale, loadRegistry } from './registry.mjs';
 import { factoryView, indexSnapshot, parseLog, watchWorkspaces } from './model.mjs';
@@ -127,7 +127,8 @@ export class FactoryConsole {
   /** The factory's tracker (and a GitHub token for its PRs), built once from what this machine holds. */
   liveFor(repo, config) {
     if (this.live.has(repo)) return this.live.get(repo);
-    const entry = { tracker: null, ghToken: null, issues: new Map(), prs: new Map(), busy: false, why: null };
+    const host = process.env.ISSUE_HERD_GITHUB_HOST || 'github.com';
+    const entry = { tracker: null, ghToken: null, ghRepo: repoFromGit(repo, host), host, issues: new Map(), prs: new Map(), branches: new Map(), busy: false, why: null };
     try {
       const spec = trackerSpec(config.tracker || 'linear');
       const Tracker = trackerClass(spec);
@@ -152,6 +153,13 @@ export class FactoryConsole {
       const ttl = recent ? LIVE_TTL : OLD_TTL;
       if (live.tracker && now - (live.issues.get(iss.key)?.at || 0) > ttl) due.push({ kind: 'issue', key: iss.key });
       if (iss.prUrl && live.prs.get(iss.prUrl)?.state !== 'merged' && now - (live.prs.get(iss.prUrl)?.at || 0) > ttl) due.push({ kind: 'pr', url: iss.prUrl });
+      // No PR recorded: ask GitHub whether one exists for a run's branch.
+      if (!iss.prUrl && live.ghRepo) for (const r of iss.runs) {
+        if (!r.branch) continue;
+        const b = live.branches.get(r.branch);
+        if (b?.state === 'merged' || now - (b?.at || 0) <= ttl) continue;
+        due.push({ kind: 'branch', branch: r.branch });
+      }
     }
     if (!due.length) return;
     live.busy = true;
@@ -162,13 +170,19 @@ export class FactoryConsole {
             const issue = await live.tracker.issueByKey(d.key);
             const closed = !!issue && (/^(completed|canceled)$/.test(issue.state?.type || '') || /^closed$/i.test(issue.state?.name || ''));
             live.issues.set(d.key, { at: Date.now(), state: issue ? (closed ? 'closed' : 'open') : null, name: issue?.state?.name || null });
+          } else if (d.kind === 'branch') {
+            const pr = await prForBranch({ repo: live.ghRepo, branch: d.branch, token: live.ghToken, host: live.host });
+            live.branches.set(d.branch, { at: Date.now(), url: pr?.url || null, state: pr?.state || null });
+            if (pr) live.prs.set(pr.url, { at: Date.now(), state: pr.state });
           } else {
-            const pr = await prState(d.url, { token: live.ghToken, host: process.env.ISSUE_HERD_GITHUB_HOST || 'github.com' });
+            const pr = await prState(d.url, { token: live.ghToken, host: live.host });
             live.prs.set(d.url, { at: Date.now(), state: pr.state });
           }
         } catch (e) {
-          if (d.kind === 'issue') live.issues.set(d.key, { at: Date.now(), state: null, error: e.message }); else live.prs.set(d.url, { at: Date.now(), state: null, error: e.message });
-          this.log(`console: ${d.kind === 'issue' ? d.key : d.url}: ${e.message.slice(0, 120)}`);
+          if (d.kind === 'issue') live.issues.set(d.key, { at: Date.now(), state: null, error: e.message });
+          else if (d.kind === 'branch') live.branches.set(d.branch, { at: Date.now(), url: null, state: null, error: e.message });
+          else live.prs.set(d.url, { at: Date.now(), state: null, error: e.message });
+          this.log(`console: ${d.kind === 'issue' ? d.key : d.kind === 'branch' ? d.branch : d.url}: ${e.message.slice(0, 120)}`);
         }
       }
       live.busy = false;
@@ -194,7 +208,7 @@ export class FactoryConsole {
       while (seenIds.has(id)) id += '-2';
       seenIds.add(id);
       const live = this.liveFor(f.repo, config);
-      const enrich = { issues: Object.fromEntries([...live.issues].map(([k, v]) => [k, v.state])), prs: Object.fromEntries([...live.prs].map(([k, v]) => [k, v.state])) };
+      const enrich = { issues: Object.fromEntries([...live.issues].map(([k, v]) => [k, v.state])), prs: Object.fromEntries([...live.prs].map(([k, v]) => [k, v.state])), branches: Object.fromEntries([...live.branches].filter(([, v]) => v.url).map(([k, v]) => [k, v.url])) };
       const cleared = {};
       for (const [k, v] of Object.entries(this.notes.done || {})) if (k.startsWith(f.repo + '|')) cleared[k.slice(f.repo.length + 1)] = Date.parse(v.at) || 0;
       const view = factoryView({ id, repo: f.repo, config, state, events, index, sizes, registry: f.registry, stale: f.stale, enrich, cleared, now });

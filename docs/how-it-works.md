@@ -207,7 +207,8 @@ workspace herdr shows, and reads each factory's `config.json`, `state.json` and 
 state is one `herdr api snapshot` per tick (every 2s). Lines changed come from `git diff` in the
 run's worktree. The issue's state (open, closed) and the PR's (open, closed, merged) come from the
 tracker and GitHub with the credentials this machine already has (the saved login, `gh`, or the
-factory's own `.env.local`), one call per task, every 90s for tasks in flight or finished this
+factory's own `.env.local`); a run that never recorded a PR gets the one GitHub has for its
+branch. One call per task, every 90s for tasks in flight or finished this
 week and every 30 minutes for older ones; without a credential those fields are not shown.
 Nothing is written except the registry.
 

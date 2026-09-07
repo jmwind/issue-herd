@@ -104,6 +104,9 @@ test('factoryView: what the tracker and GitHub said lands on the task, and a mer
   assert.equal(known.issueState, 'closed'); assert.equal(known.prState, 'merged'); assert.equal(known.bucket, 'merged'); assert.equal(known.merged, true);
   const none = factoryView({ id: 'x', repo: '/r', state: { runs: { 'GH-1': { rule: 'ai', status: 'running', title: 't', startedAt: iso(14, 0), agentName: 'gh-1' } } }, now: T(14, 5) }).issues[0];
   assert.equal(none.prState, 'none');
+  // a run that never recorded a PR, but GitHub has one for its branch
+  const byBranch = factoryView({ id: 'x', repo: '/r', state: { runs: { 'GH-1': { rule: 'ai', status: 'done', title: 't', startedAt: iso(14, 0), finishedAt: iso(14, 30), agentName: 'gh-1', branch: '1-t', result: { status: 'needs_human' } } } }, enrich: { issues: {}, prs: { 'https://github.com/o/r/pull/2': 'open' }, branches: { '1-t': 'https://github.com/o/r/pull/2' } }, now: T(15, 0) }).issues[0];
+  assert.equal(byBranch.prUrl, 'https://github.com/o/r/pull/2'); assert.equal(byBranch.prState, 'open');
 });
 
 test('a task a person marked done loses its alerts and sits in output, until a newer run starts on it', () => {

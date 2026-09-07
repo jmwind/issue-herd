@@ -120,7 +120,7 @@ export function runState(run, agent) {
  *   sizes     { [runKey]: runSize() result } for whichever runs the caller measured
  *   registry  the registry entry for this repo, or null
  */
-export function factoryView({ id, repo, config = {}, state = { runs: {} }, events = [], index = indexSnapshot(null), sizes = {}, registry = null, stale = false, enrich = { issues: {}, prs: {} }, cleared = {}, now = Date.now() }) {
+export function factoryView({ id, repo, config = {}, state = { runs: {} }, events = [], index = indexSnapshot(null), sizes = {}, registry = null, stale = false, enrich = { issues: {}, prs: {}, branches: {} }, cleared = {}, now = Date.now() }) {
   const name = config.name || registry?.name || repo.split('/').pop();
   const tracker = typeof config.tracker === 'object' ? config.tracker?.type : (config.tracker || registry?.tracker || 'linear');
   const rules = (config.rules || []).filter((r) => r.enabled !== false).map((r) => ({
@@ -159,7 +159,8 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
   const issues = [...byIssue.values()].map((iss) => {
     iss.runs.sort((a, b) => roleOrder(a.role) - roleOrder(b.role) || (a.role || '').localeCompare(b.role || ''));
     const live = iss.runs.filter((r) => r.status === 'running' || r.status === 'starting' || r.status === 'awaiting_merge');
-    const anyPr = iss.runs.map((r) => r.prUrl).find(Boolean) || null;
+    // The PR the runs recorded, else the one GitHub has for a run's branch.
+    const anyPr = iss.runs.map((r) => r.prUrl).find(Boolean) || iss.runs.map((r) => r.branch && enrich.branches?.[r.branch]).find(Boolean) || null;
     // What the tracker and GitHub said, when this machine could ask; null means unknown.
     const issueState = enrich.issues?.[iss.key] ?? null;
     const prLive = anyPr ? (enrich.prs?.[anyPr] ?? null) : null;
