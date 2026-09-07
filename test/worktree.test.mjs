@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { makeWorktree, removeWorktree, worktreeRoot } from '../src/worktree.mjs';
+import { catchUp, makeWorktree, removeWorktree, worktreeRoot } from '../src/worktree.mjs';
 
 const git = (args, cwd) => {
   try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
@@ -149,4 +149,103 @@ test('a worktree somebody already deleted is pruned, not an error', (t) => {
   fs.rmSync(made.path, { recursive: true, force: true });
   assert.deepEqual(removeWorktree({ git, repo: r, at: made.path }), { removed: false, reason: 'already gone' });
   assert.equal(git(['worktree', 'list'], r).includes(made.path), false, 'the admin files went too');
+});
+
+// ---------------------------------------------------------------- a reviewer's worktree
+
+/** Commit a file on `branch` in `dir`, branching from HEAD the first time. Returns the new sha. */
+function commitOn(dir, branch, file, body) {
+  const exists = git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], dir) !== null;
+  git(['checkout', '-q', ...(exists ? [branch] : ['-b', branch])], dir);
+  fs.writeFileSync(path.join(dir, file), body);
+  git(['add', file], dir);
+  git(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', `add ${file}`], dir);
+  const sha = git(['rev-parse', 'HEAD'], dir);
+  git(['checkout', '-q', 'main'], dir);
+  return sha;
+}
+
+test('a reviewer\'s worktree starts from the branch it is reviewing, not from main', (t) => {
+  // Without this the reviewer holds main's code, so "run the tests the implementer said passed" is
+  // not something it can do — the change it is reviewing is not on disk.
+  const dir = repo(t);
+  commitOn(dir, '7-fix-the-thing', 'fix.txt', 'the implementation\n');
+
+  const review = makeWorktree({ git, repo: dir, slug: 'gh-7-review', branch: '7-fix-the-thing-review', base: '7-fix-the-thing' });
+  assert.equal(review.created, true);
+  assert.equal(review.base, '7-fix-the-thing');
+  assert.equal(branchAt(review.path), '7-fix-the-thing-review');
+  // its own branch, but the implementer's code
+  assert.equal(fs.readFileSync(path.join(review.path, 'fix.txt'), 'utf8'), 'the implementation\n');
+  // and the implementer's own worktree is untouched by any of it
+  const impl = makeWorktree({ git, repo: dir, slug: 'gh-7-impl', branch: '7-fix-the-thing' });
+  assert.equal(branchAt(impl.path), '7-fix-the-thing');
+});
+
+test('no base is the old behaviour: a branch cut from wherever the repository is', (t) => {
+  const dir = repo(t);
+  commitOn(dir, '7-fix-the-thing', 'fix.txt', 'x\n');
+  const made = makeWorktree({ git, repo: dir, slug: 'plain', branch: 'plain-branch' });
+  assert.equal(made.base, null);
+  assert.equal(fs.existsSync(path.join(made.path, 'fix.txt')), false, 'started from main, which has no fix.txt');
+});
+
+test('a later turn is caught up to what the branch is now', (t) => {
+  // The second turn of a reviewer exists *because* the implementer pushed something. Reusing the
+  // worktree without moving it would review the first turn's code again and confirm its own
+  // findings were never addressed.
+  const dir = repo(t);
+  commitOn(dir, '7-fix', 'fix.txt', 'first attempt\n');
+  const review = makeWorktree({ git, repo: dir, slug: 'gh-7-review', branch: '7-fix-review', base: '7-fix' });
+  assert.equal(fs.readFileSync(path.join(review.path, 'fix.txt'), 'utf8'), 'first attempt\n');
+
+  const after = commitOn(dir, '7-fix', 'fix.txt', 'addressed the review\n');
+  // the second pickup reuses the directory, so the move is catchUp's job
+  const again = makeWorktree({ git, repo: dir, slug: 'gh-7-review', branch: '7-fix-review', base: '7-fix' });
+  assert.equal(again.created, false);
+  assert.equal(fs.readFileSync(path.join(again.path, 'fix.txt'), 'utf8'), 'first attempt\n', 'reuse alone does not move it');
+
+  const moved = catchUp({ git, repo: dir, at: again.path, base: '7-fix' });
+  assert.equal(moved.moved, true);
+  assert.equal(moved.at, after);
+  assert.equal(fs.readFileSync(path.join(again.path, 'fix.txt'), 'utf8'), 'addressed the review\n');
+
+  // idempotent: a turn where nothing moved says so rather than pretending it did
+  const nothing = catchUp({ git, repo: dir, at: again.path, base: '7-fix' });
+  assert.deepEqual({ moved: nothing.moved, reason: nothing.reason }, { moved: false, reason: 'already up to date' });
+});
+
+test('catching up never throws, whatever it is pointed at', (t) => {
+  // A reviewer on slightly old code is a worse review; a failed run is no review at all.
+  const dir = repo(t);
+  const wt = makeWorktree({ git, repo: dir, slug: 'w', branch: 'w-branch' });
+  assert.match(catchUp({ git, repo: dir, at: wt.path, base: 'no-such-branch' }).reason, /no branch or origin branch/);
+  assert.equal(catchUp({ git, repo: dir, at: null, base: 'x' }).moved, false);
+  assert.equal(catchUp({ git, repo: dir, at: wt.path, base: null }).moved, false);
+});
+
+test('a worktree put back on an existing branch is not silently left behind', () => {
+  // The case the "was it just created?" test missed: onMerged.removeWorktree (or a person) removes
+  // the directory but the branch survives, so the next turn re-creates the worktree *on that
+  // branch* — `base` is ignored, and the run looks brand new. Without catching up, the reviewer
+  // reads the code from the turn before and confirms its own findings were never addressed.
+  const dir = repo({ after: () => {} });
+  try {
+    commitOn(dir, '7-fix', 'f.txt', 'v1\n');
+    const first = makeWorktree({ git, repo: dir, slug: 'rev', branch: '7-fix-review', base: '7-fix' });
+    assert.equal(first.base, '7-fix');
+    const v2 = commitOn(dir, '7-fix', 'f.txt', 'v2\n');
+    git(['worktree', 'remove', '--force', first.path], dir);
+
+    const again = makeWorktree({ git, repo: dir, slug: 'rev', branch: '7-fix-review', base: '7-fix' });
+    assert.equal(again.created, true, 'the directory really is new');
+    assert.equal(again.base, null, 'but it did not start from the base — the branch already existed');
+    assert.equal(fs.readFileSync(path.join(again.path, 'f.txt'), 'utf8'), 'v1\n', 'so it is behind');
+    // `!made.base` is the condition that catches this; `!made.created` did not.
+    assert.equal(catchUp({ git, repo: dir, at: again.path, base: '7-fix' }).at, v2);
+    assert.equal(fs.readFileSync(path.join(again.path, 'f.txt'), 'utf8'), 'v2\n');
+  } finally {
+    try { execFileSync('git', ['worktree', 'prune'], { cwd: dir, stdio: 'ignore' }); } catch { /* going away */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

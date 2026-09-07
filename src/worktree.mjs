@@ -40,7 +40,7 @@ export function worktreeRoot(repo, dir) {
  * place rather than accumulating `-2` directories, and an existing branch is attached to rather
  * than clobbered, because an earlier run's commits are not ours to throw away.
  */
-export function makeWorktree({ git, repo, dir = '.issue-herd/worktrees', slug, branch = null }) {
+export function makeWorktree({ git, repo, dir = '.issue-herd/worktrees', slug, branch = null, base = null }) {
   if (!slug) throw new Error('makeWorktree needs a slug');
   const root = worktreeRoot(repo, dir);
   const at = path.join(root, slug);
@@ -53,13 +53,45 @@ export function makeWorktree({ git, repo, dir = '.issue-herd/worktrees', slug, b
 
   fs.mkdirSync(root, { recursive: true });
   const onExistingBranch = branch && git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], repo) !== null;
+  // `base` is where a new branch starts. A reviewer's worktree is worth nothing cut from the
+  // default branch: it has to hold the code it is reviewing, or "run the tests the implementer
+  // said passed" is not a thing it can do. An existing branch is attached to as it stands —
+  // catchUp() is what moves it on, because that is a decision about someone's commits.
+  const start = base && !onExistingBranch ? [base] : [];
   const args = !branch ? ['worktree', 'add', at]
     : onExistingBranch ? ['worktree', 'add', at, branch]
-      : ['worktree', 'add', '-b', branch, at];
+      : ['worktree', 'add', '-b', branch, at, ...start];
   if (git(args, repo) === null) {
-    throw new Error(`git worktree add failed for ${at}${branch ? ` on ${branch}` : ''} — is the branch checked out somewhere else?`);
+    throw new Error(`git worktree add failed for ${at}${branch ? ` on ${branch}` : ''}${start.length ? ` from ${base}` : ''} — is the branch checked out somewhere else?`);
   }
-  return { path: at, branch, created: true };
+  return { path: at, branch, base: start.length ? base : null, created: true };
+}
+
+/**
+ * Point an existing worktree at what `base` is now. This is the second turn of a reviewer: the
+ * worktree is already there from the first turn, and the whole reason there is a second turn is
+ * that the implementer pushed something since.
+ *
+ * Deliberately blunt — `reset --hard` — and deliberately narrow. It runs only in a worktree
+ * issue-herd made for a role whose work is reading, so the thing it throws away is a reviewer's
+ * scratch files, never anybody's commits: `base` is a different branch, and this one is only ever
+ * fast-forwarded onto it. Returns what happened, and never throws; a reviewer looking at slightly
+ * old code is a worse review, while a failed run is no review at all.
+ */
+export function catchUp({ git, repo, at, base }) {
+  if (!at || !base) return { moved: false, reason: 'nothing to catch up to' };
+  const before = git(['rev-parse', 'HEAD'], at);
+  // A base another machine owns exists here only as a remote branch, so try to bring it up to date
+  // first. No remote, or no network, is not a failure: the local ref is then the best we have.
+  git(['fetch', '--quiet', 'origin', base], at);
+  const target = ['refs/heads/' + base, 'refs/remotes/origin/' + base]
+    .find((ref) => git(['show-ref', '--verify', '--quiet', ref], at) !== null);
+  if (!target) return { moved: false, reason: `no branch or origin branch called ${base}` };
+  const to = git(['rev-parse', target], at);
+  if (!to) return { moved: false, reason: `could not read ${target}` };
+  if (to === before) return { moved: false, reason: 'already up to date', at: to };
+  if (git(['reset', '--hard', to], at) === null) return { moved: false, reason: 'git would not move it' };
+  return { moved: true, from: before, at: to, ref: target };
 }
 
 /**

@@ -1,8 +1,9 @@
 # issue-herd
 
 Watches an issue tracker (**Linear** or **GitHub Issues**) and, when an issue matches one of your
-rules, opens a **herdr workspace**, starts **Claude Code** in it (worktree mode), hands it a written
-brief, and reports back to the issue: picked up → waiting for you → PR open. Runs on your own
+rules, opens a **herdr workspace**, starts a **coding agent** in it (Claude Code by default;
+codex or anything else herdr can start, per rule), hands it a written brief, and reports back to
+the issue: picked up → waiting for you → PR open. Runs on your own
 machine, inside herdr, with no public URL and no third-party orchestrator. Zero dependencies beyond
 Node 22 and the `herdr` CLI.
 
@@ -200,6 +201,8 @@ The same fields work on every tracker; what they map to on GitHub is in
   "pollSeconds": 30,          // poll interval
   "lookbackDays": 30,         // only consider issues updated in this window
   "maxConcurrent": 3,         // global cap on running agents
+  "roles": null,              // which roles this project runs, e.g. ["impl", "review"]. null means "whatever
+                              // the rules ask for"; a list disables the rules whose role is not in it. See Roles.
   "defaults": {               // every rule inherits these
     "worktree": "self",       // who creates the git worktree the run works in.
                               // "self":  issue-herd does, with one `git worktree add` on the branch below.
@@ -213,10 +216,11 @@ The same fields work on every tracker; what they map to on GitHub is in
     "worktreeDir": ".issue-herd/worktrees",  // where "self" puts them, relative to the repo. Must stay
                               // inside the repo, because config.json is committed and this is a path we
                               // create directories in. `init` gitignores it.
-    "branch": "{{issueBranchName}}", // what the run's branch is called. The tracker's own branch name is the
-                              // default: Linear's auto-links a PR back to the issue, GitHub's is what its
-                              // "create a branch" button would name (7-fix-the-thing). Templates may use
-                              // {{issueBranchName}}, {{slug}}, {{key}} (dev-3298), {{KEY}} (DEV-3298),
+    "branch": "{{issueBranchName}}{{roleSuffix}}", // what the run's branch is called. The tracker's own branch
+                              // name is the default: Linear's auto-links a PR back to the issue, GitHub's is
+                              // what its "create a branch" button would name (7-fix-the-thing). Templates may
+                              // use {{issueBranchName}}, {{slug}}, {{key}} (dev-3298), {{KEY}} (DEV-3298),
+                              // {{role}} and {{roleSuffix}} ("-review", empty with no role — see Roles),
                               // e.g. "claude/{{slug}}" or "herd/{{slug}}". The worktree is created on this
                               // branch, so it is right from the start. null accepts whatever git picks.
                               // Ignored when "worktree" is "none" — that run works on the branch the repo
@@ -225,11 +229,24 @@ The same fields work on every tracker; what they map to on GitHub is in
                               // actually reports, never a name issue-herd hoped for.
     "permissionMode": "auto",         // claude --permission-mode. auto = unattended (the point of a watcher);
                                       // acceptEdits still asks before every command; see `claude --help`
-    "claudeArgs": [],         // extra flags for claude, e.g. ["--model", "opus"]
+    "agentKind": "claude",    // which agent runs: passed to `herdr agent start --kind`
+    "model": null,            // e.g. "opus", "gpt-5-codex"
+    "effort": null,           // e.g. "high" — reasoning effort, where the agent has one
+    "agentArgs": [],          // extra flags, passed to the agent verbatim, after everything above
+                              // ("claudeArgs" is the old name and still works). See A second opinion.
     "maxConcurrent": 2,       // per-rule cap
     "prompt": "prompts/default.md",   // brief template: .issue-herd/prompts/default.md if present, else the built-in
     "instructionsFile": "instructions.md",  // repo brief appended to the prompt; "instructions" (inline string) also works
     "claimLabel": "herdr",            // label added on pickup and checked before pickup; null disables
+    "role": null,             // which claim this rule holds: null (the whole issue), or "impl" / "review" /
+                              // "split" / any name of your own. The label becomes "herdr:review", and rules
+                              // with different roles never see each other's claims. See Roles.
+    "passes": 1,              // how many turns this rule gets on one issue. 1 = take it once and be done.
+                              // More gives it another turn each time the issue moves on after it finished —
+                              // review, then confirm the fix, then the thumbs up. See Roles.
+    "basedOn": null,          // a role name: start this rule's worktree from *that* role's branch, so a
+                              // reviewer holds the code it is reviewing. Needs "worktree": "self".
+                              // null = the default branch. See Roles.
     "skipIfAssignedToOthers": true,   // leave issues held by other people alone
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
     "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
@@ -266,7 +283,8 @@ logs which keys are overridden at startup, and edits to it are picked up live li
 A claim label that does not exist yet is created on first use — a workspace label on Linear, a
 repository label on GitHub — so a per-machine claim label like `herdr-mbp` never has to be made by
 hand. With a different claim label per machine, the pickup comment marker is what stops a second
-machine from taking an issue this one already claimed, so keep `onPickup.comment` on.
+machine from taking an issue this one already claimed, so keep `onPickup.comment` on. `claimLabel`
+and `role` compose: a `review` rule on `herdr-mbp` claims with `herdr-mbp:review`.
 
 `state` values in `onPickup`/`onDone` are matched against the team's workflow by name, then by
 type, so `"started"` works for any team. Set a key to `null`/`false` to skip that step.
@@ -354,9 +372,11 @@ Three independent guards, checked before every pickup:
 1. **Claim label on the issue** (`claimLabel`, default `herdr`). Added the moment an issue is
    picked up, re-checked with a fresh fetch right before claiming. Survives restarts, a deleted
    `state.json`, and a second machine running issue-herd. It stays on the issue after the run as
-   the record that an agent worked it; remove it to let an agent take the issue again.
+   the record that an agent worked it; remove it to let an agent take the issue again. With a
+   `role` on the rule the label is `herdr:review`, and only that role's claim is checked.
 2. **Pickup comment marker.** The "issue-herd picked this up" comment is also detected, so an
-   issue claimed by an older version without the label is still skipped.
+   issue claimed by an older version without the label is still skipped. A role's comment says
+   `picked this up as \`review\``, and a role only looks for its own.
 3. **Assigned to someone else** (`skipIfAssignedToOthers`, default true). If a human other than
    you holds the issue, it is theirs. On a tracker with several assignees per issue, one other
    person is enough: an issue shared between you and a colleague is still theirs. `onPickup.assignToMe` makes the agent's issues yours, so the
@@ -365,10 +385,175 @@ Three independent guards, checked before every pickup:
 Plus the local `state.json`, which is what stops the same watcher re-picking during a run, and
 whatever your rule says (`not state:started` excludes anything already In Progress).
 
+A rule with `"passes"` above 1 is the one deliberate exception: it may take an issue again, but
+only after the issue has moved on since it last finished, and only up to the number of turns it was
+given. See [More than one turn](#more-than-one-turn-passes).
+
+## Roles: several agents on one issue
+
+The claim is a real distributed lock, but on its own it is binary: an issue is taken or it is not.
+A **role** splits it into independent locks so an implementer, a reviewer and a splitter can hold
+the same issue at the same time without fighting over one label.
+
+Give a rule a `role` and everything the run is keyed by follows it:
+
+| | no role (the default) | `"role": "review"` |
+|---|---|---|
+| claim label | `herdr` | `herdr:review` |
+| pickup comment | `🐑 **issue-herd** picked this up on …` | `🐑 **issue-herd** picked this up as \`review\` on …` |
+| run key (`status`, `reset`, `runs/<KEY>/`) | `GH-7` | `GH-7@review` |
+| herdr sidebar | `GH-7 Fix the thing` | `GH-7 review Fix the thing` |
+| herdr agent | `gh-7` | `gh-7-review` |
+| worktree directory | `gh-7-fix-the-thing` | `gh-7-review-fix-the-thing` |
+| branch (default template) | `7-fix-the-thing` | `7-fix-the-thing-review` |
+
+```jsonc
+{
+  "roles": ["impl", "review"],   // which roles this project runs at all
+  "rules": [
+    { "name": "build",  "role": "impl",   "match": "label:ai and not state:started" },
+    { "name": "review", "role": "review", "match": "label:ai and state:started",
+      "prompt": "prompts/review.md" }     // a reviewer needs its own brief, not the default one
+  ]
+}
+```
+
+- **Rules only see their own role.** A `review` rule checks `herdr:review` and the `review` pickup
+  comment, never `herdr:impl`, so an issue being implemented is still available for review. Within
+  one role the first matching rule still wins, exactly as before; across roles, one poll can start
+  one run per role.
+- **A rule with no role claims the whole issue.** That is the old behaviour, unchanged: its label
+  is `herdr`, and *any* pickup comment blocks it. Leave `role` out and nothing about issue-herd
+  changes.
+- **`"roles"` is the project's switch.** A list disables the rules whose role is not in it, so
+  turning reviewer agents off is one line rather than deleting the rules. Omit it and every rule's
+  role is active. A rule with no role is never filtered by it.
+- **Every role needs its own branch**, because git cannot check one branch out into two worktrees.
+  The default template `{{issueBranchName}}{{roleSuffix}}` handles it (`{{roleSuffix}}` is empty
+  with no role, so nothing changes for existing configs), and so does anything built from
+  `{{slug}}`, which is derived from the run key. Two roles pointed at a branch template that names
+  neither is refused at config load, with the fix in the message.
+- **The role reaches the agent.** The brief says which claim the run holds and that other agents
+  may hold others on the same issue. Point each role at its own `prompt` — the built-in one tells
+  the agent to implement the issue and open a PR, which is not what a reviewer should do.
+- **Each role picks its own agent.** `agentKind`, `model` and `effort` are per rule — see
+  [A second opinion](#a-second-opinion-a-reviewer-on-another-provider).
+- **A reviewer can hold the code it reviews.** `"basedOn": "impl"` starts this role's worktree from
+  that role's branch — see [Reviewing the actual code](#reviewing-the-actual-code-basedon).
+- `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7@review`
+  forgets just that one.
+
+### A second opinion: a reviewer on another provider
+
+A reviewer is only a second set of eyes if it is not the same eyes. `agentKind`, `model` and
+`effort` are per rule, so the implementer and the reviewer can be different agents entirely:
+
+```jsonc
+{
+  "roles": ["impl", "review"],
+  "rules": [
+    { "name": "build",  "role": "impl",   "match": "label:ai and not state:started",
+      "model": "opus" },
+    { "name": "review", "role": "review", "match": "label:ai and state:\"In Review\"",
+      "agentKind": "codex", "model": "gpt-5-codex", "effort": "high",
+      "passes": 3, "prompt": "prompts/review.md" }
+  ]
+}
+```
+
+`agentKind` goes straight to `herdr agent start --kind`, and herdr is the authority on which
+agents it can start — `herdr agent start --help` lists them (claude, codex, gemini, cursor, grok,
+copilot, and others). What issue-herd adds is the translation, because everything after `--` is
+the agent's *own* command line and the four things a rule asks for are spelled differently by each:
+
+| | Claude Code | codex |
+|---|---|---|
+| model | `--model opus` | `--model gpt-5-codex` |
+| effort | `--effort high` | `-c model_reasoning_effort="high"` |
+| unattended | `--permission-mode auto` | `--sandbox workspace-write --approve-for-me` |
+| session name | `--name GH-7@review` | (none — herdr's agent name is the name) |
+| leaves with | `/exit` | `/quit` |
+
+An agent with no translation still runs: it gets `--model` and whatever the rule puts in
+`agentArgs`, which is enough for most of them and means issue-herd does not have to know every
+agent's flags before you can use one.
+
+Two things worth knowing:
+
+- **Sign in to each provider yourself**, once per machine (`claude`, `codex login`, …).
+  `issue-herd login` is for the *tracker*; it never touches an agent's credentials.
+- **`permissionMode` never turns a sandbox off.** It is Claude Code's word, and each agent decides
+  what "unattended" means for itself — but none of them may decide it means "no boundary at all".
+  codex's `auto` is the widest *sandboxed* setting, not
+  `--dangerously-bypass-approvals-and-sandbox`. If you want that, type it into `agentArgs`, which
+  is appended last and overrides everything above it.
+
+### Reviewing the actual code: `basedOn`
+
+A worktree is cut from the default branch, which is fine for the rule that is about to write the
+change and useless for a rule that is about to read it: the reviewer would hold `main`, and
+"run the tests the implementer said passed" is not something it could do.
+
+```jsonc
+{ "name": "review", "role": "review", "basedOn": "impl", "match": "…" }
+```
+
+`basedOn` names another **role**, and the branch is read from that role's run on the same issue —
+what git reported after that worktree was made, never what a template asked for. The reviewer gets
+its own branch (`7-fix-the-thing-review`) starting at the implementer's commits, so the change is
+checked out, the tests are runnable, and `git diff main...HEAD` is the diff under review. Two
+worktrees, two branches, no fighting over a checkout.
+
+On a **later turn** the worktree already exists — and the reason there is a later turn is that the
+implementer pushed something. So it is fast-forwarded to whatever that branch is now (`git fetch`,
+then `reset --hard`), or the second review would read the first turn's code and conclude its own
+findings had been ignored. That reset only ever runs in a worktree issue-herd made for this role,
+and only ever moves it onto a *different* branch, so what it discards is a reviewer's scratch
+files, never anyone's commits.
+
+`basedOn` needs `"worktree": "self"` — only the mode where issue-herd creates the worktree can
+decide where it starts, so the other modes refuse it at config load rather than quietly ignoring it.
+
+If the other role has no run on this issue yet, or never settled a branch, you get a log line and
+an ordinary worktree. A reviewer on the default branch is a poor review; a failed run is no review
+at all. The brief says which it got.
+
+### More than one turn: `passes`
+
+By default a role takes an issue once and is finished with it. `"passes": 3` gives it up to three
+turns — review the work, confirm the fix, then give the thumbs up:
+
+```jsonc
+{ "name": "review", "role": "review", "passes": 3, "match": "label:ai", "prompt": "prompts/review.md" }
+```
+
+A later turn is granted on exactly one condition: **the issue moved on after the last turn
+finished.** Someone pushed a fix, a person replied, the state changed. Nothing happening means no
+turn, so a reviewer with turns left costs nothing while it waits.
+
+The obvious way for that to become a loop is for the role to answer itself — its own closing
+comment bumps the issue, which looks like the issue moving on. So when a rule has turns left,
+issue-herd re-reads the issue's own clock *after* it has finished commenting and measures the next
+turn against that. A role can never be woken by its own report.
+
+The rest of a later turn is deliberately the same run, not a new one: same run key, same claim
+label (it never came off, so the guards are not re-read — you cannot lose a lock you hold), same
+worktree, same branch, and the same herdr session if it is still up. What changes is the brief,
+which names the turn, points at what the previous turn wrote, and says that answering the change
+is the job rather than starting over. The previous `result.json` is moved to `result.pass1.json`
+before the new turn starts, so the supervisor cannot mistake the old answer for the new one, and
+each turn is archived under its own name in `runs/<KEY>/`.
+
+Two limits worth knowing. Turns are counted in `state.json`, so a watcher that loses its state
+treats the role as finished — it fails closed, and `issue-herd reset` is how you hand a turn back
+by hand. And a run still waiting for its PR to merge (`awaiting_merge`) is not eligible for another
+turn, because that watch would be lost.
+
 ## How a run works
 
-1. Poll the tracker for open issues; evaluate each rule; the first matching rule wins, then the
-   guards above are applied. Urgent first, then oldest first.
+1. Poll the tracker for open issues; evaluate each rule; the first matching rule wins — once per
+   role, so an issue can start a run per role — then the guards above are applied. Urgent first,
+   then oldest first.
 2. `git worktree add -b <branch> .issue-herd/worktrees/<slug>` — issue-herd makes the worktree, on
    the branch the rule asked for. An existing directory for that issue is reused rather than
    duplicated, and an existing branch is attached to rather than clobbered.
@@ -464,9 +649,11 @@ workspace and open the port in your browser.
 - A pickup that failed (`issue-herd status` shows `failed`) is retried by itself: the claim label
   is handed back, and the next time the issue changes on the tracker (an edit, a state change, a
   label) it is a candidate again. Fix what the log complained about and touch the issue.
-- Re-run an issue that finished or stopped: remove the `herdr` claim label on the issue, delete the
-  pickup comment if you want a clean thread, then `issue-herd reset ENG-123` (or `reset GH-7`). It
-  will be picked up on the next poll if the rule still matches.
+- Re-run an issue that finished or stopped: remove the `herdr` claim label on the issue (with roles,
+  the one for the role you want back — `herdr:review`), delete the pickup comment if you want a
+  clean thread, then `issue-herd reset ENG-123` (or `reset GH-7`, which forgets every role's run on
+  the issue; `reset GH-7@review` forgets one). It will be picked up on the next poll if the rule
+  still matches.
 - `no Linear credentials` / `no GitHub credentials` — run `issue-herd login`, or put the token in
   `.env.local`. A `401` means the token it found (the banner says where) is dead: `login` again.
 - `cannot tell which GitHub repository this is` — the `origin` remote is not on github.com; set

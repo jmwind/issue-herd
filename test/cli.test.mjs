@@ -116,3 +116,92 @@ test('init warns when the .env.local it just recommended would be committed', (t
   const dir2 = repo(t, { '.gitignore': '.env.local\n' });
   assert.doesNotMatch(run(dir2, ['init', '--tracker', 'linear']).out, /not gitignored/);
 });
+
+test('a role that could not be a label, a branch and a directory is refused by name', (t) => {
+  const dir = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: [{ name: 'rev', match: 'any:true', role: 'code review' }] }) });
+  const r = run(dir, ['status']);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /rule "rev": role "code review"/);
+});
+
+test('two roles pointed at one branch template fail at load, not on the second pickup', (t) => {
+  // git cannot check one branch out into two worktrees. Reported here, where the fix is one line.
+  const rules = [
+    { name: 'impl', match: 'label:ai', role: 'impl' },
+    { name: 'rev', match: 'label:ai', role: 'review' },
+  ];
+  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', defaults: { branch: '{{issueBranchName}}' }, rules }) });
+  const r = run(bad, ['status']);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /both work on branch/);
+  // the default template names the role, so the same two rules are fine on it
+  const ok = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules }) });
+  assert.equal(run(ok, ['status']).status, 0);
+});
+
+test('"roles" switches roles on and off for the project without deleting the rules', (t) => {
+  const rules = [{ name: 'impl', match: 'label:ai', role: 'impl' }, { name: 'rev', match: 'label:ai', role: 'review' }];
+  const dir = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', roles: ['impl'], rules }) });
+  // `match` reaches the tracker, so the config was accepted and the disabled rule is still a rule.
+  const r = run(dir, ['match', 'any:true'], { LINEAR_API_KEY: 'lin_api_nope' });
+  assert.match(r.out, /Linear HTTP 4\d\d|fetch failed/);
+  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', roles: 'impl', rules }) });
+  assert.match(run(bad, ['status']).out, /"roles" must be an array/);
+});
+
+test('reset by issue key forgets every role\'s run on it; by run key, only that one', (t) => {
+  const runs = {
+    'GH-7': { rule: 'r', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' },
+    'GH-7@review': { rule: 'r', role: 'review', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' },
+    'GH-7@impl': { rule: 'r', role: 'impl', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' },
+    'GH-70': { rule: 'r', status: 'done', startedAt: '2026-01-01T00:00', title: 'b' },
+  };
+  const state = () => JSON.stringify({ runs });
+  const one = repo(t, { '.issue-herd/config.json': config(), '.issue-herd/state/state.json': state() });
+  const r = run(one, ['reset', 'GH-7@review']);
+  assert.match(r.out, /forgot GH-7@review/);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(one, '.issue-herd/state/state.json'), 'utf8')).runs).sort(),
+    ['GH-7', 'GH-70', 'GH-7@impl']);
+
+  const all = repo(t, { '.issue-herd/config.json': config(), '.issue-herd/state/state.json': state() });
+  const r2 = run(all, ['reset', 'GH-7']);
+  assert.match(r2.out, /forgot GH-7, GH-7@review, GH-7@impl/);
+  // GH-70 is a different issue, not a role of GH-7
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(all, '.issue-herd/state/state.json'), 'utf8')).runs), ['GH-70']);
+
+  assert.match(run(all, ['reset', 'GH-9']).out, /no run called GH-9/);
+});
+
+test('"basedOn" names another role, checked at config load', (t) => {
+  const rules = (basedOn) => [
+    { name: 'impl', match: 'label:ai', role: 'impl' },
+    { name: 'rev', match: 'label:ai', role: 'review', basedOn },
+  ];
+  const ok = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('impl') }) });
+  assert.equal(run(ok, ['status']).status, 0);
+
+  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('code review') }) });
+  assert.match(run(bad, ['status']).out, /rule "rev" \("basedOn"\): role "code review"/);
+
+  // a worktree cannot start from itself
+  const self = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('review') }) });
+  assert.match(run(self, ['status']).out, /"basedOn" is its own role/);
+});
+
+test('"basedOn" is refused where issue-herd does not make the worktree', (t) => {
+  // It can only decide where a worktree starts if it is the one creating it. Accepted quietly in
+  // the other modes, it would give you a reviewer on the default branch and a config saying
+  // otherwise — the config is wrong, and this is the only moment that is cheap to say so.
+  for (const mode of ['herdr', 'none']) {
+    const dir = repo(t, {
+      '.issue-herd/config.json': JSON.stringify({
+        tracker: 'linear',
+        rules: [{ name: 'impl', match: 'label:ai', role: 'impl' },
+          { name: 'rev', match: 'label:ai', role: 'review', basedOn: 'impl', worktree: mode }],
+      }),
+    });
+    const r = run(dir, ['status']);
+    assert.equal(r.status, 1, mode);
+    assert.match(r.out, /"basedOn" needs "worktree": "self"/, mode);
+  }
+});
