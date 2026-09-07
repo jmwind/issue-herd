@@ -157,20 +157,54 @@ a{color:inherit}
 #smoke{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
 @media (prefers-reduced-motion:reduce){.belt::before,.items,.inserter .arm,.gear,.craft i{animation:none}#smoke{display:none}}
 @media (max-width:720px){#smoke{display:none}}
+
+/* ---- unlock screen: the gate before any factory data is served ---- */
+.lock{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center}
+.lock .pad{width:60px;height:60px}
+.lock h2{margin:0;font:700 20px var(--font);color:var(--heading)}
+.lock p{margin:0;color:var(--muted);max-width:28ch}
+.code{display:flex;gap:8px}
+.code i{width:34px;height:42px;background:var(--inset-2);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);display:grid;place-items:center}
+.code i.on::after{content:"";width:10px;height:10px;background:var(--orange-2);box-shadow:0 0 6px var(--orange-2)}
+.keys{display:grid;grid-template-columns:repeat(3,68px);gap:8px;margin-top:4px}
+.keys .btn{height:54px;font-size:20px;padding:0}
+.lock .note{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px}
 </style>
 
 <div class="intro">
   <h1>Factory Floor · mobile first, in Factorio's design language</h1>
-  <p>Three screens. The overview carries only what changes what you do next: alerts that need a person, machines that are assembling, and today's output. Every agent is an assembling machine with a status light, every role a module slot, every factory a surface. Detail is one tap away. The belt under every title bar carries what the factory has actually produced, the inserter at its end never stops, working machines show crafting progress, and the chimneys behind this page are the watchers.</p>
+  <p>Four screens. A passcode gate first, because the console is reached over Tailscale. The overview carries only what changes what you do next: alerts that need a person, machines that are assembling, and today's output. Every agent is an assembling machine with a status light, every role a module slot, every factory a surface. Detail is one tap away. The belt under every title bar carries what the factory has actually produced, the inserter at its end never stops, working machines show crafting progress, and the chimneys behind this page are the watchers.</p>
 </div>
 
 <div class="gallery">
+
+<!-- ================= 0. UNLOCK ================= -->
+<figure class="shot" id="unlock">
+<div class="phone"><div class="screen">
+  <div class="titlebar"><h1>Factory Floor</h1><span class="drag"></span><span class="tick"><svg class="gear" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm9.4 5.3-2.1-.4a7.5 7.5 0 0 0-.6-1.5l1.2-1.8-1.9-1.9-1.8 1.2c-.5-.3-1-.5-1.5-.6l-.4-2.1h-2.6l-.4 2.1c-.5.1-1 .3-1.5.6L8 6.7 6.1 8.6l1.2 1.8c-.3.5-.5 1-.6 1.5l-2.1.4v2.6l2.1.4c.1.5.3 1 .6 1.5l-1.2 1.8 1.9 1.9 1.8-1.2c.5.3 1 .5 1.5.6l.4 2.1h2.6l.4-2.1c.5-.1 1-.3 1.5-.6l1.8 1.2 1.9-1.9-1.2-1.8c.3-.5.5-1 .6-1.5l2.1-.4z"/></svg>14:38</span></div>
+  <div class="belt" aria-hidden="true"><div class="items"></div><div class="inserter"><svg viewBox="0 0 32 30"><rect x="10" y="22" width="12" height="6" fill="#4A4A4A" stroke="#0A0A0A"/><g class="arm"><rect x="14" y="4" width="4" height="22" fill="#E39827" stroke="#0A0A0A"/><rect x="10" y="1" width="12" height="5" fill="#5C5C5C" stroke="#0A0A0A"/></g></svg></div></div>
+  <div class="lock">
+    <svg class="pad" viewBox="0 0 60 60" aria-hidden="true"><path d="M18 28v-9a12 12 0 0 1 24 0v9" fill="none" stroke="#8C8C8C" stroke-width="6" stroke-linecap="round"/><rect x="10" y="27" width="40" height="28" fill="#E39827" stroke="#0A0A0A" stroke-width="2"/><rect x="12" y="29" width="36" height="3" fill="#FFD48A"/><circle cx="30" cy="40" r="4" fill="#2A1A05"/><rect x="28" y="42" width="4" height="7" fill="#2A1A05"/></svg>
+    <h2>Locked</h2>
+    <p>Enter the passcode to see the factories on jml-mbp.</p>
+    <div class="code" aria-label="passcode"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+    <div class="keys">
+      <button class="btn" data-k="1">1</button><button class="btn" data-k="2">2</button><button class="btn" data-k="3">3</button>
+      <button class="btn" data-k="4">4</button><button class="btn" data-k="5">5</button><button class="btn" data-k="6">6</button>
+      <button class="btn" data-k="7">7</button><button class="btn" data-k="8">8</button><button class="btn" data-k="9">9</button>
+      <button class="btn" data-k="del" aria-label="delete">⌫</button><button class="btn" data-k="0">0</button><button class="btn confirm" data-k="ok" aria-label="unlock">✓</button>
+    </div>
+    <span class="note"><i class="led g" style="animation:none"></i>over Tailscale · 100.101.7.22 · a wrong passcode locks the gate for 5 minutes</span>
+  </div>
+</div></div>
+<figcaption>0 · Unlock</figcaption>
+</figure>
 
 <!-- ================= 1. OVERVIEW ================= -->
 <figure class="shot" id="overview">
 <div class="phone"><div class="screen">
   <div class="titlebar">
-    <button class="picker" aria-haspopup="dialog" title="Choose factory">issue-herd <small>GitHub</small><span class="chev">▼</span></button>
+    <button class="picker" aria-haspopup="dialog" title="Choose factory">issue-herd<span class="chev">▼</span></button>
     <span class="drag"></span>
     <span class="tick"><svg class="gear" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm9.4 5.3-2.1-.4a7.5 7.5 0 0 0-.6-1.5l1.2-1.8-1.9-1.9-1.8 1.2c-.5-.3-1-.5-1.5-.6l-.4-2.1h-2.6l-.4 2.1c-.5.1-1 .3-1.5.6L8 6.7 6.1 8.6l1.2 1.8c-.3.5-.5 1-.6 1.5l-2.1.4v2.6l2.1.4c.1.5.3 1 .6 1.5l-1.2 1.8 1.9 1.9 1.8-1.2c.5.3 1 .5 1.5.6l.4 2.1h2.6l.4-2.1c.5-.1 1-.3 1.5-.6l1.8 1.2 1.9-1.9-1.2-1.8c.3-.5.5-1 .6-1.5l2.1-.4z"/></svg>14:38</span>
   </div><div class="belt" aria-hidden="true"><div class="items"><span class="item"><i class="c"></i>commit a1f0e</span><span class="item"><i class="t"></i>148 tests</span><span class="item"><i class="p"></i>PR #36</span><span class="item"><i class="m"></i>merged</span><span class="item"><i class="l"></i>+212 −64</span><span class="item"><i class="c"></i>commit 9c2b1</span><span class="item"><i class="p"></i>PR #25</span><span class="item"><i class="t"></i>48s green</span><span class="item"><i class="c"></i>commit d19b6</span><span class="item"><i class="l"></i>+96 −2</span><span class="item"><i class="c"></i>commit a1f0e</span><span class="item"><i class="t"></i>148 tests</span><span class="item"><i class="p"></i>PR #36</span><span class="item"><i class="m"></i>merged</span><span class="item"><i class="l"></i>+212 −64</span><span class="item"><i class="c"></i>commit 9c2b1</span><span class="item"><i class="p"></i>PR #25</span><span class="item"><i class="t"></i>48s green</span><span class="item"><i class="c"></i>commit d19b6</span><span class="item"><i class="l"></i>+96 −2</span></div><div class="inserter"><svg viewBox="0 0 32 30"><rect x="10" y="22" width="12" height="6" fill="#4A4A4A" stroke="#0A0A0A"/><g class="arm"><rect x="14" y="4" width="4" height="22" fill="#E39827" stroke="#0A0A0A"/><rect x="10" y="1" width="12" height="5" fill="#5C5C5C" stroke="#0A0A0A"/></g></svg></div></div>
@@ -261,7 +295,7 @@ a{color:inherit}
 <figure class="shot" id="picker">
 <div class="phone"><div class="screen">
   <div class="titlebar">
-    <button class="picker">issue-herd <small>GitHub</small><span class="chev">▼</span></button><span class="drag"></span><span class="tick"><svg class="gear" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm9.4 5.3-2.1-.4a7.5 7.5 0 0 0-.6-1.5l1.2-1.8-1.9-1.9-1.8 1.2c-.5-.3-1-.5-1.5-.6l-.4-2.1h-2.6l-.4 2.1c-.5.1-1 .3-1.5.6L8 6.7 6.1 8.6l1.2 1.8c-.3.5-.5 1-.6 1.5l-2.1.4v2.6l2.1.4c.1.5.3 1 .6 1.5l-1.2 1.8 1.9 1.9 1.8-1.2c.5.3 1 .5 1.5.6l.4 2.1h2.6l.4-2.1c.5-.1 1-.3 1.5-.6l1.8 1.2 1.9-1.9-1.2-1.8c.3-.5.5-1 .6-1.5l2.1-.4z"/></svg>14:38</span>
+    <button class="picker">issue-herd<span class="chev">▼</span></button><span class="drag"></span><span class="tick"><svg class="gear" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm9.4 5.3-2.1-.4a7.5 7.5 0 0 0-.6-1.5l1.2-1.8-1.9-1.9-1.8 1.2c-.5-.3-1-.5-1.5-.6l-.4-2.1h-2.6l-.4 2.1c-.5.1-1 .3-1.5.6L8 6.7 6.1 8.6l1.2 1.8c-.3.5-.5 1-.6 1.5l-2.1.4v2.6l2.1.4c.1.5.3 1 .6 1.5l-1.2 1.8 1.9 1.9 1.8-1.2c.5.3 1 .5 1.5.6l.4 2.1h2.6l.4-2.1c.5-.1 1-.3 1.5-.6l1.8 1.2 1.9-1.9-1.2-1.8c.3-.5.5-1 .6-1.5l2.1-.4z"/></svg>14:38</span>
   </div><div class="belt" aria-hidden="true"><div class="items"><span class="item"><i class="c"></i>commit a1f0e</span><span class="item"><i class="t"></i>148 tests</span><span class="item"><i class="p"></i>PR #36</span><span class="item"><i class="m"></i>merged</span><span class="item"><i class="l"></i>+212 −64</span><span class="item"><i class="c"></i>commit 9c2b1</span><span class="item"><i class="p"></i>PR #25</span><span class="item"><i class="t"></i>48s green</span><span class="item"><i class="c"></i>commit d19b6</span><span class="item"><i class="l"></i>+96 −2</span><span class="item"><i class="c"></i>commit a1f0e</span><span class="item"><i class="t"></i>148 tests</span><span class="item"><i class="p"></i>PR #36</span><span class="item"><i class="m"></i>merged</span><span class="item"><i class="l"></i>+212 −64</span><span class="item"><i class="c"></i>commit 9c2b1</span><span class="item"><i class="p"></i>PR #25</span><span class="item"><i class="t"></i>48s green</span><span class="item"><i class="c"></i>commit d19b6</span><span class="item"><i class="l"></i>+96 −2</span></div><div class="inserter"><svg viewBox="0 0 32 30"><rect x="10" y="22" width="12" height="6" fill="#4A4A4A" stroke="#0A0A0A"/><g class="arm"><rect x="14" y="4" width="4" height="22" fill="#E39827" stroke="#0A0A0A"/><rect x="10" y="1" width="12" height="5" fill="#5C5C5C" stroke="#0A0A0A"/></g></svg></div></div>
   <div class="body"><section class="sec"><div class="sub"><i class="led r"></i>Alerts <span class="n hot">2</span></div><div class="inset pane"><div class="alert"><div class="k"><i class="led g"></i><b>GH-22 · PR #25</b><small>ready 1h 12m</small></div><p>Approved and checks green. Only your merge is missing.</p></div></div></section></div>
   <div class="dimmer"></div>
@@ -310,5 +344,17 @@ a{color:inherit}
     requestAnimationFrame(frame);
   }
   frame();
+})();
+</script>
+
+<script>
+(function(){
+  const code=[...document.querySelectorAll('#unlock .code i')]; let n=code.filter(c=>c.classList.contains('on')).length;
+  document.querySelectorAll('#unlock .keys .btn').forEach(b=>b.addEventListener('click',()=>{
+    const k=b.dataset.k;
+    if(k==='del'){ if(n>0) code[--n].classList.remove('on'); }
+    else if(k==='ok'){ if(n===code.length) location.hash='overview'; }
+    else if(n<code.length){ code[n++].classList.add('on'); }
+  }));
 })();
 </script>

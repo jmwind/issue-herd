@@ -32,8 +32,13 @@ Every number in the mockup maps to a source that is already there:
 
 The first cut was a desktop control room. The owner's review: mobile is the first client, one
 machine runs several factories so a picker is required, and detail may live one tap away as long
-as the overview carries what matters. So the console is three screens, and the overview is built
+as the overview carries what matters. So the console is four screens, and the overview is built
 from one question: *what changes what I do next?*
+
+**0. Unlock.** The console is reached over Tailscale from a phone, so nothing about any factory
+is served until a passcode is entered: a padlock, six slots, a keypad, and the belt running empty
+above it. A wrong passcode locks the gate for five minutes. The tracker is not shown beside the
+factory name anywhere in the title bar; it is in the picker sheet where it is decided.
 
 **1. Overview.** A factory picker in the top bar (current factory, its tracker, a chevron), a
 live dot, and three sections:
@@ -174,12 +179,17 @@ Three tiers, cheapest first, each optional:
 
 ### F. Actions and safety
 
-The page is a local web server with buttons that stop agents, so:
+The page is a web server with buttons that stop agents, and the owner will reach it over
+Tailscale from a phone, so:
 
-- bind to `127.0.0.1` only, on a port from config (`console.port`, default 8498, next to the OAuth
-  port);
-- a random token in the URL printed at startup, checked on every request, so another local process
-  or a drive-by page cannot call it;
+- bind to `127.0.0.1` and the machine's Tailscale address (`100.x.y.z`, found from the
+  interfaces at startup) on a port from config (`console.port`, default 8498, next to the OAuth
+  port); never `0.0.0.0`. Tailscale is the network boundary, the passcode is the person boundary;
+- a passcode gate before any factory data: the passcode is set once with
+  `issue-herd console set-passcode` and stored as a salted scrypt hash in
+  `~/.config/issue-herd/credentials.json` (never in the repo); a correct entry sets an `HttpOnly`,
+  `SameSite=Strict` session cookie good for a configurable time; comparisons are constant-time;
+  five wrong entries lock the gate for five minutes and are logged with the source address;
 - state-changing actions are `POST` with an `Origin` check; the browser confirms exit and clean-up
   with what it is about to do ("send `/exit` to gh-35, close w1X, remove the worktree, 0
   uncommitted files");
@@ -215,4 +225,4 @@ line in the rail.
 3. Should "exit" also offer clean-up (close workspace, remove worktree), or strictly stop the agent?
 4. Which extras from the list are worth doing in phase 1 rather than later? Human wait time is
    cheap and, in my view, the most telling.
-5. Port and URL scheme: a fixed local port with a token, or a randomly chosen port each start?
+5. Port: a fixed port (`console.port`, default 8498) reachable over Tailscale, behind the passcode gate. Session lifetime for the cookie: a day, or until the watcher restarts?
