@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, factoryView, beltItems } from '../src/console/model.mjs';
+import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, factoryView } from '../src/console/model.mjs';
 import { Gate, hashPasscode, verifyPasscode } from '../src/console/passcode.mjs';
 import { stampFactory, loadRegistry, isStale, forgetFactory } from '../src/console/registry.mjs';
 import { complexity } from '../src/console/git.mjs';
@@ -94,10 +94,6 @@ test('factoryView: issues bucketed, role slots in order, alerts ranked, human wa
   assert.equal(v.counts.running, 1); assert.equal(v.counts.alerts, 2);
   assert.equal(v.watcher.version, '0.2.4');
   assert.deepEqual(v.rules.map((r) => r.agent), ['claude', 'codex']);
-  const belt = beltItems([v]);
-  assert.ok(belt.some((b) => b.text === 'GH-9 merged'));
-  assert.ok(belt.some((b) => b.text === 'PR #9'));
-  assert.ok(belt.some((b) => b.text === 'commit abc1234'));
 });
 
 test('factoryView without roles still lists each run as one slot', () => {
@@ -159,7 +155,7 @@ test('tailscale addresses are the 100.64/10 IPv4 ones only', () => {
 /** The HTTP surface with a stand-in orchestrator. */
 async function serve(t, { hash = null } = {}) {
   const calls = [];
-  const app = { view: () => ({ hostname: 'box', factories: [], belt: [] }), subscribe: () => () => {}, exit: async (a) => { calls.push(a); return 'exited'; }, tail: async () => 'tail text' };
+  const app = { view: () => ({ hostname: 'box', factories: [] }), subscribe: () => () => {}, exit: async (a) => { calls.push(a); return 'exited'; }, tail: async () => 'tail text' };
   const gate = new Gate({ hash });
   const { handler } = createHandler({ gate, console: app, hostname: 'box' });
   const bound = await listen({ handler, port: 0, gated: false });

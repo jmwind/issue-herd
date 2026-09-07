@@ -27,29 +27,48 @@
     return '<div class="titlebar">' + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + (ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering') + '">' + GEAR + esc(document.body.dataset.hostname) + '</span></div>';
   }
   function belt() {
-    var items = (view ? view.belt : []).map(function (i) { return '<span class="item"><i class="' + esc(i.kind) + '"></i>' + esc(i.text) + '</span>'; }).join('');
+    var fs = shown(), today = 0, assembling = 0, wait = 0, alerts = 0;
+    fs.forEach(function (f) {
+      alerts += f.alerts.length; assembling += f.counts.inflight; wait += f.humanWaitMs;
+      f.issues.forEach(function (i) { if (i.bucket !== 'inflight' && i.finishedAt && Date.now() - Date.parse(i.finishedAt) < 86400e3) today++; });
+    });
+    var stats = [['output today', today, 'merged'], ['assembling', assembling, 'commit'], ['waiting on you', dur(wait), 'lines'], ['alerts', alerts, alerts ? 'pr' : 'commit']];
+    var items = stats.map(function (st) { return '<span class="item"><i class="' + st[2] + '"></i><b>' + esc(st[1]) + '</b>' + esc(st[0]) + '</span>'; }).join('');
     return '<div class="belt" aria-hidden="true"><div class="items">' + items + items + '</div>' + INSERTER + '</div>';
   }
-  function slots(iss) { return '<span class="slots" title="' + esc(iss.slots.map(function (s) { return s.role + ': ' + s.phrase; }).join(' · ')) + '">' + iss.slots.map(function (s) { return '<i class="' + esc(s.light) + '"></i>'; }).join('') + '</span>'; }
+  // The roles that worked on a task, in team order, each with its light; a role the team has but
+  // nobody has started yet is a dashed chip, so the team's shape is visible on every task.
+  function chips(iss) {
+    return '<span class="chips">' + iss.slots.map(function (sl) {
+      var r = iss.runs.filter(function (x) { return x.role === sl.role || (!x.role && sl.role === 'run'); })[0];
+      var who = r ? (r.agentKind || '') : '';
+      return '<span class="chip ' + esc(sl.light) + '" title="' + esc(sl.role + ': ' + sl.phrase + (who ? ' · ' + who : '')) + '"><i class="led ' + esc(sl.light === 'empty' ? '' : sl.light) + ' still"></i>' + esc(sl.role) + (who ? '<small>' + esc(who) + '</small>' : '') + '</span>';
+    }).join('') + '</span>';
+  }
   function row(f, iss, many) {
     var elapsed = iss.finishedAt ? iss.elapsedMs : iss.elapsedMs + drift();
     var phrase = iss.bucket === 'merged' ? 'merged ' + prNum(iss.prUrl) + (iss.finishedAt ? ' · ' + clock(iss.finishedAt) : '') : iss.phrase;
+    var wait = iss.humanWaitMs + (iss.bucket === 'inflight' && iss.light !== 'green' ? drift() : 0);
     return '<a class="row ' + esc(iss.light) + '" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '"><i class="led ' + esc(iss.light) + (iss.bucket !== 'inflight' ? ' still' : '') + '"></i>' +
-      '<span class="t"><b>' + esc(iss.key) + '</b>' + esc(iss.title) + '</span><span class="e">' + dur(elapsed) + '</span>' +
-      '<span class="s">' + slots(iss) + '<span>' + (many ? esc(f.name) + ' · ' : '') + esc(phrase) + '</span></span>' +
+      '<span class="t"><b>' + esc(iss.key) + '</b>' + esc(iss.title) + '</span>' +
+      '<span class="e"><span class="you' + (wait ? '' : ' none') + '" title="time a person was waited on">' + (wait ? dur(wait) : '0') + '<small>you</small></span><small class="el">' + dur(elapsed) + '</small></span>' +
+      '<span class="s">' + chips(iss) + '<span>' + (many ? esc(f.name) + ' · ' : '') + esc(phrase) + '</span></span>' +
       (iss.light === 'green' && iss.bucket === 'inflight' ? '<span class="craft"><i></i></span>' : '') + '</a>';
   }
-  function alertCard(f, a, many) {
-    var acts = '';
-    if (a.kind === 'merge' && a.prUrl) acts += '<a class="btn confirm" href="' + esc(a.prUrl) + '" target="_blank" rel="noopener">✓ Merge on GitHub</a>';
-    if (a.kind === 'blocked' || a.kind === 'question') acts += '<button class="btn" data-tail="' + esc(f.id) + '|' + esc(a.runKey) + '">Read scrollback</button>';
-    if (a.kind === 'needs_human' && a.url) acts += '<a class="btn confirm" href="' + esc(a.url) + '" target="_blank" rel="noopener">Answer on the issue</a>';
-    if (a.kind === 'stopped' || a.kind === 'failed' || a.kind === 'gone') acts += '<a class="btn" href="' + esc(a.url || '#') + '" target="_blank" rel="noopener">Open issue</a>';
-    if (a.kind !== 'gone' && a.kind !== 'failed' && a.kind !== 'merge') acts += '<button class="btn cancel" data-exit="' + esc(f.id) + '|' + esc(a.runKey) + '" data-agent="' + esc(a.agent) + '">✕ Exit agent</button>';
-    var key = f.id + '|' + a.runKey;
-    var tail = tails[key] ? '<pre>' + esc(tails[key]) + '</pre>' : '';
-    return '<div class="alert"><div class="k"><i class="led ' + esc(a.light) + ' still"></i><b>' + esc(a.issueKey) + (a.role ? ' · ' + esc(a.role) : '') + (many ? ' · ' + esc(f.name) : '') + '</b><small>' + dur(a.sinceMs + drift()) + '</small></div>' +
-      '<p>' + esc(a.text) + '</p>' + tail + '<div class="acts">' + acts + '</div></div>';
+  function taskCard(f, iss, alerts, many) {
+    var lines = alerts.map(function (a) { return '<li><i class="led ' + esc(a.light) + ' still"></i><b>' + esc(a.role || 'agent') + '</b> ' + esc(a.text) + ' <small>' + dur(a.sinceMs + drift()) + '</small></li>'; }).join('');
+    var acts = '', seen = {};
+    alerts.forEach(function (a) {
+      if (a.kind === 'merge' && a.prUrl && !seen.merge) { seen.merge = 1; acts += '<a class="btn confirm" href="' + esc(a.prUrl) + '" target="_blank" rel="noopener">✓ Merge on GitHub</a>'; }
+      if (a.kind === 'needs_human' && a.url && !seen.answer) { seen.answer = 1; acts += '<a class="btn confirm" href="' + esc(a.url) + '" target="_blank" rel="noopener">Answer on the issue</a>'; }
+      if (a.kind === 'blocked' || a.kind === 'question') acts += '<button class="btn" data-tail="' + esc(f.id) + '|' + esc(a.runKey) + '">Scrollback · ' + esc(a.role || a.agent) + '</button>';
+    });
+    if (!seen.merge && !seen.answer && iss.url) acts += '<a class="btn" href="' + esc(iss.url) + '" target="_blank" rel="noopener">Open issue</a>';
+    iss.runs.filter(function (r) { return r.agentAlive; }).forEach(function (r) { acts += '<button class="btn cancel" data-exit="' + esc(f.id) + '|' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">✕ Exit ' + esc(r.role || 'agent') + '</button>'; });
+    var tail = alerts.map(function (a) { var k = f.id + '|' + a.runKey; return tails[k] ? '<pre>' + esc(tails[k]) + '</pre>' : ''; }).join('');
+    var wait = iss.humanWaitMs + drift();
+    return '<div class="alert"><div class="k"><i class="led ' + esc(iss.light) + ' still"></i><b>' + esc(iss.key) + ' ' + esc(iss.title) + (many ? ' · ' + esc(f.name) : '') + '</b><span class="you" title="time a person was waited on">' + dur(wait) + '<small>you</small></span></div>' +
+      '<a class="open" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '">' + chips(iss) + '</a><ul class="why">' + lines + '</ul>' + tail + '<div class="acts">' + acts + '</div></div>';
   }
   function section(title, count, body, extra) { return '<section><div class="sub">' + title + ' <span class="n' + (extra && extra.hot ? ' hot' : '') + '">' + count + '</span>' + (extra && extra.more || '') + '</div>' + body + '</section>'; }
 
@@ -60,14 +79,16 @@
     var head = titlebar('<button class="picker" id="pick"><span class="n">' + esc(pickerLabel) + '</span><span class="chev">▼</span></button>');
     var alerts = [], inflight = [], merged = [], done = [];
     fs.forEach(function (x) {
-      x.alerts.forEach(function (a) { alerts.push([x, a]); });
+      var byTask = {};
+      x.alerts.forEach(function (a) { (byTask[a.issueKey] = byTask[a.issueKey] || []).push(a); });
+      Object.keys(byTask).forEach(function (k) { var iss = x.issues.filter(function (i) { return i.key === k; })[0]; if (iss) alerts.push([x, iss, byTask[k]]); });
       x.issues.forEach(function (i) { (i.bucket === 'inflight' ? inflight : i.bucket === 'merged' ? merged : done).push([x, i]); });
     });
     var body = '';
     if (!factories().length) body += '<div class="empty">No factory has reported yet. Start a watcher with <b>issue-herd</b> in a repository, and it appears here on its first poll.</div>';
-    body += section('<i class="led ' + (alerts.length ? 'red' : '') + ' still"></i>Alerts', alerts.length, alerts.length ? '<div class="inset pane">' + alerts.map(function (p) { return alertCard(p[0], p[1], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing needs you. The factory is running by itself.</div></div>', { hot: alerts.length });
+    body += section('<i class="led ' + (alerts.length ? 'red' : '') + ' still"></i>Alerts', alerts.length, alerts.length ? '<div class="inset pane">' + alerts.map(function (p) { return taskCard(p[0], p[1], p[2], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing needs you. The factory is running by itself.</div></div>', { hot: alerts.length });
     body += section('Assembling', inflight.length, inflight.length ? '<div class="inset pane">' + inflight.map(function (p) { return row(p[0], p[1], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">No issue in flight.</div></div>') +
-      '<div class="legend"><span><i class="led green still"></i>working</span><span><i class="led red"></i>waiting for input</span><span><i class="led yellow"></i>idle, asking</span><span><i class="led"></i>done</span><span><span class="slots"><i></i></span>role not started</span></div>';
+      '<div class="legend"><span><i class="led green still"></i>working</span><span><i class="led red"></i>waiting for input</span><span><i class="led yellow"></i>idle, asking</span><span><i class="led"></i>done</span><span><span class="chip empty"><i class="led still"></i>role</span>not started</span><span><span class="you">5m<small>you</small></span>waited on a person</span></div>';
     var out = merged.concat(done);
     var today = out.filter(function (p) { return p[1].finishedAt && Date.now() - Date.parse(p[1].finishedAt) < 86400e3; });
     var list = showAll ? out : today;
@@ -100,7 +121,7 @@
     var head = '<div class="titlebar"><h1>' + esc(iss.key) + '</h1><span class="drag"></span><a class="tbtn red" href="#/" aria-label="back">✕</a></div>';
     var elapsed = iss.finishedAt ? iss.elapsedMs : iss.elapsedMs + drift();
     var lead = iss.runs.filter(function (r) { return r.needsYou; })[0] || iss.runs.filter(function (r) { return r.status === 'running'; })[0] || iss.runs[0];
-    var status = '<div class="status"><i class="led ' + esc(iss.light) + (iss.bucket !== 'inflight' ? ' still' : '') + '"></i><b>' + esc(iss.bucket === 'merged' ? 'Merged' : lead.phrase) + '</b>' + (iss.finishedAt ? ' at ' + clock(iss.finishedAt) : '') + ' <small>' + dur(elapsed) + ' end to end · you waited ' + dur(iss.humanWaitMs + (iss.finishedAt ? 0 : 0)) + '</small></div>';
+    var status = '<div class="status"><i class="led ' + esc(iss.light) + (iss.bucket !== 'inflight' ? ' still' : '') + '"></i><b>' + esc(iss.bucket === 'merged' ? 'Merged' : lead.phrase) + '</b>' + (iss.finishedAt ? ' at ' + clock(iss.finishedAt) : '') + ' <small>' + dur(elapsed) + ' end to end</small><span class="you big" title="time a person was waited on">' + dur(iss.humanWaitMs) + '<small>you</small></span></div>';
     var ws = iss.runs.map(function (r) { return r.workspaceId; }).filter(Boolean)[0];
     var links = '<div class="links">' + (iss.url ? '<a href="' + esc(iss.url) + '" target="_blank" rel="noopener">Issue<small>' + esc(iss.key) + '</small></a>' : '<span>Issue<small>no link</small></span>') +
       (iss.prUrl ? '<a href="' + esc(iss.prUrl) + '" target="_blank" rel="noopener">Pull request<small>' + esc(prNum(iss.prUrl)) + (iss.merged ? ' merged' : '') + '</small></a>' : '<span>Pull request<small>none yet</small></span>') +
@@ -114,7 +135,7 @@
     var waits = [];
     iss.runs.forEach(function (r) { r.segments.forEach(function (s) { if (s.kind === 'blocked' || s.kind === 'question') waits.push(s); }); });
     var you = '<div class="role"><span class="n">you</span><div class="bar">' + waits.map(function (s) { var l = Math.max(0, (s.from - t0) / (t1 - t0) * 100), w = Math.max(0.5, (Math.min(s.to, t1) - s.from) / (t1 - t0) * 100); return '<i class="question" style="left:' + l.toFixed(2) + '%;width:' + w.toFixed(2) + '%"></i>'; }).join('') + '</div><span class="v">' + dur(iss.humanWaitMs) + '</span></div>';
-    var roles = section('Modules', iss.runs.length + ' run' + (iss.runs.length === 1 ? '' : 's'), '<div class="inset pane">' + bars + you + '</div>' + '<div class="legend"><span><i class="bar" style="width:14px;height:8px;background:var(--green)"></i>working</span><span><i class="bar" style="width:14px;height:8px;background:var(--red-2)"></i>blocked</span><span><i class="bar" style="width:14px;height:8px;background:var(--yellow)"></i>waiting on you</span><span><i class="bar" style="width:14px;height:8px;background:#5A5A5A"></i>done</span></div>', { more: '<span class="more" style="color:var(--muted)">' + clock(iss.startedAt) + ' → ' + (iss.finishedAt ? clock(iss.finishedAt) : 'now') + '</span>' });
+    var roles = section('Modules', iss.runs.length + ' run' + (iss.runs.length === 1 ? '' : 's'), '<div class="inset pane">' + you + bars + '</div>' + '<div class="legend"><span><i class="bar" style="width:14px;height:8px;background:var(--green)"></i>working</span><span><i class="bar" style="width:14px;height:8px;background:var(--red-2)"></i>blocked</span><span><i class="bar" style="width:14px;height:8px;background:var(--yellow)"></i>waiting on you</span><span><i class="bar" style="width:14px;height:8px;background:#5A5A5A"></i>done</span></div>', { more: '<span class="more" style="color:var(--muted)">' + clock(iss.startedAt) + ' → ' + (iss.finishedAt ? clock(iss.finishedAt) : 'now') + '</span>' });
     var size = iss.size, change = '';
     if (size) {
       change = section('Recipe output', size.commits.length + ' commit' + (size.commits.length === 1 ? '' : 's'), '<div class="inset pane"><dl class="facts"><dt>size</dt><dd><b>+' + size.added + '</b> <s>−' + size.removed + '</s> · ' + size.files + ' file' + (size.files === 1 ? '' : 's') + (size.complexity ? ' · <em>' + esc(size.complexity.grade) + '</em>' : '') + '</dd>' +

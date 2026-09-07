@@ -191,10 +191,12 @@ Three screens, in Factorio's idiom because a factory is what this is:
 - **Overview.** A factory picker in the title bar (one machine runs several), then **Alerts** — one
   card per thing only a person can clear: an agent blocked on a dialog (with "read scrollback"),
   an agent that stopped to ask, a run that ended `needs_human`, a pull request waiting for your
-  merge, a finished run still holding its workspace — then **Assembling**, one row per open issue
-  with a status light, a module slot per role, a short state phrase and the time on task, then
-  **Output today**. The belt under the title bar carries the factory's real output (commits, PRs,
-  merges, lines changed). The footer sums how long you were waited on.
+  merge, a finished run still holding its workspace — one card per task, listing every reason and
+  every role that worked on it — then **Assembling**, one row per open issue with a status light,
+  a chip per role that worked on it (dashed when the team has that role but nobody started), a
+  short state phrase, the time on task, and front and center **how long a person was waited on**
+  for that task, then **Output today**. The belt under the title bar carries the factory's four
+  numbers: output today, assembling, waiting on you, alerts.
 - **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
   asking, done) plus a "you" row, lines added and removed with a size grade and its reason,
   each role's report, and the exit button.

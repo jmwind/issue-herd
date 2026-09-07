@@ -61,28 +61,47 @@ button{font:inherit;color:inherit}
 .row .led{grid-column:1;grid-row:1/3}
 .row .t{grid-column:2;grid-row:1;min-width:0;font:600 15px var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .t b{font-weight:700;color:var(--orange-2);margin-right:7px}
-.row .s{grid-column:2;grid-row:2;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);min-width:0}
+.row .s{grid-column:2;grid-row:2;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);min-width:0;flex-wrap:wrap}
 .row .s span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .e{grid-column:3;grid-row:1/3;font:600 13px var(--font);color:var(--muted);display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
-.row .e::after{content:"›";font-size:20px;color:var(--dim)}
+.row .e{grid-column:3;grid-row:1/3;display:grid;grid-template-columns:auto auto;grid-template-rows:auto auto;align-items:center;column-gap:6px;text-align:right}
+.row .e .you{grid-column:1;grid-row:1;justify-self:end}
+.row .e .el{grid-column:1;grid-row:2;font:600 12px var(--font);color:var(--muted);font-variant-numeric:tabular-nums}
+.row .e::after{content:"›";grid-column:2;grid-row:1/3;font-size:20px;color:var(--dim)}
 .row.green .s{color:var(--green-2)}.row.yellow .s{color:var(--yellow)}.row.red .s{color:var(--red-2)}
-.slots{display:inline-flex;gap:3px;flex:none}
-.slots i{width:14px;height:14px;background:var(--inset);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);display:grid;place-items:center}
-.slots i::after{content:"";width:8px;height:8px;display:block;background:transparent}
-.slots i.green::after{background:var(--led-g)}.slots i.red::after{background:var(--led-r)}.slots i.yellow::after{background:var(--led-y)}.slots i.grey::after{background:#8C8C8C}
+/* who worked on it: one chip per role */
+.chips{display:inline-flex;gap:4px;flex-wrap:wrap;flex:none}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:0 6px 0 4px;font:700 11px var(--font);color:var(--text);background:var(--inset);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);line-height:18px;white-space:nowrap}
+.chip small{font-weight:400;color:var(--muted);margin-left:2px}
+.chip.empty{color:var(--dim);box-shadow:inset 0 0 0 1px var(--hi);background:transparent}
+.chip .led{width:8px;height:8px}
+/* the human-wait number */
+.you{display:inline-flex;align-items:baseline;gap:3px;font:700 15px var(--font);color:var(--yellow);font-variant-numeric:tabular-nums;white-space:nowrap}
+.you small{font:600 10px var(--font);color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.you.none{color:var(--dim)}
+.you.big{font-size:20px;margin-left:auto}
+.alert .k .you{margin-left:auto}
+.alert .open{text-decoration:none;display:block}
+.why{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.why li{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.why li .led{position:relative;top:1px}
+.why li b{color:var(--orange-2)}
+.why li small{color:var(--dim);margin-left:auto}
 .craft{position:absolute;left:1px;right:1px;bottom:1px;height:3px;background:var(--inset-2)}
 .craft i{display:block;height:100%;background:var(--green-2);animation:craft 2.8s linear infinite}
 @keyframes craft{from{width:0}to{width:100%}}
 .legend{display:flex;flex-wrap:wrap;gap:8px 14px;padding:6px 2px 0;font:600 12px var(--font);color:var(--dim)}
 .legend span{display:flex;align-items:center;gap:5px}
+.legend .you{font-size:12px}
 .foot{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;color:var(--muted);font-size:13px;gap:10px;flex-wrap:wrap}
 /* belt */
 .belt{position:relative;height:34px;background:#262626;box-shadow:inset 0 2px 0 var(--lo),inset 0 -2px 0 var(--lo),inset 0 -1px 0 var(--hi);overflow:hidden;flex:none}
 .belt::before{content:"";position:absolute;inset:4px 40px 4px 0;opacity:.9;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='26'%3E%3Cpath d='M4 3 L12 13 L4 23' fill='none' stroke='%23E39827' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x 0 0/18px 26px;animation:beltmove .45s linear infinite}
 .belt::after{content:"";position:absolute;left:0;right:40px;top:50%;height:1px;background:rgba(0,0,0,.6)}
 @keyframes beltmove{to{background-position:18px 0}}
-.items{position:absolute;top:0;left:0;height:100%;display:flex;align-items:center;gap:34px;padding-left:34px;white-space:nowrap;animation:itemsmove 18s linear infinite;will-change:transform}
-@keyframes itemsmove{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.items{position:absolute;top:0;left:0;height:100%;display:flex;align-items:center;white-space:nowrap;animation:itemsmove 24s linear infinite;will-change:transform}
+.items .item{margin-right:34px}
+.item b{color:var(--orange-2);margin-right:4px;font-size:13px}
+@keyframes itemsmove{from{transform:translateX(-50%)}to{transform:translateX(0)}}
 .item{display:flex;align-items:center;gap:5px;font:700 11px var(--font);color:var(--text);background:rgba(0,0,0,.7);padding:1px 5px 1px 2px;box-shadow:0 0 0 1px rgba(0,0,0,.8)}
 .item i{width:16px;height:16px;flex:none;box-shadow:inset 1px 1px 0 rgba(255,255,255,.35),inset -1px -1px 0 rgba(0,0,0,.6),0 0 0 1px var(--edge)}
 .item i.commit{background:#8FA9B8}.item i.pr{background:var(--orange)}.item i.merged{background:#B79CD9}.item i.lines{background:#D9C07A}

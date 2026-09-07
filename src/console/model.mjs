@@ -215,22 +215,3 @@ function alert(kind, iss, r, text, now) {
     : (r.segments.filter((s) => s.kind === 'blocked' || s.kind === 'question').at(-1)?.from || now);
   return { kind, issueKey: iss.key, title: iss.title, runKey: r.key, role: r.role, agent: r.agent, agentKind: r.agentKind, workspaceId: r.workspaceId, prUrl: r.prUrl, url: iss.url, text, sinceMs: now - since, light: r.light };
 }
-
-/** What the belt carries: the factory's real output, newest first. */
-export function beltItems(factories, limit = 24) {
-  const items = [];
-  for (const f of factories) for (const iss of f.issues) {
-    for (const r of iss.runs) {
-      const t = Date.parse(r.finishedAt || r.startedAt || '') || 0;
-      if (r.status === 'merged') items.push({ t: t + 2, kind: 'merged', text: `${iss.key} merged` });
-      if (r.prUrl) items.push({ t: t + 1, kind: 'pr', text: `PR #${r.prUrl.split('/').pop()}` });
-      if (r.size) {
-        if (r.size.added || r.size.removed) items.push({ t, kind: 'lines', text: `+${r.size.added} −${r.size.removed}` });
-        for (const c of r.size.commits.slice(0, 3)) items.push({ t: t - 1, kind: 'commit', text: `commit ${c.sha}` });
-      }
-    }
-  }
-  items.sort((a, b) => b.t - a.t);
-  const seen = new Set();
-  return items.filter((i) => !seen.has(i.text) && seen.add(i.text)).slice(0, limit).map(({ kind, text }) => ({ kind, text }));
-}

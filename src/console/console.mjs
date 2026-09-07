@@ -7,7 +7,7 @@ import path from 'node:path';
 import { mergeConfig } from '../config.mjs';
 import { exitCommandFor } from '../agents.mjs';
 import { isStale, loadRegistry } from './registry.mjs';
-import { beltItems, factoryView, indexSnapshot, parseLog, watchWorkspaces } from './model.mjs';
+import { factoryView, indexSnapshot, parseLog, watchWorkspaces } from './model.mjs';
 import { complexity, runSize } from './git.mjs';
 
 const LOG_TAIL = 512 * 1024;
@@ -31,7 +31,7 @@ export class FactoryConsole {
     this.caches = new Map(); // repo → { config, local, state, log }
     this.sizes = new Map();  // runKey → { at, head, value }
     this.listeners = new Set();
-    this.current = { hostname, version, herdr: { connected: false, version: null }, factories: [], belt: [], generatedAt: new Date().toISOString() };
+    this.current = { hostname, version, herdr: { connected: false, version: null }, factories: [], generatedAt: new Date().toISOString() };
     this.hash = null;
     this.timer = null;
   }
@@ -112,7 +112,7 @@ export class FactoryConsole {
     const next = {
       hostname: this.hostname, version: this.version,
       herdr: { connected: !!snapshot, version: index.version },
-      factories, belt: beltItems(factories),
+      factories,
       generatedAt: new Date(now).toISOString(),
     };
     // Elapsed times move every tick; only a change in what is *shown* is worth a push.
