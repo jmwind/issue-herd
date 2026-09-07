@@ -91,20 +91,23 @@ given. See [More than one turn](roles.md#more-than-one-turn-passes).
    herdr will not type into it. That is not a failed run: the prompt is kept, you get the ✋ comment
    and notification, and the supervisor sends the brief the moment you answer the dialog.
 6. Comment on the issue, assign it to you, move it to In Progress.
-7. A supervisor waits on `herdr agent wait`. When Claude writes `runs/<KEY>/result.json`
+7. A supervisor waits on `herdr agent wait`, a minute at a time, and looks for
+   `runs/<KEY>/result.json` after each wait. When Claude writes it
    (`pr_open | needs_human | nothing_to_do | failed`, PR URL, summary, testing notes) the watcher
    comments the result on the issue, moves it to In Review on `pr_open`, and sends a herdr
-   notification. If Claude gets **blocked** on a permission dialog or **stops** to ask a question,
-   you get one comment and one notification telling you which workspace to open.
+   notification — whether or not the agent has stopped, so an implementer that stays up to merge
+   once the reviewers agree still hands off to them the moment its result is in. If Claude gets
+   **blocked** on a permission dialog or **stops** to ask a question, you get one comment and one
+   notification telling you which workspace to open.
 8. Workspaces are left open so you can inspect, test, and steer.
 9. On `pr_open`, the run is not over: issue-herd keeps watching the pull request (once a minute,
    whatever `pollSeconds` says). Merging is yours, unless the issue said the PR may be merged once
    reviewed — then the implementer merges it itself, and only after every reviewing role has said
-   OK on the issue ([roles](roles.md#the-briefs-that-ship)). When GitHub says it is **merged**, you
-   get a notification saying so and naming the workspace and worktree the run is still holding, and
-   the run is recorded as
-   `merged`. Nothing is torn down unless you asked for it in `onMerged` — see below. A PR **closed
-   without merging** just stops being watched.
+   OK on the issue; a repository with no reviewing role has nothing to say OK, so the PR waits for
+   you ([roles](roles.md#the-briefs-that-ship)). When GitHub says it is **merged**, you get a
+   notification saying so and naming the workspace and worktree the run is still holding, and the
+   run is recorded as `merged`. Nothing is torn down unless you asked for it in `onMerged` — see
+   below. A PR **closed without merging** just stops being watched.
 
 If you restart the watcher, it re-attaches to agents that are still alive, finalizes any run whose
 result file appeared while it was down, and goes on watching the pull requests it had not seen

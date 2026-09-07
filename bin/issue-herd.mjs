@@ -75,6 +75,9 @@ function hms() { return new Date().toTimeString().slice(0, 8); }
 const TTY = process.stdout.isTTY;
 let liveLine = false;
 /** An event: its own line, on screen and in the log file. Clears the live heartbeat line first. */
+/** How long one `herdr agent wait` may block before the supervisor re-reads result.json. */
+const RESULT_CHECK_MS = 60_000;
+
 function log(...a) {
   const line = `[${ts()}] ${a.join(' ')}`;
   if (liveLine && TTY) { process.stdout.write('\r\x1b[2K'); liveLine = false; }
@@ -805,7 +808,12 @@ class IssueHerd {
     while (run.status === 'running') {
       // A brief herdr would not take at pickup is owed to the agent; give it the moment it will.
       if (run.pendingPrompt && await this.deliverPrompt(key, run)) run.notified.blocked = false;
-      const st = await this.herdr.waitAgent(name, { timeoutMs: 6 * 3600e3 });
+      // Bounded, not "until it settles": a result is read on every turn of this loop, so an agent
+      // that writes result.json and keeps working — the implementer the issue let merge, waiting
+      // for the reviewers' verdicts — is finalized within a minute rather than when it finally
+      // stops. Otherwise the handoff its result was meant to make would wait on the reviews it
+      // is waiting for. A `timeout` answer just comes back round.
+      const st = await this.herdr.waitAgent(name, { timeoutMs: RESULT_CHECK_MS });
       const result = readJson(run.resultPath, null);
       if (result) { await this.finalize(key, result, rule); return; }
       if (st === 'gone') {

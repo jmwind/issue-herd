@@ -18,6 +18,8 @@ const BIN = fileURLToPath(new URL('../bin/issue-herd.mjs', import.meta.url));
  *     Code comes up on its trust dialog; the second prompt is accepted.
  *   mode "adopt": `agent get` always finds an agent, as it does when an earlier attempt at this
  *     issue left its session running.
+ *   mode "working": `agent wait` never sees the agent settle — it times out every time, as it does
+ *     while an agent that has written its result keeps working (waiting for reviewers to merge).
  * An accepted prompt writes the result.json the brief asks for, which is the agent's whole job here.
  */
 function fakeHerdr(t, { mode, cwd }) {
@@ -45,7 +47,7 @@ if (noun === 'agent' && verb === 'prompt') {
   if (brief) fs.writeFileSync(path.join(path.dirname(brief[1]), 'result.json'), JSON.stringify({ status: 'pr_open', prUrl: 'https://example.test/pr/1', summary: 'fake agent' }));
   ok({});
 }
-if (noun === 'agent' && verb === 'wait') ok({ agent: { agent_status: 'idle' } });
+if (noun === 'agent' && verb === 'wait') { if (mode === 'working' && !rest.includes('--until')) no('timeout', 'agent ' + rest[0] + ' did not settle'); ok({ agent: { agent_status: 'idle' } }); }
 if (noun === 'agent' && verb === 'read') { process.stdout.write('fake terminal\\n'); process.exit(0); }
 if (noun === 'workspace' && verb === 'create') ok({ workspace: { workspace_id: 'w1' }, tab: { tab_id: 'w1:t1' }, root_pane: { pane_id: 'w1:p1' } });
 ok({});
@@ -97,6 +99,20 @@ test('a pickup for an issue whose agent is still running reuses that session', (
   assert.doesNotMatch(herdr.calls(), /agent start/);
   assert.doesNotMatch(herdr.calls(), /workspace create/);
   assert.equal(r.status, 0);
+});
+
+test('a result written by an agent that keeps working is finalized without waiting for it to stop', (t) => {
+  // GH-45: the implementer may merge its own PR once the reviewers say OK, so it writes result.json
+  // and then waits for them. The supervisor used to wait up to six hours for the agent to settle
+  // before reading the file, so the very handoff that starts those reviewers never happened.
+  const dir = repo(t);
+  const herdr = fakeHerdr(t, { mode: 'working', cwd: dir });
+  const r = smoke(dir, herdr);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /done/);
+  // The wait is bounded to a minute, so the next read of result.json is never far away.
+  assert.match(herdr.calls(), /agent wait \S+ --timeout 60000\n/);
+  assert.doesNotMatch(herdr.calls(), /agent wait \S+ --timeout 21600000/);
 });
 
 test('a role reaches the herdr sidebar, the agent name and the run key', (t) => {

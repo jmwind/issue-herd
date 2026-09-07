@@ -50,7 +50,8 @@ One line per thing that happened, and one live line at the bottom rewritten afte
   issue at once, on different providers and different models, with the reviewer's worktree cut from
   the implementer's actual branch.
 - **It knows when it is done.** After the PR opens the run keeps watching it. When it merges you get
-  told, and it tears down only what you asked it to.
+  told, and it tears down only what you asked it to. If the issue said the PR may be merged once
+  reviewed, the implementer merges it itself — once every reviewer has said OK, and never without one.
 - **It fails visibly.** An agent stuck on a permission dialog or stopped with a question gets one
   comment on the issue and one notification, naming the workspace to open. It does not sit there
   silently burning an afternoon.
