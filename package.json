@@ -1,6 +1,6 @@
 {
   "name": "issue-herd",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Watch Linear or GitHub Issues; when an issue matches a rule, open a herdr workspace, run Claude Code in a worktree, brief it, and report the PR back to the issue.",
   "type": "module",
   "bin": {
