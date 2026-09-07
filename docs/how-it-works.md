@@ -197,7 +197,8 @@ Three screens, in Factorio's idiom because a factory is what this is:
 - **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
   waiting on you, done) plus a "you" row, lines added and removed with a size grade and its reason,
   each role's report, a merged scrollback (the last 100 lines of every agent on the task, one
-  block per role in that role's colour, read only), and one close button.
+  block per role in that role's colour, read only; while an agent is working, herdr can only
+  give the screen it is showing right now, so the block is shorter), and one close button.
 - **Factory picker.** Every factory with its tracker, last poll, running and alert counts, a
   watcher not seen for three polls marked stale, and the chosen factory's rules in three lines.
 

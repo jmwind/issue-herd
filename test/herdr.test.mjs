@@ -105,3 +105,52 @@ test('agentPlacement reads an existing agent as somewhere to work', () => {
   assert.equal(agentPlacement({ cwd: '/repo' }).cwd, '/repo');
   assert.equal(agentPlacement(null).cwd, null);
 });
+
+/**
+ * A stand-in `herdr` whose `agent read` answers the way the real one does for an agent that is
+ * working: `recent-unwrapped` is refused with `agent_not_idle` and only `visible` prints anything.
+ * Every call is logged so the test can see which sources were asked for.
+ */
+function fakeBusyReadHerdr({ idle = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-read-'));
+  const bin = path.join(dir, 'herdr');
+  fs.writeFileSync(bin, [
+    '#!/bin/sh',
+    `d="${dir}"`,
+    'echo "$*" >> "$d/calls"',
+    'if [ "$1 $2" = "agent read" ]; then',
+    '  src=""; while [ $# -gt 0 ]; do if [ "$1" = "--source" ]; then src="$2"; fi; shift; done',
+    `  if [ "$src" = "recent-unwrapped" ] && [ "${idle ? 'yes' : 'no'}" = "no" ]; then`,
+    '    printf \'%s\' \'{"error":{"code":"agent_not_idle","message":"cannot read 100 lines while gh-40-impl is working: its alternate-screen history can only be captured by scrolling while idle. Wait and retry, or use --source visible"},"id":"cli:agent:read"}\' >&2; exit 1',
+    '  fi',
+    '  printf \'%s\\n\' "lines from $src"; exit 0',
+    'fi',
+    "printf '%s' '{\"result\":{}}'",
+  ].join('\n'), { mode: 0o755 });
+  return { bin, dir };
+}
+
+test('readAgent falls back to the visible screen while the agent is working (GH-41)', async () => {
+  // Real refusal: {"error":{"code":"agent_not_idle","message":"cannot read 100 lines while gh-40-impl is working: ..."},"id":"cli:agent:read"}
+  const { bin, dir } = fakeBusyReadHerdr();
+  const h = new Herdr({ bin });
+  assert.equal(await h.readAgent('gh-40-impl', 100), 'lines from visible\n');
+  const calls = fs.readFileSync(path.join(dir, 'calls'), 'utf8').trim().split('\n');
+  assert.deepEqual(calls, [
+    'agent read gh-40-impl --source recent-unwrapped --lines 100 --format text',
+    'agent read gh-40-impl --source visible --lines 100 --format text',
+  ]);
+});
+
+test('readAgent keeps the fuller history when the agent is idle', async () => {
+  const { bin, dir } = fakeBusyReadHerdr({ idle: true });
+  const h = new Herdr({ bin });
+  assert.equal(await h.readAgent('gh-40-impl', 100), 'lines from recent-unwrapped\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'calls'), 'utf8').trim().split('\n').length, 1);
+});
+
+test('readAgent reports other herdr errors by their message, not the raw JSON', async () => {
+  const bin = fakeHerdr({ error: { code: 'agent_not_found', message: 'agent target gh-40-impl not found' }, id: 'cli:agent:read' });
+  const h = new Herdr({ bin });
+  await assert.rejects(() => h.readAgent('gh-40-impl'), (e) => e.code === 'agent_not_found' && /agent target gh-40-impl not found/.test(e.message) && !/\{"error"/.test(e.message));
+});
