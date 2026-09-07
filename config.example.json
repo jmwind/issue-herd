@@ -4,6 +4,8 @@
   "lookbackDays": 30,
   "maxConcurrent": 3,
   "roles": null,
+  "baseBranch": null,
+  "pullBase": true,
   "defaults": {
     "worktree": "self",
     "branch": "{{issueBranchName}}{{roleSuffix}}",

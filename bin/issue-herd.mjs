@@ -38,7 +38,7 @@ import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCrede
 import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
-import { catchUp, makeWorktree, removeWorktree } from '../src/worktree.mjs';
+import { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } from '../src/worktree.mjs';
 import { agentArgv, describeAgent, exitCommandFor, TRANSLATED_KINDS } from '../src/agents.mjs';
 import { parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
 import { GitHubTracker } from '../src/trackers/github.mjs';
@@ -145,6 +145,16 @@ const DEFAULTS = {
   // ask for"; a list switches on exactly those, so turning a role off is one line rather than
   // deleting the rules that use it. See src/claim.mjs.
   roles: null,
+  // The branch runs are cut from, and the one the watcher's own checkout is kept on. null asks the
+  // repository: origin/HEAD, else main or master. Merges land on the remote, so both halves of this
+  // start with a fetch — without it every worktree is cut from whatever this checkout was standing
+  // on the last time somebody pulled it by hand, which in a factory is old code.
+  baseBranch: null,
+  // Fast-forward this checkout onto `baseBranch` when a run is picked up and when a pull request
+  // from one is merged. Only ever forwards, only when the checkout is clean and standing on that
+  // branch: anything else is reported and left alone. Turn it off if the directory you started the
+  // watcher in is yours to move.
+  pullBase: true,
   defaults: {
     // Who creates the git worktree a run works in. "self" is issue-herd, with one `git worktree
     // add` on the branch below, so the directory and the branch are both settled before the agent
@@ -460,7 +470,12 @@ class IssueHerd {
     }
 
     try {
-      // 0. An earlier attempt at this issue may have left its session running: a start that failed
+      // 0. Whatever mode this rule runs in, the checkout the watcher lives in is about to be the
+      //    starting point for a run — literally so in "none" and "herdr" modes — and merges land on
+      //    the remote, not here. This is the moment it is worth being current.
+      this.freshenCheckout(key);
+
+      // 1. An earlier attempt at this issue may have left its session running: a start that failed
       //    after `agent start` succeeded, or an `issue-herd reset` followed by another pickup. herdr
       //    agent names are unique, so building a second workspace and starting a second agent under
       //    the same name cannot work — it is refused with `agent_name_taken`, and what it leaves
@@ -470,7 +485,7 @@ class IssueHerd {
       const existing = found && isOurAgent(found, rule.repo, previous) ? found : null;
       if (found && !existing) log(`${key}: an agent called "${run.agentName}" is running in ${found.foreground_cwd || found.cwd}, which is not this repository; leaving it alone`);
 
-      // 1. workspace (+ worktree)
+      // 2. workspace (+ worktree)
       // "GH-7 review Fix the thing" — the role sits right after the key so the sidebar shows who
       // is doing what without opening anything.
       const label = workspaceLabel({ key: issue.identifier, role: rule.role, title: issue.title });
@@ -484,8 +499,13 @@ class IssueHerd {
         ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `herd/${slug}`, label });
         run.worktreePath = ws.path;
       } else if (rule.worktree === 'self') {
+        // `basedOn` is a role's branch and stays that way — it is what a later turn is caught up
+        // to, and catching an implementer up to main would throw its commits away. With no role
+        // base the start point is the default branch, which is what the config has always promised
+        // and what `git worktree add` on its own does not do: its default is this checkout's HEAD.
         run.basedOn = this.baseBranchFor(issue, rule, key);
-        const made = makeWorktree({ git, repo: rule.repo, dir: rule.worktreeDir, slug, branch: run.wantBranch || `herd/${slug}`, base: run.basedOn });
+        const from = run.basedOn || this.baseBranch();
+        const made = makeWorktree({ git, repo: rule.repo, dir: rule.worktreeDir, slug, branch: run.wantBranch || `herd/${slug}`, base: from });
         run.worktreePath = made.path;
         log(`${key}: worktree ${made.created ? 'created' : 'reused'} at ${made.path}${made.base ? ` from ${made.base}` : ''}`);
         // Anything but a worktree we just cut from the base is potentially behind it: a directory
@@ -506,7 +526,7 @@ class IssueHerd {
 
       fs.writeFileSync(path.join(archiveDir, 'issue.json'), JSON.stringify(issue, null, 2));
 
-      // 2. start claude (an adopted session is already up)
+      // 3. start claude (an adopted session is already up)
       if (!existing) {
         const agentArgs = agentArgv({
           kind: rule.agentKind, name: key, permissionMode: rule.permissionMode,
@@ -518,7 +538,7 @@ class IssueHerd {
         log(`${key}: claude started as agent "${run.agentName}"`);
       }
 
-      // 3. brief — written INSIDE the working tree the agent actually uses, under the gitignored
+      // 4. brief — written INSIDE the working tree the agent actually uses, under the gitignored
       // .issue-herd/state/, so reading and writing it needs no permission dialog. A path in the main
       // checkout does not work from a worktree.
       let workDir = run.worktreePath;
@@ -554,7 +574,7 @@ class IssueHerd {
       saveState(this.state);
       log(`${key}: working tree ${workDir}`);
 
-      // 4. prompt. The session is up and briefed, so from here on the run is the supervisor's:
+      // 5. prompt. The session is up and briefed, so from here on the run is the supervisor's:
       // a prompt herdr will not take yet (Claude Code came up on its trust dialog, say) is a run
       // waiting for its owner, not a failed one. Failing here used to abandon a live agent that had
       // never been told what to do, and then collide with it on the retry.
@@ -626,6 +646,38 @@ class IssueHerd {
     if (!from) { log(`${key}: no '${rule.basedOn}' run on ${issue.identifier} yet, so its worktree starts from the default branch`); return null; }
     if (!from.branch) { log(`${key}: the '${rule.basedOn}' run has no branch of its own, so this worktree starts from the default branch`); return null; }
     return from.branch;
+  }
+
+  /**
+   * The branch a run is cut from when no role says otherwise, and the branch this checkout is meant
+   * to be standing on. Asked each time rather than remembered: it is two cheap git calls, and a
+   * config reload can change `baseBranch` under us.
+   */
+  baseBranch() {
+    return this.cfg.baseBranch || defaultBranch({ git, repo: REPO });
+  }
+
+  /**
+   * Keep the watcher's own checkout on the tip of that branch.
+   *
+   * A "self" worktree does not need this — it is cut from the tip whatever this checkout says — but
+   * everything else does: a `worktree: "none"` run works in this directory, `"herdr"` cuts from its
+   * HEAD, the config reloaded before every poll is read out of it, and it is the directory its
+   * owner opens. Nothing here can lose work (see pullBase), so the only thing to report is movement:
+   * a refusal is warned about once, because "you are on a branch of your own" is a state, not an
+   * event, and it would otherwise be a line in the log for every pickup for the rest of the day.
+   */
+  freshenCheckout(why) {
+    if (!this.cfg.pullBase) return null;
+    // One thing a fast-forward can disturb: a `worktree: "none"` run has an agent working in this
+    // directory right now, and moving the floor under it is not the sort of help anybody wants.
+    const busy = Object.values(this.state.runs).find((r) => r.status === 'running' && r.workDir && path.resolve(r.workDir) === REPO);
+    if (busy) return { pulled: false, reason: `${busy.issueKey} is working in it` };
+    const base = this.baseBranch();
+    const r = pullBase({ git, repo: REPO, base });
+    if (r.pulled) log(`${why}: this checkout fast-forwarded onto ${r.ref} (${String(r.from).slice(0, 7)} → ${String(r.at).slice(0, 7)})`);
+    else if (r.reason !== 'already up to date') this.warnOnce(`pullBase:${r.reason}`, `this checkout is not being pulled onto ${base}: ${r.reason}`);
+    return r;
   }
 
   /** The directory Claude is working in: the worktree it created, or the repo. Polls herdr until it settles. */
@@ -865,6 +917,9 @@ class IssueHerd {
       }
       run.mergedAt = pr.mergedAt || new Date().toISOString();
       log(`${key}: ${run.prUrl} is merged`);
+      // That merge is a commit on the base branch that this checkout does not have. Runs are cut
+      // from the tip either way, but the directory you and the "none"/"herdr" modes work in is not.
+      this.freshenCheckout(key);
       const did = await this.shutdown(key, run, rule);
       run.status = 'merged'; run.finishedAt = new Date().toISOString(); saveState(this.state);
       // The notification only carries the first line, and with nothing switched on the thing you

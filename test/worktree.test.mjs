@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { catchUp, makeWorktree, removeWorktree, worktreeRoot } from '../src/worktree.mjs';
+import { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree, worktreeRoot } from '../src/worktree.mjs';
 
 const git = (args, cwd) => {
   try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
@@ -248,4 +248,109 @@ test('a worktree put back on an existing branch is not silently left behind', ()
     try { execFileSync('git', ['worktree', 'prune'], { cwd: dir, stdio: 'ignore' }); } catch { /* going away */ }
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------- keeping up with the base branch
+
+/** A clone with a real `origin` behind it. Both go away when the test ends. */
+function clone(t) {
+  const origin = repo(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-clone-'));
+  t.after(() => {
+    try { execFileSync('git', ['worktree', 'prune'], { cwd: dir, stdio: 'ignore' }); } catch { /* going away anyway */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync('git', ['clone', '-q', origin, dir]);
+  return { at: fs.realpathSync(dir), origin };
+}
+
+/** Commit a file on the branch `dir` is standing on — a pull request landing on origin. Returns the sha. */
+function commit(dir, file, body) {
+  fs.writeFileSync(path.join(dir, file), body);
+  git(['add', file], dir);
+  git(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', `add ${file}`], dir);
+  return git(['rev-parse', 'HEAD'], dir);
+}
+
+test('a run is cut from the tip of main, not from a checkout that never pulled', (t) => {
+  // The bug this exists for: merges land on origin, nothing pulls this checkout, and `git worktree
+  // add` starts from its HEAD — so every run after the first merge builds on code that is already
+  // behind, and its pull request arrives full of conflicts nobody wrote.
+  const { at, origin } = clone(t);
+  const merged = commit(origin, 'merged.txt', 'a pull request that landed\n');
+
+  const made = makeWorktree({ git, repo: at, slug: 'gh-35', branch: 'herd/gh-35', base: 'main' });
+  assert.equal(made.base, 'origin/main');
+  assert.equal(git(['rev-parse', 'HEAD'], made.path), merged);
+  assert.equal(fs.readFileSync(path.join(made.path, 'merged.txt'), 'utf8'), 'a pull request that landed\n');
+  // the run's branch answers to nobody: cutting it from origin/main by name would have made main
+  // its upstream, so `git push -u origin HEAD` in the worktree is still the agent's own decision
+  assert.equal(git(['rev-parse', '--abbrev-ref', 'herd/gh-35@{upstream}'], made.path), null);
+  // and the checkout itself is not moved by this — pullBase is what does that, deliberately
+  assert.notEqual(git(['rev-parse', 'main'], at), merged);
+});
+
+test('the default branch is what the repository says it is', (t) => {
+  const { at } = clone(t);
+  assert.equal(defaultBranch({ git, repo: at }), 'main', 'origin/HEAD answers first');
+
+  const solo = repo(t);
+  assert.equal(defaultBranch({ git, repo: solo }), 'main', 'no remote: a local main will do');
+  git(['checkout', '-q', '-b', 'trunk'], solo);
+  git(['branch', '-D', 'main'], solo);
+  assert.equal(defaultBranch({ git, repo: solo }), 'trunk', 'and finally: wherever it is standing');
+});
+
+test('the checkout the watcher lives in is fast-forwarded onto main', (t) => {
+  // "worktree": "none" runs work in this directory, "herdr" cuts from its HEAD, and the config
+  // reloaded before every poll is read out of it. It has to move too.
+  const { at, origin } = clone(t);
+  const merged = commit(origin, 'merged.txt', 'a pull request that landed\n');
+
+  const pulled = pullBase({ git, repo: at, base: 'main' });
+  assert.equal(pulled.pulled, true);
+  assert.deepEqual({ at: pulled.at, ref: pulled.ref }, { at: merged, ref: 'origin/main' });
+  assert.equal(git(['rev-parse', 'HEAD'], at), merged);
+  assert.equal(fs.existsSync(path.join(at, 'merged.txt')), true);
+
+  const again = pullBase({ git, repo: at, base: 'main' });
+  assert.deepEqual({ pulled: again.pulled, reason: again.reason }, { pulled: false, reason: 'already up to date' });
+});
+
+test('keeping the checkout current can never lose what is in it', (t) => {
+  // It is the maintainer's directory, not ours. Every one of these says why and changes nothing.
+  const { at, origin } = clone(t);
+  const stale = git(['rev-parse', 'HEAD'], at);
+  commit(origin, 'merged.txt', 'a pull request that landed\n');
+
+  fs.writeFileSync(path.join(at, 'wip.txt'), 'half a thought\n');
+  git(['add', 'wip.txt'], at);
+  assert.match(pullBase({ git, repo: at, base: 'main' }).reason, /uncommitted changes/);
+  git(['rm', '-q', '-f', 'wip.txt'], at);
+
+  git(['checkout', '-q', '-b', 'mine'], at);
+  assert.match(pullBase({ git, repo: at, base: 'main' }).reason, /is on mine, not main/);
+  git(['checkout', '-q', 'main'], at);
+
+  commit(at, 'local.txt', 'work that was never pushed\n');
+  const own = git(['rev-parse', 'HEAD'], at);
+  assert.match(pullBase({ git, repo: at, base: 'main' }).reason, /have each moved on/);
+  assert.equal(git(['rev-parse', 'HEAD'], at), own, 'still exactly where it was');
+  assert.equal(fs.readFileSync(path.join(at, 'local.txt'), 'utf8'), 'work that was never pushed\n');
+
+  assert.deepEqual(pullBase({ git, repo: at, base: null }), { pulled: false, reason: 'no base branch to pull' });
+  // a base this checkout is not standing on is somebody else's branch, whether or not it exists
+  assert.match(pullBase({ git, repo: at, base: 'no-such-branch' }).reason, /is on main, not no-such-branch/);
+});
+
+test('a later turn is caught up to what origin has, not to a stale local branch', (t) => {
+  // The reviewer's second turn where the implementer pushed from a machine of its own: the local
+  // branch is what this clone last heard, and it is not the code under review.
+  const { at, origin } = clone(t);
+  const wt = makeWorktree({ git, repo: at, slug: 'gh-35-review', branch: 'herd/gh-35-review', base: 'main' });
+  const merged = commit(origin, 'merged.txt', 'pushed from somewhere else\n');
+
+  const moved = catchUp({ git, repo: at, at: wt.path, base: 'main' });
+  assert.deepEqual({ moved: moved.moved, at: moved.at, ref: moved.ref }, { moved: true, at: merged, ref: 'origin/main' });
+  assert.equal(fs.readFileSync(path.join(wt.path, 'merged.txt'), 'utf8'), 'pushed from somewhere else\n');
 });
