@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apiBase, parsePrUrl, prState, stateOf, watchesMerge } from '../src/pr.mjs';
+import { apiBase, parsePrUrl, prForBranch, prState, stateOf, watchesMerge } from '../src/pr.mjs';
 
 /** A fetch that answers one GitHub payload and records what it was asked. */
 function fakeFetch(body, { status = 200 } = {}) {
@@ -82,4 +82,16 @@ test('a rule is watched to the merge unless every onMerged step is off', () => {
   assert.equal(watchesMerge({ onMerged: { exitAgent: false, closeWorkspace: false, removeWorktree: false, comment: false, notify: false } }), false);
   assert.equal(watchesMerge({ onMerged: {} }), false, '"onMerged": null in config lands here');
   assert.equal(watchesMerge({}), false);
+});
+
+test('prForBranch asks GitHub for the newest PR whose head is the branch, and says when there is none', async () => {
+  const calls = [];
+  const fetchImpl = async (url, { headers }) => { calls.push({ url, auth: headers.authorization });
+    return { ok: true, status: 200, text: async () => JSON.stringify(url.includes('7-fix') ? [{ html_url: 'https://github.com/o/r/pull/9', number: 9, state: 'open', merged_at: null }] : []) }; };
+  const pr = await prForBranch({ repo: 'o/r', branch: '7-fix-the-thing', token: 't', fetchImpl });
+  assert.deepEqual(pr, { url: 'https://github.com/o/r/pull/9', number: 9, state: 'open', mergedAt: null });
+  assert.match(calls[0].url, /repos\/o\/r\/pulls\?head=o%3A7-fix-the-thing&state=all/);
+  assert.equal(calls[0].auth, 'Bearer t');
+  assert.equal(await prForBranch({ repo: 'o/r', branch: 'nothing-here', fetchImpl }), null);
+  assert.equal(await prForBranch({ repo: null, branch: 'x', fetchImpl }), null);
 });

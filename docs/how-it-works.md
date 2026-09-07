@@ -176,6 +176,65 @@ otherwise whatever this machine has for GitHub — `GITHUB_TOKEN`, `issue-herd l
 GitHub host this machine trusts is refused rather than fetched: `result.json` is written by an agent
 that has read the issue's text, so it does not get to say where your token goes.
 
+## The console: `issue-herd console`
+
+The watcher pane tells one factory's story in text. The console shows every factory on the machine
+in a browser, phone first, and is built from one question: *what changes what you do next?*
+
+```bash
+issue-herd console                 # http://127.0.0.1:8498/
+issue-herd console set-passcode    # gate it, and serve it on this machine's Tailscale address too
+```
+
+Three screens, in Factorio's idiom because a factory is what this is:
+
+- **Overview.** A factory picker in the title bar (one machine runs several), then **Alerts**
+  (one card per task that needs a person, with what to do about it), **Assembling** (one row per
+  open issue, with how long it has waited on you), and **Output today**. Every task shows the
+  roles that worked on it, lines added and removed with a size grade, and the state of its issue
+  and its pull request. The belt across the top
+  carries the factory's four numbers.
+- **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
+  waiting on you, done) plus a "you" row, lines added and removed with a size grade and its reason,
+  each role's report, a merged scrollback (the last 100 lines of every agent on the task, one
+  block per role in that role's colour, read only), and one close button.
+- **Factory picker.** Every factory with its tracker, last poll, running and alert counts, a
+  watcher not seen for three polls marked stale, and the chosen factory's rules in three lines.
+
+**Where it reads from.** Each watcher stamps `~/.config/issue-herd/factories.json` every poll
+(name, tracker, version, last poll); the console lists those entries, plus any `<name>Watch`
+workspace herdr shows, and reads each factory's `config.json`, `state.json` and log directly. Agent
+state is one `herdr api snapshot` per tick (every 2s). Lines changed come from `git diff` in the
+run's worktree. A run's `result.json` in its worktree is read live, so an agent that rewrote it
+after the watcher recorded the first version (a plan that became a PR) is shown as it stands.
+The issue's state (open, closed) and the PR's (open, closed, merged) come from the
+tracker and GitHub with the credentials this machine already has (the saved login, `gh`, or the
+factory's own `.env.local`); a run that never recorded a PR gets the one GitHub has for its
+branch. One call per task, every 90s for tasks in flight or finished this
+week and every 30 minutes for older ones; without a credential those fields are not shown.
+Nothing is written except the registry.
+
+**Mark done.** A task can sit in Alerts with nothing left to do about it: a failed start that was
+retried elsewhere, a report already acted on. The button clears its alerts and moves it to
+output; that is a person's decision, recorded in `~/.config/issue-herd/console.json` (the
+console's own file, never the watcher's state), and a newer run on the task brings it back.
+
+**Close.** One button per task: every agent still up on it is sent its own exit command (`/exit`
+for Claude Code, `/quit` for codex) and shuts down the way it wants. Workspaces and worktrees
+stay; `onMerged` is still where clean-up is configured.
+
+**The gate.** With no passcode the console binds to loopback only and asks nothing. With one
+(`set-passcode`, at least four digits because the phone's keypad has no letters; stored as a
+salted scrypt hash in `credentials.json`, never in a repository) it
+also binds to this machine's Tailscale address, never `0.0.0.0`, and nothing about any factory is
+served before the passcode: a correct entry sets an `HttpOnly`, `SameSite=Strict` cookie for a day;
+five wrong entries from one address lock the gate for five minutes and are logged; actions are
+POSTs checked for a same-origin `Origin`. Tailscale encrypts the wire, so the console speaks plain
+HTTP. `--port N` or `ISSUE_HERD_CONSOLE_PORT` changes the port; `console clear-passcode` goes
+back to loopback only. No tailnet? `--host 192.168.1.20` binds one named address as well (your
+Wi-Fi one, for a phone on the same network), gated the same way; it is refused without a passcode,
+and `0.0.0.0` is refused always.
+
 ## Manual testing and screenshots
 
 The agent has no in-app Browser pane here. The brief tells it to verify with unit tests and to

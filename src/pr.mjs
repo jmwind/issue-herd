@@ -62,3 +62,23 @@ export async function prState(url, { token = null, host = 'github.com', fetchImp
   }
   return { state: stateOf(json), mergedAt: json?.merged_at || null, number: pr.number, url };
 }
+
+/**
+ * The pull request whose head is `branch` in `repo` ("owner/name"), or null. Every run has a
+ * branch, so this finds the PR even when the run never recorded one (an older result, a PR
+ * opened by hand, a result written after the watcher stopped reading it). Newest first, so a
+ * reopened branch answers with its latest PR.
+ */
+export async function prForBranch({ repo, branch, token = null, host = 'github.com', fetchImpl = fetch }) {
+  if (!repo || !branch) return null;
+  const owner = repo.split('/')[0];
+  const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'issue-herd' };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const q = `head=${encodeURIComponent(`${owner}:${branch}`)}&state=all&sort=created&direction=desc&per_page=1`;
+  const res = await fetchImpl(`${apiBase(host)}/repos/${repo}/pulls?${q}`, { headers });
+  const text = await res.text();
+  if (!res.ok) { const e = new Error(`GitHub HTTP ${res.status} for ${repo} pulls?head=${branch}: ${text.slice(0, 120)}`); e.status = res.status; throw e; }
+  let list = []; try { list = JSON.parse(text); } catch { /* not json */ }
+  const pr = Array.isArray(list) ? list[0] : null;
+  return pr ? { url: pr.html_url, number: pr.number, state: stateOf(pr), mergedAt: pr.merged_at || null } : null;
+}
