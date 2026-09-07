@@ -161,6 +161,8 @@ test('a PR waiting on reviewers is nobody\'s wait, and a reviewer\'s report is n
   const done = factoryView({ id: 'x', repo: '/r', config, state: { runs: later }, index: indexSnapshot(idle), now: T(21, 0) });
   assert.deepEqual(done.alerts.map((a) => [a.kind, a.role]), [['merge', 'impl']], 'reviewers who finished are done, not alerts, and no one is "holding" a workspace on a task in flight');
   assert.equal(done.alerts[0].text, 'Pull request open; review has findings, usability found nothing blocking. Waiting for your merge.');
+  assert.equal(done.alerts[0].verdicts, 'review has findings, usability found nothing blocking', 'shown under the alert line, where a phone can see it');
+  assert.deepEqual(done.issues[0].runs.map((r) => r.ownsPr), [true, false, false]);
   assert.equal(done.alerts[0].sinceMs, 10 * 60e3, 'waited on since usability finished, not since the PR opened');
   assert.equal(done.issues[0].humanWaitMs, 10 * 60e3);
   assert.equal(done.issues[0].phrase, 'impl awaiting your merge');

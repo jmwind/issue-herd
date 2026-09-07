@@ -30,6 +30,8 @@
     else out.push('<span class="st dim">no PR</span>');
     return '<span class="stats">' + out.join('') + '</span>';
   }
+  // A run's result as a word: the raw status for the run that owns the PR, the model's reading for a reviewer (a report, not a decision).
+  function verdict(r) { return r.result && r.ownsPr ? r.result.status.replace('_', ' ') : r.phrase; }
   var SHORT = { blocked: 'blocked on a dialog', question: 'stopped to ask', merge: 'PR waits for your merge', needs_human: 'needs your decision', holding: 'still holding its workspace', stopped: 'stopped without a result', failed: 'failed', gone: 'agent gone' };
   function current() { if (!view) return null; if (chosen === 'all' || !chosen) return factories().length === 1 ? factories()[0] : null; return factories().filter(function (f) { return f.id === chosen; })[0] || null; }
   function shown() { var f = current(); return f ? [f] : factories(); }
@@ -70,7 +72,7 @@
       (iss.light === 'green' && iss.bucket === 'inflight' ? '<span class="craft"><i></i></span>' : '') + '</a>';
   }
   function taskCard(f, iss, alerts, many) {
-    var lines = alerts.map(function (a) { return '<li title="' + esc(a.text) + '"><i class="led ' + esc(a.light) + ' still"></i><b>' + esc(a.role || 'agent') + '</b> ' + esc(SHORT[a.kind] || a.kind) + (a.kind === 'holding' && a.workspaceId ? ' ' + esc(a.workspaceId) : '') + ' <small>' + dur(a.sinceMs + drift()) + '</small></li>'; }).join('');
+    var lines = alerts.map(function (a) { return '<li title="' + esc(a.text) + '"><i class="led ' + esc(a.light) + ' still"></i><b>' + esc(a.role || 'agent') + '</b> ' + esc(SHORT[a.kind] || a.kind) + (a.kind === 'holding' && a.workspaceId ? ' ' + esc(a.workspaceId) : '') + ' <small>' + dur(a.sinceMs + drift()) + '</small>' + (a.verdicts ? '<span class="verdicts">' + esc(a.verdicts) + '</span>' : '') + '</li>'; }).join('');
     var acts = '', seen = {};
     alerts.forEach(function (a) {
       if (a.kind === 'merge' && a.prUrl && !seen.merge) { seen.merge = 1; acts += '<a class="btn confirm" href="' + esc(a.prUrl) + '" target="_blank" rel="noopener">✓ Merge on GitHub</a>'; }
@@ -156,7 +158,7 @@
     var t0 = Date.parse(iss.startedAt), t1 = iss.finishedAt ? Date.parse(iss.finishedAt) : Date.now(); if (t1 - t0 < 60000) t1 = t0 + 60000;
     var bars = iss.runs.map(function (r, ri) {
       var segs = r.segments.map(function (s) { var l = Math.max(0, (s.from - t0) / (t1 - t0) * 100), w = Math.max(0.5, (Math.min(s.to, t1) - s.from) / (t1 - t0) * 100); return '<i class="' + esc(s.kind) + '" style="left:' + l.toFixed(2) + '%;width:' + w.toFixed(2) + '%"></i>'; }).join('');
-      var v = dur((r.finishedAt ? r.elapsedMs : r.elapsedMs + drift())) + ' · ' + esc(r.result ? r.result.status.replace('_', ' ') : r.phrase);
+      var v = dur((r.finishedAt ? r.elapsedMs : r.elapsedMs + drift())) + ' · ' + esc(verdict(r));
       return '<div class="role"><span class="n" style="color:' + roleColor(r.role, ri) + '">' + esc(r.role || r.rule) + '<small>' + esc(r.agentKind) + (r.pass > 1 ? ' · pass ' + r.pass : '') + '</small></span><div class="bar">' + segs + '</div><span class="v">' + v + '</span></div>';
     }).join('');
     var waits = [];
@@ -170,7 +172,7 @@
         (size.commits.length ? '<dt>last commit</dt><dd>' + esc(size.commits[0].sha + ' ' + size.commits[0].subject) + '</dd>' : '') +
         (size.paths.length ? '<dt>touched</dt><dd>' + esc(size.paths.slice(0, 6).join(', ') + (size.paths.length > 6 ? ' +' + (size.paths.length - 6) : '')) + '</dd>' : '') + '</dl></div>');
     } else change = section('Recipe output', '—', '<div class="inset pane"><div class="empty">No branch measured yet.</div></div>');
-    var results = iss.runs.filter(function (r) { return r.result && r.result.summary; }).map(function (r) { return '<div class="inset pane"><div class="sub" style="padding-top:0">' + esc(r.role || r.rule) + ' · ' + esc(r.result.status.replace('_', ' ')) + '</div>' + (r.result.summary.length > 600 && !expanded[r.key] ? '<p class="summary clamp">' + esc(r.result.summary) + '</p><button class="more" data-expand="' + esc(r.key) + '">Read all</button>' : '<p class="summary">' + esc(r.result.summary) + '</p>' + (r.result.notes ? '<p class="summary" style="color:var(--dim)">' + esc(r.result.notes) + '</p>' : '')) + '</div>'; }).join('');
+    var results = iss.runs.filter(function (r) { return r.result && r.result.summary; }).map(function (r) { return '<div class="inset pane"><div class="sub" style="padding-top:0">' + esc(r.role || r.rule) + ' · ' + esc(verdict(r)) + '</div>' + (r.result.summary.length > 600 && !expanded[r.key] ? '<p class="summary clamp">' + esc(r.result.summary) + '</p><button class="more" data-expand="' + esc(r.key) + '">Read all</button>' : '<p class="summary">' + esc(r.result.summary) + '</p>' + (r.result.notes ? '<p class="summary" style="color:var(--dim)">' + esc(r.result.notes) + '</p>' : '')) + '</div>'; }).join('');
     if (results) results = section('Reports', iss.runs.filter(function (r) { return r.result; }).length, results);
     var live = iss.runs.filter(function (r) { return r.agentAlive; });
     var acts = live.length ? section('Agents still up', live.length, '<div class="inset pane">' + scrollback(f.id + '|' + iss.key) + '<div class="acts"><button class="btn" data-tail="' + esc(f.id) + '|' + esc(iss.key) + '">Scrollback</button>' + closeButton(f, iss, live) + '</div></div>') : '';

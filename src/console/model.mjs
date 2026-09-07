@@ -172,7 +172,7 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     // A PR is a person's to merge from the moment the last role on the task has finished with it.
     const waitingSince = st.needsYou === 'merge' ? Math.max(finished || now, ...siblings.map((o) => Date.parse(o.finishedAt || '') || 0)) : null;
     return {
-      key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status,
+      key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status, ownsPr: ownsPr(run),
       agent: run.agentName, agentKind: rules.find((r) => r.name === run.rule)?.agent || 'claude', agentStatus: agent?.agent_status || null, agentAlive: !!agent,
       workspaceId: run.workspaceId || agent?.workspace_id || null, branch: run.branch || null, worktree: run.workDir || run.worktreePath || null,
       startedAt: run.startedAt || null, finishedAt: run.finishedAt || null,
@@ -239,8 +239,8 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     else if (why === 'question') alerts.push(alert('question', iss, r, `Stopped without a result and is probably asking a question in workspace ${r.workspaceId || '?'}.`, now));
     else if (why === 'merge') {
       // The reviews are in; their verdicts are what the person merging wants to know.
-      const reviews = iss.runs.filter((o) => o.key !== r.key && o.result).map((o) => `${o.role || o.rule} ${o.phrase}`);
-      alerts.push(alert('merge', iss, r, `Pull request open${reviews.length ? `; ${reviews.join(', ')}` : ''}. Waiting for your merge.`, now));
+      const reviews = iss.runs.filter((o) => o.key !== r.key && o.result).map((o) => `${o.role || o.rule} ${o.phrase}`).join(', ');
+      alerts.push({ ...alert('merge', iss, r, `Pull request open${reviews ? `; ${reviews}` : ''}. Waiting for your merge.`, now), verdicts: reviews || null });
     }
     else if (why === 'needs_human') alerts.push(alert('needs_human', iss, r, r.result?.summary ? clip(r.result.summary, 240) : 'Stopped for a decision only you can make.', now));
     else if (why === 'gone') alerts.push(alert('gone', iss, r, 'The run is marked running but herdr has no such agent.', now));
