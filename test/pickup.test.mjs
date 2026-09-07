@@ -32,7 +32,7 @@ const bump = (f) => { const n = Number(fs.readFileSync(path.join(dir, f), 'utf8'
 const ok = (result) => { process.stdout.write(JSON.stringify({ id: 'fake', result })); process.exit(0); };
 const no = (code, message) => { process.stderr.write(JSON.stringify({ error: { code, message }, id: 'fake' })); process.exit(1); };
 const agent = (name) => ({ agent: 'claude', name, agent_status: 'idle', interactive_ready: true, cwd, foreground_cwd: cwd, pane_id: 'w9:p1', tab_id: 'w9:t1', workspace_id: 'w9' });
-fs.appendFileSync(path.join(dir, 'calls.log'), noun + ' ' + verb + '\\n');
+fs.appendFileSync(path.join(dir, 'calls.log'), process.argv.slice(2).join(' ') + '\\n');
 if (noun === 'agent' && verb === 'get') {
   if (mode === 'adopt' || fs.existsSync(path.join(dir, 'started'))) ok({ agent: agent(rest[0]) });
   no('agent_not_found', 'agent target ' + rest[0] + ' not found');
@@ -55,12 +55,12 @@ ok({});
 }
 
 /** A git repository configured for issue-herd, cleaned up when the test ends. */
-function repo(t) {
+function repo(t, defaults = null) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-pickup-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q', dir]);
   fs.mkdirSync(path.join(dir, '.issue-herd'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.issue-herd', 'config.json'), JSON.stringify({ tracker: 'linear', rules: [{ name: 'r', match: 'any:true' }] }));
+  fs.writeFileSync(path.join(dir, '.issue-herd', 'config.json'), JSON.stringify({ tracker: 'linear', rules: [{ name: 'r', match: 'any:true' }], ...(defaults ? { defaults } : {}) }));
   return fs.realpathSync(dir);
 }
 
@@ -97,4 +97,35 @@ test('a pickup for an issue whose agent is still running reuses that session', (
   assert.doesNotMatch(herdr.calls(), /agent start/);
   assert.doesNotMatch(herdr.calls(), /workspace create/);
   assert.equal(r.status, 0);
+});
+
+test('a role reaches the herdr sidebar, the agent name and the run key', (t) => {
+  // The whole pickup path with a role on it: what herdr is actually asked for is the thing you
+  // read in the sidebar, so it is worth asserting against the real calls rather than a helper.
+  const dir = repo(t, { role: 'review', model: 'opus', agentKind: 'claude' });
+  const herdr = fakeHerdr(t, { mode: 'blocked-first', cwd: dir });
+  const r = smoke(dir, herdr);
+  assert.equal(r.status, 0, r.out);
+  const key = /picking up (SMOKE-\d+\.review)/.exec(r.out)?.[1];
+  assert.ok(key, `no role-scoped run key in the log:\n${r.out}`);
+  assert.match(r.out, /role review/);
+  // the sidebar label is "<issue key> <role> <title>"
+  assert.match(herdr.calls(), new RegExp(`workspace create .*--label ${key.replace('.review', '')} review issue-herd smoke test`));
+  // the agent is named for the run key, so the two roles on an issue are two agents
+  assert.match(herdr.calls(), new RegExp(`agent start ${key.replace('.', '-').toLowerCase()} --kind claude`));
+  // and the rule's model reaches the agent's own command line
+  assert.match(herdr.calls(), /--model opus/);
+});
+
+test('a rule that may chime in more than once says so in the brief', (t) => {
+  const dir = repo(t, { role: 'review', passes: 3 });
+  const herdr = fakeHerdr(t, { mode: 'blocked-first', cwd: dir });
+  const r = smoke(dir, herdr);
+  assert.equal(r.status, 0, r.out);
+  const brief = /is in (\S+brief\.md)/.exec(herdr.calls());
+  assert.ok(brief, `no brief path in the herdr calls:\n${herdr.calls()}`);
+  const text = fs.readFileSync(brief[1], 'utf8');
+  assert.match(text, /Turn: \*\*1 of 3\*\*/);
+  assert.match(text, /You will get another turn if the issue moves on/);
+  assert.match(text, /Role: `review`/);
 });

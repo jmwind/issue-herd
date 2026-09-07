@@ -228,7 +228,10 @@ The same fields work on every tracker; what they map to on GitHub is in
                               // actually reports, never a name issue-herd hoped for.
     "permissionMode": "auto",         // claude --permission-mode. auto = unattended (the point of a watcher);
                                       // acceptEdits still asks before every command; see `claude --help`
-    "claudeArgs": [],         // extra flags for claude, e.g. ["--model", "opus"]
+    "agentKind": "claude",    // passed to `herdr agent start --kind`; herdr decides what it can start
+    "model": null,            // becomes `--model <name>` on the agent's command line, e.g. "opus".
+                              // Per rule, so a reviewer role can run a different model from the implementer
+    "claudeArgs": [],         // extra flags for claude, e.g. ["--fallback-model", "sonnet"]
     "maxConcurrent": 2,       // per-rule cap
     "prompt": "prompts/default.md",   // brief template: .issue-herd/prompts/default.md if present, else the built-in
     "instructionsFile": "instructions.md",  // repo brief appended to the prompt; "instructions" (inline string) also works
@@ -236,6 +239,9 @@ The same fields work on every tracker; what they map to on GitHub is in
     "role": null,             // which claim this rule holds: null (the whole issue), or "impl" / "review" /
                               // "split" / any name of your own. The label becomes "herdr:review", and rules
                               // with different roles never see each other's claims. See Roles.
+    "passes": 1,              // how many turns this rule gets on one issue. 1 = take it once and be done.
+                              // More gives it another turn each time the issue moves on after it finished —
+                              // review, then confirm the fix, then the thumbs up. See Roles.
     "skipIfAssignedToOthers": true,   // leave issues held by other people alone
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
     "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
@@ -374,6 +380,10 @@ Three independent guards, checked before every pickup:
 Plus the local `state.json`, which is what stops the same watcher re-picking during a run, and
 whatever your rule says (`not state:started` excludes anything already In Progress).
 
+A rule with `"passes"` above 1 is the one deliberate exception: it may take an issue again, but
+only after the issue has moved on since it last finished, and only up to the number of turns it was
+given. See [More than one turn](#more-than-one-turn-passes).
+
 ## Roles: several agents on one issue
 
 The claim is a real distributed lock, but on its own it is binary: an issue is taken or it is not.
@@ -387,6 +397,7 @@ Give a rule a `role` and everything the run is keyed by follows it:
 | claim label | `herdr` | `herdr:review` |
 | pickup comment | `🐑 **issue-herd** picked this up on …` | `🐑 **issue-herd** picked this up as \`review\` on …` |
 | run key (`status`, `reset`, `runs/<KEY>/`) | `GH-7` | `GH-7.review` |
+| herdr sidebar | `GH-7 Fix the thing` | `GH-7 review Fix the thing` |
 | herdr agent | `gh-7` | `gh-7-review` |
 | worktree directory | `gh-7-fix-the-thing` | `gh-7-review-fix-the-thing` |
 | branch (default template) | `7-fix-the-thing` | `7-fix-the-thing-review` |
@@ -420,8 +431,42 @@ Give a rule a `role` and everything the run is keyed by follows it:
 - **The role reaches the agent.** The brief says which claim the run holds and that other agents
   may hold others on the same issue. Point each role at its own `prompt` — the built-in one tells
   the agent to implement the issue and open a PR, which is not what a reviewer should do.
+- **Each role picks its own model.** `model` (and `agentKind`, which is what herdr is asked to
+  start) are per rule, so the implementer can run one model and the reviewer another without
+  either knowing about the other.
 - `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7.review`
   forgets just that one.
+
+### More than one turn: `passes`
+
+By default a role takes an issue once and is finished with it. `"passes": 3` gives it up to three
+turns — review the work, confirm the fix, then give the thumbs up:
+
+```jsonc
+{ "name": "review", "role": "review", "passes": 3, "match": "label:ai", "prompt": "prompts/review.md" }
+```
+
+A later turn is granted on exactly one condition: **the issue moved on after the last turn
+finished.** Someone pushed a fix, a person replied, the state changed. Nothing happening means no
+turn, so a reviewer with turns left costs nothing while it waits.
+
+The obvious way for that to become a loop is for the role to answer itself — its own closing
+comment bumps the issue, which looks like the issue moving on. So when a rule has turns left,
+issue-herd re-reads the issue's own clock *after* it has finished commenting and measures the next
+turn against that. A role can never be woken by its own report.
+
+The rest of a later turn is deliberately the same run, not a new one: same run key, same claim
+label (it never came off, so the guards are not re-read — you cannot lose a lock you hold), same
+worktree, same branch, and the same herdr session if it is still up. What changes is the brief,
+which names the turn, points at what the previous turn wrote, and says that answering the change
+is the job rather than starting over. The previous `result.json` is moved to `result.pass1.json`
+before the new turn starts, so the supervisor cannot mistake the old answer for the new one, and
+each turn is archived under its own name in `runs/<KEY>/`.
+
+Two limits worth knowing. Turns are counted in `state.json`, so a watcher that loses its state
+treats the role as finished — it fails closed, and `issue-herd reset` is how you hand a turn back
+by hand. And a run still waiting for its PR to merge (`awaiting_merge`) is not eligible for another
+turn, because that watch would be lost.
 
 ## How a run works
 

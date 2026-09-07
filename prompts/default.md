@@ -11,6 +11,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
 - Run directory: `{{runDir}}`
 - **Result file you must write when finished: `{{resultPath}}`**
 {{roleLine}}
+{{passLine}}
 
 ## Issue description
 

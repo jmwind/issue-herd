@@ -131,6 +131,70 @@ export function checkRoleBranches(rules) {
   return rules;
 }
 
+/** Run statuses that are over, and so can be followed by another pass of the same role. */
+const FINISHED = new Set(['done', 'stopped', 'merged']);
+
+/**
+ * How many times this rule may chime in on one issue. 1 is the old behaviour: a role takes an
+ * issue once and is finished with it.
+ */
+export function passLimit(rule) {
+  const n = rule?.passes;
+  return n === null || n === undefined ? 1 : n;
+}
+
+/** `passes` as written in config.json, checked. `where` names the rule, because this throws at load. */
+export function normalizePasses(passes, where = 'rule') {
+  if (passes === null || passes === undefined) return 1;
+  if (!Number.isInteger(passes) || passes < 1) throw new Error(`${where}: "passes" must be a whole number of 1 or more, not ${JSON.stringify(passes)}`);
+  return passes;
+}
+
+/**
+ * The last moment this run is answerable for. Both stamps matter: `finishedAt` is when we stopped,
+ * and `issueUpdatedAt` is the issue's own clock read *after* we had finished writing to it. The
+ * later of the two is the line a change has to be on the far side of — which is what stops a rule
+ * with passes left from reading its own closing comment as the change that earns the next pass.
+ */
+function answeredAt(run) {
+  const times = [run?.issueUpdatedAt, run?.finishedAt].map((t) => Date.parse(t ?? '')).filter(Number.isFinite);
+  return times.length ? Math.max(...times) : null;
+}
+
+/** Has the issue moved since this run stopped being answerable for it? */
+export function issueMovedOn(run, issue) {
+  const since = answeredAt(run);
+  const now = Date.parse(issue?.updatedAt ?? '');
+  return since === null || !Number.isFinite(now) || now > since;
+}
+
+/**
+ * May this rule take (another) turn on an issue it already has a run for, and does it still hold
+ * the claim while doing so? Returns { pass, holdsClaim } or null for "leave it alone".
+ *
+ * Two different things come out of here:
+ *
+ *   A **retry** of a failed start. The claim was handed back when the start failed, so the guards
+ *   have to be checked again from scratch — hence holdsClaim: false — and the pass number does not
+ *   advance, because nothing was said on the issue.
+ *
+ *   Another **pass**, for a rule allowed more than one. The run finished, the issue has moved since
+ *   (someone pushed a fix, a person replied), and the role has turns left: review, then confirm the
+ *   fix, then give the thumbs up. The claim label never came off, so it is still ours and the
+ *   guards are not re-checked — you cannot lose a lock you are holding.
+ *
+ * Everything else is null, and that is what stops a reviewer reviewing forever: a finished run with
+ * no turns left, or with turns left on an issue nobody has touched, is simply not a candidate.
+ */
+export function nextPass(run, rule, issue) {
+  if (!run) return null;
+  if (run.status === 'failed') return issueMovedOn(run, issue) ? { pass: run.pass || 1, holdsClaim: false } : null;
+  if (!FINISHED.has(run.status)) return null;              // starting, running, awaiting_merge: still ours
+  if ((run.pass || 1) >= passLimit(rule)) return null;      // the role has said its piece
+  if (!issueMovedOn(run, issue)) return null;              // nothing has happened worth answering
+  return { pass: (run.pass || 1) + 1, holdsClaim: Boolean(run.claimed) };
+}
+
 /**
  * Which (issue, rule) pairs a poll should pick up.
  *
@@ -142,21 +206,43 @@ export function checkRoleBranches(rules) {
  * the rule expression, `busy(runKey, issue)` says an existing run still holds that key, and
  * `onSkip(runKey, rule, why)` reports a guard that fired. Returns [{ issue, rule, key }].
  */
-export function pickCandidates({ issues, rules, viewer, matches, busy, onSkip = () => {} }) {
+export function pickCandidates({ issues, rules, viewer, matches, runFor, onSkip = () => {} }) {
   const out = [];
   for (const issue of issues) {
     const settled = new Set();
     for (const rule of rules) {
       if (rule.enabled === false) continue;
-      if (settled.has(rule.role || '')) continue;
+      if (settled.has(rule.role || '') ) continue;
       if (!matches(issue, rule)) continue;
       settled.add(rule.role || '');
       const key = runKeyFor(issue.identifier, rule.role);
-      if (busy(key, issue)) continue;
-      const why = alreadyTaken(issue, rule, viewer);
-      if (why) { onSkip(key, rule, why); continue; }
-      out.push({ issue, rule, key });
+      const run = runFor(key);
+      const again = run ? nextPass(run, rule, issue) : null;
+      if (run && !again) continue;                     // this role is busy, or has said its piece
+      // A turn we are already holding the claim for needs no guard: the label and the comment on
+      // that issue are ours. Everything else is a fresh claim and is checked as one.
+      if (!again?.holdsClaim) {
+        const why = alreadyTaken(issue, rule, viewer);
+        if (why) { onSkip(key, rule, why); continue; }
+      }
+      out.push({ issue, rule, key, pass: again?.pass || 1, holdsClaim: Boolean(again?.holdsClaim) });
     }
   }
   return out;
+}
+
+/**
+ * What a run is called in the herdr sidebar: `<issue key> <role> <title>`.
+ *
+ * The role goes second, before the title, because the sidebar truncates and the title is the part
+ * you can afford to lose — you need to see at a glance which agent is implementing GH-7 and which
+ * is reviewing it. Only the title is trimmed, so the key and the role always survive; a run with
+ * no role reads exactly as it did before.
+ */
+export function workspaceLabel({ key, role = null, title = '', max = 48 }) {
+  const head = role ? `${key} ${role}` : String(key);
+  const rest = String(title || '').trim();
+  if (!rest) return head.slice(0, max);
+  const room = max - head.length - 1;
+  return room <= 0 ? head.slice(0, max) : `${head} ${rest.slice(0, room)}`.trim();
 }

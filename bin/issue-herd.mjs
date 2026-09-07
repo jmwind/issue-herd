@@ -33,7 +33,7 @@ import { compile } from '../src/expr.mjs';
 import { mergeConfig, overridePaths } from '../src/config.mjs';
 import { TRACKERS, isTracker, mergeSpec, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
 import { slugify, userDisplay } from '../src/tracker.mjs';
-import { alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, issueKeyOf, normalizeRole, pickCandidates, pickupMarker, runKeyFor } from '../src/claim.mjs';
+import { alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, issueKeyOf, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker, runKeyFor, workspaceLabel } from '../src/claim.mjs';
 import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCredential, saveCredential, terminalUi } from '../src/auth.mjs';
 import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
@@ -159,6 +159,13 @@ const DEFAULTS = {
     // agent is prompted. null accepts whatever the tool named it.
     branch: '{{issueBranchName}}{{roleSuffix}}',
     permissionMode: 'auto',        // claude --permission-mode: auto (unattended), acceptEdits (asks before commands), plan, …
+    // Which coding agent runs, and on which model. `agentKind` goes straight to
+    // `herdr agent start --kind`, so whatever herdr can start a rule can ask for, and herdr is the
+    // one that rejects a name it does not know. `model` becomes `--model <name>` on the agent's own
+    // command line. Both are per rule, so a reviewer role can run a different model from the
+    // implementer without either of them knowing about the other.
+    agentKind: 'claude',
+    model: null,
     claudeArgs: [],
     maxConcurrent: 2,
     prompt: 'prompts/default.md',   // repo override in .issue-herd/prompts/, else the package's
@@ -171,6 +178,11 @@ const DEFAULTS = {
     // "review", "split") scopes the label, the pickup comment and the run key, so rules with
     // different roles hold the same issue at the same time without seeing each other.
     role: null,
+    // How many times this rule may chime in on one issue. 1 means it takes the issue once and is
+    // finished with it, which is what every rule did before this existed. More than that gives the
+    // role another turn each time the issue moves on after it stopped — review, then confirm the
+    // fix, then give the thumbs up — and never otherwise.
+    passes: 1,
     skipIfAssignedToOthers: true,
     onPickup: { comment: true, state: 'In Progress', assignToMe: true },
     onDone: { comment: true, state: 'In Review', notify: true, closeWorkspace: false },
@@ -208,6 +220,7 @@ function loadConfig() {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
     const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
     rule.role = normalizeRole(rule.role, `rule "${rule.name}"`);
+    rule.passes = normalizePasses(rule.passes, `rule "${rule.name}"`);
     for (const k of EVENTS) {
       // `"onMerged": null` (or false) — in the rule or in the defaults — turns that step off
       // entirely, rather than falling back to the very defaults it is trying to switch off.
@@ -256,6 +269,25 @@ function renderBrief(templatePath, vars) {
   return t.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (vars[k] ?? ''));
 }
 
+/**
+ * The brief's one line about turns, for a rule allowed more than one of them. The first turn is
+ * told it will get another, so it can report and stop instead of trying to settle everything; a
+ * later turn is pointed at what it said last time and told that answering the change is the job.
+ */
+function passLine(run, rule) {
+  const pass = run.pass || 1;
+  const head = `- Turn: **${pass} of ${passLimit(rule)}** on this issue for this rule.`;
+  if (pass === 1) {
+    return `${head} You will get another turn if the issue moves on
+  after you finish, so it is fine to report what you found and stop rather than trying to settle
+  everything now.`;
+  }
+  return `${head} Your own last turn is in
+  \`${run.previousResultPath || 'the run directory'}\`, and what you said is already a comment on the
+  issue. Read both first: something changed after you finished, and answering *that* is this turn's
+  job — do not start the work again from the beginning.`;
+}
+
 function briefVars({ issue, rule, run, tracker }) {
   const comments = issue.comments?.length
     ? issue.comments.map((c) => `- **${c.author}** (${c.createdAt.slice(0, 10)}): ${c.body.replace(/\r?\n/g, '\n  ')}`).join('\n')
@@ -281,6 +313,11 @@ function briefVars({ issue, rule, run, tracker }) {
     runDir: run.dir,
     rule: rule.name,
     role: rule.role || 'none',
+    pass: String(run.pass || 1),
+    passes: String(passLimit(rule)),
+    // Only a rule that gets more than one turn says anything about turns, and only a later turn
+    // points at what the earlier one left behind.
+    passLine: passLimit(rule) > 1 ? passLine(run, rule) : '',
     // A whole line, so a roleless brief says nothing about roles at all rather than "role: none".
     roleLine: rule.role
       ? `- Role: \`${rule.role}\` — this run holds the \`${rule.role}\` claim on the issue. Other agents may hold
@@ -317,7 +354,7 @@ class IssueHerd {
     const candidates = pickCandidates({
       issues, rules: this.cfg.rules, viewer,
       matches: (issue, rule) => { try { return rule.compiled.test(issue, ctx); } catch (e) { log(`rule ${rule.name}: ${e.message}`); return false; } },
-      busy: (key, issue) => { const prev = this.state.runs[key]; return Boolean(prev) && !retryable(prev, issue); },
+      runFor: (key) => this.state.runs[key] || null,
       onSkip: (key, rule, why) => this.warnOnce(`taken:${key}`, `${key} matches ${rule.name} but is skipped: ${why}`),
     });
     // urgent first, then oldest first
@@ -326,8 +363,8 @@ class IssueHerd {
     for (const c of candidates) {
       if (this.runningCount() >= this.cfg.maxConcurrent) { waiting.push(c.key); this.warnOnce(`cap:${c.key}`, `${c.key} matches but waits: global cap ${this.cfg.maxConcurrent} reached`); continue; }
       if (this.runningCount(c.rule.name) >= c.rule.maxConcurrent) { waiting.push(c.key); this.warnOnce(`cap:${c.key}`, `${c.key} matches but waits: rule ${c.rule.name} cap ${c.rule.maxConcurrent} reached`); continue; }
-      if (this.dry) { log(`DRY would pick ${c.key} "${c.issue.title}" via rule ${c.rule.name}${c.rule.role ? ` as ${c.rule.role}` : ''}`); continue; }
-      try { await this.pickUp(c.issue, c.rule); picked.push(c.key); }
+      if (this.dry) { log(`DRY would pick ${c.key} "${c.issue.title}" via rule ${c.rule.name}${c.rule.role ? ` as ${c.rule.role}` : ''}${c.pass > 1 ? ` (pass ${c.pass})` : ''}`); continue; }
+      try { await this.pickUp(c.issue, c.rule, { pass: c.pass, holdsClaim: c.holdsClaim }); picked.push(c.key); }
       catch (e) { log(`pickup ${c.key} failed: ${e.message}`); }
     }
     return { scanned: issues.length, candidates: candidates.length, picked, waiting };
@@ -349,7 +386,7 @@ class IssueHerd {
     return parts;
   }
 
-  async pickUp(issue, rule) {
+  async pickUp(issue, rule, { pass = 1, holdsClaim = false } = {}) {
     // The run key carries the role, so two roles on one issue are two runs: two state entries, two
     // agent names, two worktrees, two run directories. `issue.identifier` is still what the tracker
     // is asked about — never the run key. A retry of *this* role finds its own previous run, and
@@ -360,7 +397,7 @@ class IssueHerd {
     const archiveDir = path.join(RUNS_DIR, key); // in the watcher's checkout: issue.json now, result.json copied on finish
     fs.mkdirSync(archiveDir, { recursive: true });
     const run = {
-      rule: rule.name, role: rule.role || null, status: 'starting',
+      rule: rule.name, role: rule.role || null, pass, status: 'starting',
       issueId: issue.id, issueKey: issue.identifier, title: issue.title, url: issue.url,
       startedAt: new Date().toISOString(), archiveDir,
       // `wantBranch` is what we want it called; `branch` is what git says it is, filled in by
@@ -370,7 +407,7 @@ class IssueHerd {
       worktree: rule.worktree, agentName: agentNameFor(key), notified: {},
     };
     this.state.runs[key] = run; saveState(this.state);
-    log(`picking up ${key} "${issue.title}" (rule ${rule.name}${rule.role ? `, role ${rule.role}` : ''})`);
+    log(`picking up ${key} "${issue.title}" (rule ${rule.name}${rule.role ? `, role ${rule.role}` : ''}${pass > 1 ? `, pass ${pass} of ${passLimit(rule)}` : ''})`);
 
     // Claim on Linear first, so a second watcher (or this one after a crash) sees it before any work starts.
     // Nothing has been built yet, so if the claim cannot be made the run is forgotten rather than left
@@ -378,9 +415,14 @@ class IssueHerd {
     const claimLabel = claimLabelFor(rule);
     if (this.tracker && claimLabel) {
       try {
-        const fresh = await this.tracker.issueByKey(issue.identifier);
-        const why = fresh && alreadyTaken(fresh, rule, await this.tracker.me());
-        if (why) throw new Error(`skipped, ${why}`);
+        // A further pass of a role whose claim never came off is not a new claim, so the guards are
+        // not re-read: they would find our own label and our own pickup comment and refuse. The
+        // label is still added, which costs nothing and puts it back if a person removed it.
+        if (!holdsClaim) {
+          const fresh = await this.tracker.issueByKey(issue.identifier);
+          const why = fresh && alreadyTaken(fresh, rule, await this.tracker.me());
+          if (why) throw new Error(`skipped, ${why}`);
+        }
         await this.tracker.addLabel(issue.id, claimLabel);
       } catch (e) {
         delete this.state.runs[key]; saveState(this.state);
@@ -401,7 +443,9 @@ class IssueHerd {
       if (found && !existing) log(`${key}: an agent called "${run.agentName}" is running in ${found.foreground_cwd || found.cwd}, which is not this repository; leaving it alone`);
 
       // 1. workspace (+ worktree)
-      const label = `${key} ${issue.title}`.slice(0, 48);
+      // "GH-7 review Fix the thing" — the role sits right after the key so the sidebar shows who
+      // is doing what without opening anything.
+      const label = workspaceLabel({ key: issue.identifier, role: rule.role, title: issue.title });
       let ws;
       if (existing) {
         ws = agentPlacement(existing);
@@ -429,9 +473,10 @@ class IssueHerd {
       if (!existing) {
         const agentArgs = ['--name', key];
         if (rule.permissionMode) agentArgs.push('--permission-mode', rule.permissionMode);
+        if (rule.model) agentArgs.push('--model', String(rule.model));
         agentArgs.push(...(rule.claudeArgs || []));
         await sleep(1500); // let the shell reach its prompt
-        await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs });
+        await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs, kind: rule.agentKind || 'claude' });
         log(`${key}: claude started as agent "${run.agentName}"`);
       }
 
@@ -456,6 +501,15 @@ class IssueHerd {
       run.dir = path.join(workDir, '.issue-herd', 'state', 'runs', key);
       run.resultPath = path.join(run.dir, 'result.json');
       fs.mkdirSync(run.dir, { recursive: true });
+      // A further pass reuses the worktree, so the last pass's result.json is still sitting there.
+      // Left alone, the supervisor would read it the moment this agent paused and finalize the new
+      // pass with the old pass's answer. Move it aside — under a name the agent can still read,
+      // because "what did I say last time" is the whole point of having another turn.
+      if (pass > 1 && fs.existsSync(run.resultPath)) {
+        run.previousResultPath = path.join(run.dir, `result.pass${pass - 1}.json`);
+        try { fs.renameSync(run.resultPath, run.previousResultPath); }
+        catch (e) { log(`${key}: could not set the previous result aside (${e.message}); removing it instead`); fs.rmSync(run.resultPath, { force: true }); run.previousResultPath = null; }
+      }
       const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label }));
       run.briefPath = path.join(run.dir, 'brief.md');
       fs.writeFileSync(run.briefPath, brief);
@@ -480,6 +534,7 @@ class IssueHerd {
         // pickupMarker() writes the role into the first words, because this comment is also the
         // guard: a reader sees who holds which role, and alreadyTaken() greps for its own.
         const held = [`herdr workspace \`${run.workspaceId}\``, `agent \`${run.agentName}\``, `rule \`${rule.name}\``];
+        if (passLimit(rule) > 1) held.unshift(`pass ${pass} of ${passLimit(rule)}`);
         if (run.branch) held.push(`branch \`${run.branch}\``);
         const how = run.adopted ? pickupMarker(rule.role).replace('picked this up', 'took this back over') : pickupMarker(rule.role);
         try { await this.tracker.comment(issue.id, `🐑 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`); }
@@ -505,7 +560,7 @@ class IssueHerd {
 
   /**
    * After a failed start: give the claim label back so the issue can be taken again, and record
-   * the issue's updatedAt as it stands *after* our own cleanup. retryable() compares against that,
+   * the issue's updatedAt as it stands *after* our own cleanup. nextPass() compares against that,
    * so our comment and label removal do not count as the user changing the issue.
    */
   async releaseClaim(key, run) {
@@ -685,7 +740,17 @@ class IssueHerd {
     const run = this.state.runs[key];
     run.status = 'done'; run.result = result; run.finishedAt = new Date().toISOString(); saveState(this.state);
     // keep a copy in the watcher's checkout; the worktree may be removed later
-    try { fs.mkdirSync(run.archiveDir, { recursive: true }); for (const f of ['result.json', 'brief.md']) { const src = path.join(run.dir, f); if (fs.existsSync(src)) fs.copyFileSync(src, path.join(run.archiveDir, f)); } } catch { /* best effort */ }
+    // `result.json` and `brief.md` are always the latest pass; a rule that chimes in more than once
+    // also keeps each pass under its own name, so the record of what it said when survives.
+    try {
+      fs.mkdirSync(run.archiveDir, { recursive: true });
+      for (const f of ['result.json', 'brief.md']) {
+        const src = path.join(run.dir, f);
+        if (!fs.existsSync(src)) continue;
+        fs.copyFileSync(src, path.join(run.archiveDir, f));
+        if ((run.pass || 1) > 1) fs.copyFileSync(src, path.join(run.archiveDir, f.replace(/\.(\w+)$/, `.pass${run.pass}.$1`)));
+      }
+    } catch { /* best effort */ }
     const status = result.status || 'unknown';
     const icon = status === 'pr_open' ? '✅' : status === 'needs_human' ? '🙋' : status === 'nothing_to_do' ? '🤷' : '❌';
     const lines = [`${icon} **issue-herd** finished ${run.issueKey || key}${run.role ? ` as \`${run.role}\`` : ''} with status \`${status}\`.`];
@@ -712,6 +777,7 @@ class IssueHerd {
       run.prUrl = watch; run.status = 'awaiting_merge'; saveState(this.state);
       log(`${key}: waiting for ${watch} to be merged before shutting the run down`);
     }
+    await this.stampAnswered(key, run, rule);
   }
 
   /**
@@ -748,6 +814,7 @@ class IssueHerd {
         ? [`🎉 ${key} is finished — ${run.prUrl} is merged, so the run was shut down.`, '', ...did.map((d) => `- ${d}`)]
         : [`🎉 ${key} is finished — its PR is merged. ${this.leftStanding(run, rule)}`, '', run.prUrl];
       await this.report(key, rule, rule.onMerged, lines.join('\n'), 'done');
+      await this.stampAnswered(key, run, rule);
     }
   }
 
@@ -811,6 +878,20 @@ class IssueHerd {
       log(`  pull requests: ${this.pr.host}${token ? '' : ' (no GitHub token on this machine; only public repositories will answer)'}`);
     }
     return prState(url, this.pr);
+  }
+
+  /**
+   * Record the issue's own clock as it stands *after* we have finished writing to it.
+   *
+   * This is what stops a role with passes left from answering itself. Its closing comment bumps
+   * the issue's updatedAt, and "the issue moved on since we finished" is exactly the test that
+   * earns the next pass — so without this a reviewer would review its own review, for ever. Only
+   * worth the extra fetch when another pass is actually possible.
+   */
+  async stampAnswered(key, run, rule) {
+    if (!this.tracker || passLimit(rule) <= 1) return;
+    try { run.issueUpdatedAt = (await this.tracker.issueByKey(run.issueKey || issueKeyOf(key)))?.updatedAt || null; saveState(this.state); }
+    catch { /* finishedAt is the fallback, and it is already later than everything we wrote */ }
   }
 
   async report(key, rule, policy, body, sound = 'none') {
@@ -925,17 +1006,6 @@ class IssueHerd {
 }
 
 function prio(issue) { return issue.priority === 0 ? 5 : issue.priority; }
-
-/**
- * A failed run is not the last word: once the issue changes on the tracker after the failure was
- * recorded (someone edits it, moves it, re-adds a label), it is a candidate again. Runs that are
- * running, done, or stopped keep blocking the issue; `issue-herd reset` clears those by hand.
- */
-function retryable(run, issue) {
-  if (run.status !== 'failed') return false;
-  const since = run.issueUpdatedAt || run.finishedAt;
-  return !since || !issue.updatedAt || Date.parse(issue.updatedAt) > Date.parse(since);
-}
 
 /**
  * Is the agent herdr found under this run's name the session for *this* run? Agent names are made
@@ -1151,6 +1221,7 @@ async function smoke({ cfg, herdr, argv }) {
     onBlocked: { comment: false, notify: true }, onIdle: { comment: false, notify: true },
   };
   rule.compiled = compile('any:true');
+  rule.role = normalizeRole(rule.role, 'smoke rule');
   const key = `SMOKE-${Date.now().toString().slice(-4)}`;
   const nowIso = new Date().toISOString();
   const issue = {
@@ -1161,11 +1232,14 @@ async function smoke({ cfg, herdr, argv }) {
   };
   const app = new IssueHerd({ cfg: { ...cfg, rules: [rule] }, tracker: null, herdr });
   await app.pickUp(issue, rule);
-  log(`smoke: waiting for ${key} to finish…`);
-  while (app.state.runs[key].status === 'running') await sleep(2000);
-  const run = app.state.runs[key];
+  // The run is filed under its run key, which carries the rule's role — `defaults.role` in
+  // config.json reaches the smoke rule like any other default, so this is not always the issue key.
+  const runKey = runKeyFor(key, rule.role);
+  log(`smoke: waiting for ${runKey} to finish…`);
+  while (app.state.runs[runKey].status === 'running') await sleep(2000);
+  const run = app.state.runs[runKey];
   log(`smoke: ${run.status} ${JSON.stringify(run.result || run.error || '')}`);
-  console.log(`\nSmoke run ${key}: ${run.status}. herdr workspace ${run.workspaceId} left open; clean up with:\n  herdr workspace close ${run.workspaceId}\n  issue-herd reset ${key}`);
+  console.log(`\nSmoke run ${runKey}: ${run.status}. herdr workspace ${run.workspaceId} left open; clean up with:\n  herdr workspace close ${run.workspaceId}\n  issue-herd reset ${runKey}`);
   process.exit(run.status === 'done' ? 0 : 1);
 }
 

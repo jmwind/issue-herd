@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, issueKeyOf,
-  normalizeRole, pickCandidates, pickupMarker, runKeyFor,
+  nextPass, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker, runKeyFor,
+  workspaceLabel,
 } from '../src/claim.mjs';
 
 const issue = (over = {}) => ({ identifier: 'GH-7', labels: [], comments: [], assignees: [], assignee: null, ...over });
@@ -124,7 +125,7 @@ test('two roles pointed at one branch is caught at config load, not on the secon
 
 /** pickCandidates with everything free: no runs in flight, every rule matches, nobody assigned. */
 const pick = (issues, rules, over = {}) => pickCandidates({
-  issues, rules, viewer: { id: 'u1' }, matches: () => true, busy: () => false, ...over,
+  issues, rules, viewer: { id: 'u1' }, matches: () => true, runFor: () => null, ...over,
 });
 
 test('one poll can hand the same issue to an implementer and a reviewer', () => {
@@ -137,7 +138,8 @@ test('one poll can hand the same issue to an implementer and a reviewer', () => 
 
 test('a run in flight blocks its own role and nothing else', () => {
   const rules = [rule({ name: 'impl', role: 'impl' }), rule({ name: 'rev', role: 'review' })];
-  const got = pick([issue()], rules, { busy: (key) => key === 'GH-7.impl' });
+  const running = { status: 'running', pass: 1, claimed: 'herdr:impl' };
+  const got = pick([issue()], rules, { runFor: (key) => (key === 'GH-7.impl' ? running : null) });
   assert.deepEqual(got.map((c) => c.key), ['GH-7.review']);
 });
 
@@ -163,4 +165,91 @@ test('a guard that fires is reported against the run key it stopped, not the iss
   assert.equal(skipped.length, 1);
   assert.equal(skipped[0][0], 'GH-7.impl');
   assert.match(skipped[0][2], /herdr:impl/);
+});
+
+// ---------------------------------------------------------------- the sidebar
+
+test('the herdr label puts the role between the key and the title', () => {
+  assert.equal(workspaceLabel({ key: 'GH-7', title: 'Fix the thing' }), 'GH-7 Fix the thing');
+  assert.equal(workspaceLabel({ key: 'GH-7', role: 'review', title: 'Fix the thing' }), 'GH-7 review Fix the thing');
+  // The title is what gets trimmed; the key and the role always survive, because they are the
+  // whole point of reading the sidebar.
+  const long = workspaceLabel({ key: 'DEV-3298', role: 'review-security', title: 'A'.repeat(200) });
+  assert.ok(long.startsWith('DEV-3298 review-security A'), long);
+  assert.equal(long.length, 48);
+  assert.equal(workspaceLabel({ key: 'GH-7', role: 'impl', title: '' }), 'GH-7 impl');
+});
+
+// ---------------------------------------------------------------- more than one turn
+
+const finished = (over = {}) => ({ status: 'done', pass: 1, claimed: 'herdr:review', finishedAt: '2026-01-01T00:00:00Z', ...over });
+const moved = (iso) => issue({ updatedAt: iso });
+
+test('one pass is the default, and a finished run never gets another turn', () => {
+  assert.equal(passLimit(rule()), 1);
+  assert.equal(passLimit(rule({ passes: 3 })), 3);
+  assert.equal(nextPass(finished(), rule({ role: 'review' }), moved('2026-06-01T00:00:00Z')), null);
+});
+
+test('a role with turns left gets one only when the issue has moved on since it finished', () => {
+  const r = rule({ role: 'review', passes: 3 });
+  // nothing has happened since we finished: not a candidate
+  assert.equal(nextPass(finished(), r, moved('2025-12-31T00:00:00Z')), null);
+  // someone pushed a fix afterwards: our turn again, and the claim was never handed back
+  assert.deepEqual(nextPass(finished(), r, moved('2026-01-02T00:00:00Z')), { pass: 2, holdsClaim: true });
+  // …until the turns run out
+  assert.equal(nextPass(finished({ pass: 3 }), r, moved('2026-01-02T00:00:00Z')), null);
+});
+
+test('a role never answers its own closing comment', () => {
+  // The loop this would otherwise be: our own report bumps the issue, the next poll reads that as
+  // "the issue moved on", and the reviewer reviews its own review for ever. finalize() stamps the
+  // issue's clock after it has finished writing, and that stamp is what the next turn is measured
+  // against — even though it is later than finishedAt.
+  const r = rule({ role: 'review', passes: 5 });
+  const ourOwnComment = finished({ issueUpdatedAt: '2026-01-01T00:05:00Z' });
+  assert.equal(nextPass(ourOwnComment, r, moved('2026-01-01T00:05:00Z')), null);
+  // A person replying after that is a real change, and earns the next turn.
+  assert.deepEqual(nextPass(ourOwnComment, r, moved('2026-01-01T00:06:00Z')), { pass: 2, holdsClaim: true });
+});
+
+test('a run still going is never given another turn', () => {
+  const r = rule({ role: 'review', passes: 3 });
+  for (const status of ['starting', 'running', 'awaiting_merge']) {
+    assert.equal(nextPass(finished({ status }), r, moved('2026-06-01T00:00:00Z')), null, status);
+  }
+});
+
+test('a failed start is still retried, and re-checks the guards because the claim came off', () => {
+  // The pre-roles behaviour, preserved: a failed run is a candidate again once the issue changes,
+  // and it does not use up a turn. holdsClaim is false, so pickCandidates re-runs alreadyTaken.
+  const failed = { status: 'failed', pass: 1, finishedAt: '2026-01-01T00:00:00Z' };
+  assert.deepEqual(nextPass(failed, rule({ passes: 1 }), moved('2026-01-02T00:00:00Z')), { pass: 1, holdsClaim: false });
+  assert.equal(nextPass(failed, rule({ passes: 1 }), moved('2025-12-31T00:00:00Z')), null);
+});
+
+test('a turn we already hold the claim for skips the guards it would fail', () => {
+  // Our own label and our own pickup comment are on the issue by now. Re-reading the guards would
+  // refuse the very turn we granted, so a held claim is not re-acquired.
+  const rules = [rule({ name: 'rev', role: 'review', passes: 2 })];
+  const held = issue({ labels: ['herdr:review'], comments: [pickupComment('review')], updatedAt: '2026-01-02T00:00:00Z' });
+  const skipped = [];
+  const got = pickCandidates({
+    issues: [held], rules, viewer: { id: 'u1' }, matches: () => true,
+    runFor: () => finished(), onSkip: (k, r, why) => skipped.push(why),
+  });
+  assert.deepEqual(got.map((c) => [c.key, c.pass, c.holdsClaim]), [['GH-7.review', 2, true]]);
+  assert.deepEqual(skipped, []);
+  // A second machine, with no run of its own for that role, is still refused by the label.
+  const other = pickCandidates({ issues: [held], rules, viewer: { id: 'u1' }, matches: () => true, runFor: () => null, onSkip: (k, r, why) => skipped.push(why) });
+  assert.deepEqual(other, []);
+  assert.match(skipped[0], /herdr:review/);
+});
+
+test('"passes" is checked at config load', () => {
+  assert.equal(normalizePasses(undefined), 1);
+  assert.equal(normalizePasses(4), 4);
+  for (const bad of [0, -1, 1.5, '3', true]) {
+    assert.throws(() => normalizePasses(bad, 'rule "x"'), /rule "x": "passes"/, String(bad));
+  }
 });
