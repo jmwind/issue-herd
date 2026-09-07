@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 372 96" width="372" height="96" role="img" aria-label="issue-herd">
+  <style>@media (prefers-color-scheme: dark){.ink{stroke:#F6F2ED}.ink-f{fill:#F6F2ED}}</style>
+  <path class="ink" d="M72 40 V36 A14 14 0 0 0 58 22 H28 A14 14 0 0 0 14 36 V60 A14 14 0 0 0 28 74 H58 A14 14 0 0 0 72 60 V56"
+        fill="none" stroke="#141210" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="85" cy="48" r="6.5" fill="#C2521A"/>
+  <text class="ink-f" x="112" y="64" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="46" font-weight="600" letter-spacing="-1.5" fill="#141210">issue-herd</text>
+</svg>

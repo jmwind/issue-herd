@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="issue-herd">
+  <style>@media (prefers-color-scheme: dark){.ink{stroke:#F6F2ED}}</style>
+  <g fill="none" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <g class="ink" stroke="#141210">
+      <path d="M24 16 V80"/>
+      <path d="M72 16 V80"/>
+    </g>
+    <g stroke="#C2521A">
+      <path d="M24 48 H72"/>
+      <path d="M61 37 L72 48 L61 59"/>
+    </g>
+  </g>
+</svg>
