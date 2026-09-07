@@ -56,7 +56,7 @@
       "role": "usability",
       "match": "label:ai and label:ready-for-review",
       "basedOn": "impl",
-      "model": "opus",
+      "model": "claude-haiku-4-5",
       "effort": "high",
       "prompt": "prompts/review-usability.md"
     }
