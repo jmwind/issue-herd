@@ -20,10 +20,11 @@
   function clock(iso) { if (!iso) return ''; var d = new Date(iso); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
   function prNum(url) { return url ? '#' + url.split('/').pop() : ''; }
   function factories() { return view ? view.factories : []; }
+  function taskAlerts(f) { var keys = []; f.alerts.forEach(function (a) { if (keys.indexOf(a.issueKey) < 0) keys.push(a.issueKey); }); return keys.length; }
   // One line of facts per task: size and grade, the issue's state, the PR's state.
   function stats(iss) {
     var out = [];
-    if (iss.size) out.push('<span class="st"><b class="add">+' + iss.size.added + '</b> <b class="del">−' + iss.size.removed + '</b>' + (iss.size.complexity ? ' <em>' + esc(iss.size.complexity.grade) + '</em>' : '') + '</span>');
+    if (iss.size && (iss.size.added || iss.size.removed)) out.push('<span class="st"><b class="add">+' + iss.size.added + '</b> <b class="del">−' + iss.size.removed + '</b>' + (iss.size.complexity ? ' <em>' + esc(iss.size.complexity.grade) + '</em>' : '') + '</span>');
     if (iss.issueState) out.push('<span class="st' + (iss.issueState === 'closed' ? ' closed' : '') + '">issue ' + esc(iss.issueState) + '</span>');
     if (iss.prUrl) out.push('<span class="st pr-' + esc(iss.prState) + '">PR ' + esc(prNum(iss.prUrl)) + ' ' + esc(iss.prState) + '</span>');
     else out.push('<span class="st dim">no PR</span>');
@@ -42,7 +43,7 @@
   function belt() {
     var fs = shown(), today = 0, assembling = 0, wait = 0, alerts = 0;
     fs.forEach(function (f) {
-      alerts += f.alerts.length; assembling += f.counts.inflight; wait += f.humanWaitMs;
+      alerts += taskAlerts(f); assembling += f.counts.inflight; wait += f.humanWaitMs;
       f.issues.forEach(function (i) { if (i.bucket !== 'inflight' && i.finishedAt && Date.now() - Date.parse(i.finishedAt) < 86400e3) today++; });
     });
     var stats = [['output today', today, 'merged'], ['assembling', assembling, 'commit'], ['waiting on you', dur(wait), 'lines'], ['alerts', alerts, alerts ? 'pr' : 'commit']];
@@ -129,7 +130,7 @@
     var opts = factories().map(function (f) {
       var alive = !f.watcher.stale;
       return '<button class="opt' + (f.id === chosen ? ' on' : '') + (alive ? '' : ' stale') + '" data-choose="' + esc(f.id) + '"><i class="led ' + (alive ? 'green' : 'red') + ' still"></i><span class="n">' + esc(f.name) + '</span>' +
-        '<span class="c"><span class="pill">' + f.counts.inflight + ' assembling</span>' + (f.counts.alerts ? '<span class="pill hot">' + f.counts.alerts + ' alert' + (f.counts.alerts > 1 ? 's' : '') + '</span>' : '') + '</span>' +
+        '<span class="c"><span class="pill">' + f.counts.inflight + ' assembling</span>' + (taskAlerts(f) ? '<span class="pill hot">' + taskAlerts(f) + ' alert' + (taskAlerts(f) > 1 ? 's' : '') + '</span>' : '') + '</span>' +
         '<span class="m">' + esc(f.tracker) + ' · ' + esc(f.repo.replace(/^.*\//, '')) + ' · ' + (f.watcher.lastPoll ? (alive ? 'polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago' : 'watcher not seen for ' + dur(Date.now() - Date.parse(f.watcher.lastPoll))) : (f.watcher.paneOnly ? 'watcher pane ' + esc(f.watcher.workspaceId || '') + ' open' : 'watcher never seen')) + '</span></button>';
     }).join('');
     if (factories().length > 1) opts = '<button class="opt' + (chosen === 'all' || !current() ? ' on' : '') + '" data-choose="all"><i class="led green still"></i><span class="n">All factories</span><span class="c"><span class="pill">' + factories().reduce(function (s, f) { return s + f.counts.inflight; }, 0) + ' assembling</span></span><span class="m">every factory on ' + esc(document.body.dataset.hostname) + '</span></button>' + opts;
