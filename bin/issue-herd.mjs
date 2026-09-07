@@ -33,7 +33,7 @@ import { compile } from '../src/expr.mjs';
 import { mergeConfig, overridePaths } from '../src/config.mjs';
 import { TRACKERS, isTracker, mergeSpec, trackerSpec, trackerClass } from '../src/trackers/index.mjs';
 import { slugify, userDisplay } from '../src/tracker.mjs';
-import { alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, issueKeyOf, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker, runKeyFor, workspaceLabel } from '../src/claim.mjs';
+import { alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, heldByAPerson, issueKeyOf, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker, runKeyFor, workspaceLabel } from '../src/claim.mjs';
 import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCredential, saveCredential, terminalUi } from '../src/auth.mjs';
 import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
@@ -418,14 +418,13 @@ class IssueHerd {
     const claimLabel = claimLabelFor(rule);
     if (this.tracker && claimLabel) {
       try {
-        // A further pass of a role whose claim never came off is not a new claim, so the guards are
-        // not re-read: they would find our own label and our own pickup comment and refuse. The
-        // label is still added, which costs nothing and puts it back if a person removed it.
-        if (!holdsClaim) {
-          const fresh = await this.tracker.issueByKey(issue.identifier);
-          const why = fresh && alreadyTaken(fresh, rule, await this.tracker.me());
-          if (why) throw new Error(`skipped, ${why}`);
-        }
+        // The fresh fetch happens either way — this is the last look before any work starts. What
+        // changes is what counts as taken: a further turn of a role whose claim never came off must
+        // not be refused by its own label and its own pickup comment, but a person who took the
+        // issue over since the last turn still ends it.
+        const fresh = await this.tracker.issueByKey(issue.identifier);
+        const why = fresh && (holdsClaim ? heldByAPerson(fresh, rule, await this.tracker.me()) : alreadyTaken(fresh, rule, await this.tracker.me()));
+        if (why) throw new Error(`skipped, ${why}`);
         await this.tracker.addLabel(issue.id, claimLabel);
       } catch (e) {
         delete this.state.runs[key]; saveState(this.state);
@@ -700,6 +699,10 @@ class IssueHerd {
         run.status = 'stopped'; run.finishedAt = new Date().toISOString(); saveState(this.state);
         log(`${key}: agent exited without a result`);
         await this.report(key, rule, rule.onIdle, `🛑 The agent session for ${key} ended without writing a result. Workspace \`${run.workspaceId}\` is still open for inspection.`);
+        // Stamp for the same reason finalize does, and here it matters more: a rule with turns left
+        // would otherwise read our own "the agent died" comment as the issue moving on and start
+        // the next turn immediately, burning every turn on a session that keeps dying.
+        await this.stampAnswered(key, run, rule);
         return;
       }
       if (st === 'timeout') continue;

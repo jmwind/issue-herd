@@ -59,11 +59,28 @@ export function issueKeyOf(runKey) {
 }
 
 /**
+ * Returns a reason string if a *person* holds this issue, else null.
+ *
+ * Kept separate from the claim guards because it outlives them. The label and the pickup comment
+ * are ours and can be skipped by the rule that wrote them; this one never can. A person holding
+ * the issue holds all of it — every role, and every turn of a role that already has its claim.
+ * Starting an agent on work someone is already doing is the worst outcome there is.
+ *
+ * Every assignee, not just the one on show: an issue held by you *and* someone else is still
+ * someone else's.
+ */
+export function heldByAPerson(issue, rule, viewer) {
+  if (!rule.skipIfAssignedToOthers || !viewer) return null;
+  const held = issue.assignees || (issue.assignee ? [issue.assignee] : []);
+  const others = held.filter((a) => a.id !== viewer.id);
+  return others.length ? `assigned to ${others.map((a) => a.displayName || a.name).join(', ')}` : null;
+}
+
+/**
  * Returns a reason string if this issue is already held *in this rule's role*, else null.
  *
  * The label and the comment checks are role-scoped, so an issue claimed for implementation is
- * still available for review. The assignee check is not: a person holding the issue holds all of
- * it, and starting any agent on work someone is already doing is the worst outcome.
+ * still available for review. The assignee check is not — see heldByAPerson.
  */
 export function alreadyTaken(issue, rule, viewer) {
   const label = claimLabelFor(rule);
@@ -72,14 +89,7 @@ export function alreadyTaken(issue, rule, viewer) {
   if ((issue.comments || []).some((c) => c.body.includes(marker))) {
     return rule.role ? `an issue-herd '${rule.role}' pickup comment is already on it` : 'an issue-herd pickup comment is already on it';
   }
-  // Every assignee, not just the one on show: an issue held by you *and* someone else is still
-  // someone else's.
-  if (rule.skipIfAssignedToOthers && viewer) {
-    const held = issue.assignees || (issue.assignee ? [issue.assignee] : []);
-    const others = held.filter((a) => a.id !== viewer.id);
-    if (others.length) return `assigned to ${others.map((a) => a.displayName || a.name).join(', ')}`;
-  }
-  return null;
+  return heldByAPerson(issue, rule, viewer);
 }
 
 /**
@@ -212,19 +222,19 @@ export function pickCandidates({ issues, rules, viewer, matches, runFor, onSkip 
     const settled = new Set();
     for (const rule of rules) {
       if (rule.enabled === false) continue;
-      if (settled.has(rule.role || '') ) continue;
+      if (settled.has(rule.role || '')) continue;
       if (!matches(issue, rule)) continue;
       settled.add(rule.role || '');
       const key = runKeyFor(issue.identifier, rule.role);
       const run = runFor(key);
       const again = run ? nextPass(run, rule, issue) : null;
       if (run && !again) continue;                     // this role is busy, or has said its piece
-      // A turn we are already holding the claim for needs no guard: the label and the comment on
-      // that issue are ours. Everything else is a fresh claim and is checked as one.
-      if (!again?.holdsClaim) {
-        const why = alreadyTaken(issue, rule, viewer);
-        if (why) { onSkip(key, rule, why); continue; }
-      }
+      // A turn we already hold the claim for skips the claim guards — the label and the pickup
+      // comment on that issue are ours, and re-reading them would refuse the turn we just granted.
+      // It does *not* skip the person guard: someone taking the issue over between turns ends the
+      // role's involvement, claim or no claim.
+      const why = again?.holdsClaim ? heldByAPerson(issue, rule, viewer) : alreadyTaken(issue, rule, viewer);
+      if (why) { onSkip(key, rule, why); continue; }
       out.push({ issue, rule, key, pass: again?.pass || 1, holdsClaim: Boolean(again?.holdsClaim) });
     }
   }

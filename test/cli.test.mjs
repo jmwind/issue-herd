@@ -148,3 +148,26 @@ test('"roles" switches roles on and off for the project without deleting the rul
   const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', roles: 'impl', rules }) });
   assert.match(run(bad, ['status']).out, /"roles" must be an array/);
 });
+
+test('reset by issue key forgets every role\'s run on it; by run key, only that one', (t) => {
+  const runs = {
+    'GH-7': { rule: 'r', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' },
+    'GH-7.review': { rule: 'r', role: 'review', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' },
+    'GH-7.impl': { rule: 'r', role: 'impl', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' },
+    'GH-70': { rule: 'r', status: 'done', startedAt: '2026-01-01T00:00', title: 'b' },
+  };
+  const state = () => JSON.stringify({ runs });
+  const one = repo(t, { '.issue-herd/config.json': config(), '.issue-herd/state/state.json': state() });
+  const r = run(one, ['reset', 'GH-7.review']);
+  assert.match(r.out, /forgot GH-7\.review/);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(one, '.issue-herd/state/state.json'), 'utf8')).runs).sort(),
+    ['GH-7', 'GH-7.impl', 'GH-70']);
+
+  const all = repo(t, { '.issue-herd/config.json': config(), '.issue-herd/state/state.json': state() });
+  const r2 = run(all, ['reset', 'GH-7']);
+  assert.match(r2.out, /forgot GH-7, GH-7\.review, GH-7\.impl/);
+  // GH-70 is a different issue, not a role of GH-7
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(all, '.issue-herd/state/state.json'), 'utf8')).runs), ['GH-70']);
+
+  assert.match(run(all, ['reset', 'GH-9']).out, /no run called GH-9/);
+});

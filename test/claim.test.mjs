@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, issueKeyOf,
-  nextPass, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker, runKeyFor,
-  workspaceLabel,
+  heldByAPerson, nextPass, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker,
+  runKeyFor, workspaceLabel,
 } from '../src/claim.mjs';
 
 const issue = (over = {}) => ({ identifier: 'GH-7', labels: [], comments: [], assignees: [], assignee: null, ...over });
@@ -252,4 +252,58 @@ test('"passes" is checked at config load', () => {
   for (const bad of [0, -1, 1.5, '3', true]) {
     assert.throws(() => normalizePasses(bad, 'rule "x"'), /rule "x": "passes"/, String(bad));
   }
+});
+
+test('a person taking the issue over ends the role\'s remaining turns', () => {
+  // The bug this is here for: a turn we already hold the claim for skips the claim guards, and it
+  // used to skip *every* guard with them — so a reviewer with turns left would start another one
+  // on an issue a colleague had just assigned to themselves. The claim guards are ours to skip;
+  // the person guard never is.
+  const alex = { id: 'u2', displayName: 'Alex' };
+  const viewer = { id: 'u1' };
+  const rules = [rule({ name: 'rev', role: 'review', passes: 3 })];
+  const taken = issue({
+    labels: ['herdr:review'], comments: [pickupComment('review')],
+    assignees: [alex], assignee: alex, updatedAt: '2026-01-02T00:00:00Z',
+  });
+  const skipped = [];
+  const got = pickCandidates({
+    issues: [taken], rules, viewer, matches: () => true,
+    runFor: () => finished(), onSkip: (k, r, why) => skipped.push([k, why]),
+  });
+  assert.deepEqual(got, []);
+  assert.deepEqual(skipped, [['GH-7.review', 'assigned to Alex']]);
+
+  // and with nobody else on it, the turn is still granted
+  const free = issue({ labels: ['herdr:review'], comments: [pickupComment('review')], updatedAt: '2026-01-02T00:00:00Z' });
+  const ok = pickCandidates({ issues: [free], rules, viewer, matches: () => true, runFor: () => finished() });
+  assert.deepEqual(ok.map((c) => [c.key, c.pass]), [['GH-7.review', 2]]);
+});
+
+test('the person guard is separate from the claim guards, and answers on its own', () => {
+  const alex = { id: 'u2', displayName: 'Alex' };
+  const viewer = { id: 'u1' };
+  assert.equal(heldByAPerson(issue({ assignees: [alex] }), rule(), viewer), 'assigned to Alex');
+  assert.equal(heldByAPerson(issue({ assignees: [viewer] }), rule(), viewer), null);
+  assert.equal(heldByAPerson(issue({ assignees: [] }), rule(), viewer), null);
+  // switched off by config, or with nobody to compare against, it has no opinion
+  assert.equal(heldByAPerson(issue({ assignees: [alex] }), rule({ skipIfAssignedToOthers: false }), viewer), null);
+  assert.equal(heldByAPerson(issue({ assignees: [alex] }), rule(), null), null);
+  // an issue held by you *and* someone else is still someone else's
+  assert.equal(heldByAPerson(issue({ assignees: [viewer, alex] }), rule(), viewer), 'assigned to Alex');
+});
+
+test('an agent that died without a result does not spend the role\'s turns by itself', () => {
+  // "stopped" is a finished run, so it is eligible for another turn — but the watcher comments on
+  // the issue when it happens, and that comment is a change to the issue. Without the same stamp
+  // finalize uses, a rule with three turns would burn all three on a session that keeps dying,
+  // inside two polls, before anyone could look at it.
+  const r = rule({ role: 'review', passes: 3 });
+  const died = { status: 'stopped', pass: 1, claimed: 'herdr:review', finishedAt: '2026-01-01T00:00:00Z' };
+  // unstamped: our own "the agent died" comment reads as the issue moving on
+  assert.deepEqual(nextPass(died, r, moved('2026-01-01T00:00:01Z')), { pass: 2, holdsClaim: true });
+  // stamped, as superviseLoop now does: it takes a real change to earn the retry
+  const stamped = { ...died, issueUpdatedAt: '2026-01-01T00:00:01Z' };
+  assert.equal(nextPass(stamped, r, moved('2026-01-01T00:00:01Z')), null);
+  assert.deepEqual(nextPass(stamped, r, moved('2026-01-01T00:05:00Z')), { pass: 2, holdsClaim: true });
 });
