@@ -488,7 +488,7 @@ the agent's *own* command line and the four things a rule asks for are spelled d
 |---|---|---|
 | model | `--model opus` | `--model gpt-5-codex` |
 | effort | `--effort high` | `-c model_reasoning_effort="high"` |
-| unattended | `--permission-mode auto` | `--sandbox workspace-write --approve-for-me` |
+| unattended | `--permission-mode auto` | `--approve-for-me` (which *is* the workspace-write sandbox) |
 | session name | `--name GH-7@review` | (none — herdr's agent name is the name) |
 | leaves with | `/exit` | `/quit` |
 
@@ -500,6 +500,10 @@ Two things worth knowing:
 
 - **Sign in to each provider yourself**, once per machine (`claude`, `codex login`, …).
   `issue-herd login` is for the *tracker*; it never touches an agent's credentials.
+- **Answer each agent's first-run dialogs yourself, once per repository.** codex asks whether it
+  trusts a directory the first time it opens one (and about hooks, if you have any). A run that
+  starts on that dialog is reported as blocked and waits — nothing is lost — but the cure is to run
+  the agent in the repository once by hand, the same way you sign in.
 - **`permissionMode` never turns a sandbox off.** It is Claude Code's word, and each agent decides
   what "unattended" means for itself — but none of them may decide it means "no boundary at all".
   codex's `auto` is the widest *sandboxed* setting, not

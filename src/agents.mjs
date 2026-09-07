@@ -43,9 +43,12 @@ const PROFILES = {
       ...(model ? ['--model', model] : []),
       // Reasoning effort is a config override rather than a flag; the value is parsed as TOML.
       ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(String(effort))}`] : []),
-      // `--approve-for-me` answers approval requests inside the workspace-write sandbox. The
-      // unsandboxed equivalent of Claude's "auto" exists and is deliberately not used here.
-      ...(UNATTENDED.has(permissionMode) ? ['--sandbox', 'workspace-write', '--approve-for-me'] : []),
+      // `--approve-for-me` answers approval requests inside the workspace-write sandbox — that
+      // sandbox is what the flag means, and codex refuses `--sandbox` alongside it ("the argument
+      // '--sandbox <SANDBOX_MODE>' cannot be used with '--approve-for-me'"), which killed every
+      // codex pane at the shell prompt until a dogfood run caught it. The unsandboxed equivalent
+      // of Claude's "auto" exists and is deliberately not used here.
+      ...(UNATTENDED.has(permissionMode) ? ['--approve-for-me'] : []),
     ],
   },
 };
