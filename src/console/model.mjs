@@ -247,7 +247,21 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     else if (why === 'stopped') alerts.push(alert('stopped', iss, r, `The agent ended without writing a result. Workspace ${r.workspaceId || '?'} is still open.`, now));
     else if (why === 'failed') alerts.push(alert('failed', iss, r, r.error || (r.result?.summary ? clip(r.result.summary, 240) : 'Failed.'), now));
   }
-  const weight = { blocked: 0, question: 1, needs_human: 2, merge: 3, stopped: 4, failed: 5, gone: 6, holding: 7 };
+  // A finished task is not over until a person says so. Whatever happened to its agents — exited
+  // on their own, exited by onMerged, still holding a workspace — it waits in Alerts for a sign-off,
+  // even after an auto-merge, so the reports and the scrollback get looked at. One card per task;
+  // a task that already has a card (a decision, a failure, an agent holding on) needs no second.
+  // After a day it is history, like a failure: state.json remembers every task ever run.
+  for (const iss of issues) {
+    if (iss.cleared || iss.bucket === 'inflight' || !iss.finishedAt || alerts.some((a) => a.issueKey === iss.key)) continue;
+    const finishedAt = Date.parse(iss.finishedAt);
+    if (now - finishedAt > DAY) continue;
+    const r = iss.runs.find((o) => o.ownsPr) || iss.runs[0];
+    const reports = iss.runs.filter((o) => o !== r && o.result).map((o) => `${o.role || o.rule} ${o.phrase}`).join(', ');
+    const what = iss.merged ? `Merged${iss.prUrl ? ` #${iss.prUrl.split('/').pop()}` : ''}` : `Finished (${iss.phrase || r.result?.status || r.status})`;
+    alerts.push({ ...alert('finished', iss, r, `${what}${reports ? `; ${reports}` : ''}. Look it over and mark it done.`, now), light: 'yellow', sinceMs: now - finishedAt, verdicts: reports || null });
+  }
+  const weight = { blocked: 0, question: 1, needs_human: 2, merge: 3, stopped: 4, failed: 5, gone: 6, holding: 7, finished: 8 };
   alerts.sort((a, b) => weight[a.kind] - weight[b.kind] || b.sinceMs - a.sinceMs);
 
   const running = issues.flatMap((i) => i.runs).filter((r) => r.status === 'running' || r.status === 'starting').length;

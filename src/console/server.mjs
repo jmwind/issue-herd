@@ -1,4 +1,4 @@
-// The console's HTTP surface: the gate, the page, one JSON snapshot, one event stream, two actions.
+// The console's HTTP surface: the gate, the page, one JSON snapshot, one event stream, one action.
 //
 // Everything a browser needs is served from here with no build step and no dependency: the page's
 // HTML, CSS and JS are files next to this one. State goes out as one JSON document; changes go
@@ -59,7 +59,7 @@ function sameOrigin(req) {
 }
 
 /**
- * Build the request handler. `console` is the orchestrator: view(), subscribe(fn), exit(), tail().
+ * Build the request handler. `console` is the orchestrator: view(), subscribe(fn), markDone(), tailTask(), exit(), tail().
  * Returns { handler, broadcast() } — call broadcast() whenever the view changed.
  */
 export function createHandler({ gate, console: app, hostname = os.hostname(), log = () => {} }) {
@@ -128,16 +128,9 @@ export function createHandler({ gate, console: app, hostname = os.hostname(), lo
       if (req.method === 'POST' && (url.pathname === '/api/done' || url.pathname === '/api/undone')) {
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
         let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return send(res, 400, { error: 'bad json' }); }
-        const done = app.markDone({ factory: body.factory, issue: body.issue }, url.pathname === '/api/done');
-        log(`console: ${body.issue} in ${body.factory} marked ${done ? 'done' : 'not done'} by a person`);
-        return send(res, 200, { ok: true, done });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/close') {
-        if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
-        let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return send(res, 400, { error: 'bad json' }); }
-        const outcomes = await app.closeTask({ factory: body.factory, issue: body.issue });
-        log(`console: close ${body.issue} in ${body.factory} → ${outcomes.map((o) => `${o.agent} ${o.outcome}`).join(', ') || 'nothing was running'}`);
-        return send(res, 200, { ok: true, outcomes });
+        const { done, outcomes = [], error = null } = await app.markDone({ factory: body.factory, issue: body.issue }, url.pathname === '/api/done');
+        log(`console: ${body.issue} in ${body.factory} ${error ? error : `marked ${done ? 'done' : 'not done'} by a person`}${outcomes.length || done ? ` → ${outcomes.map((o) => `${o.agent} ${o.outcome}`).join(', ') || 'nothing was running'}` : ''}`);
+        return send(res, 200, { ok: true, done, outcomes, error });
       }
       if (req.method === 'POST' && url.pathname === '/api/exit') {
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });

@@ -21,6 +21,7 @@
   function prNum(url) { return url ? '#' + url.split('/').pop() : ''; }
   function factories() { return view ? view.factories : []; }
   function taskAlerts(f) { var keys = []; f.alerts.forEach(function (a) { if (keys.indexOf(a.issueKey) < 0) keys.push(a.issueKey); }); return keys.length; }
+  function hasAlert(f, iss) { return f.alerts.some(function (a) { return a.issueKey === iss.key; }); }
   // One line of facts per task: size and grade, the issue's state, the PR's state.
   function stats(iss) {
     var out = [];
@@ -32,7 +33,7 @@
   }
   // A run's result as a word: the raw status for the run that owns the PR, the model's reading for a reviewer (a report, not a decision).
   function verdict(r) { return r.result && r.ownsPr ? r.result.status.replace('_', ' ') : r.phrase; }
-  var SHORT = { blocked: 'blocked on a dialog', question: 'stopped to ask', merge: 'PR waits for your merge', needs_human: 'needs your decision', holding: 'still holding its workspace', stopped: 'stopped without a result', failed: 'failed', gone: 'agent gone' };
+  var SHORT = { blocked: 'blocked on a dialog', question: 'stopped to ask', merge: 'PR waits for your merge', needs_human: 'needs your decision', holding: 'still holding its workspace', stopped: 'stopped without a result', failed: 'failed', gone: 'agent gone', finished: 'finished, waiting for your sign-off' };
   function current() { if (!view) return null; if (chosen === 'all' || !chosen) return factories().length === 1 ? factories()[0] : null; return factories().filter(function (f) { return f.id === chosen; })[0] || null; }
   function shown() { var f = current(); return f ? [f] : factories(); }
   function factoryOf(issueKey, id) { return factories().filter(function (f) { return f.id === id; })[0]; }
@@ -47,7 +48,7 @@
     var fs = shown(), today = 0, assembling = 0, wait = 0, alerts = 0;
     fs.forEach(function (f) {
       alerts += taskAlerts(f); assembling += f.counts.inflight; wait += f.humanWaitMs;
-      f.issues.forEach(function (i) { if (i.bucket !== 'inflight' && i.finishedAt && Date.now() - Date.parse(i.finishedAt) < 86400e3) today++; });
+      f.issues.forEach(function (i) { if (i.bucket !== 'inflight' && !hasAlert(f, i) && i.finishedAt && Date.now() - Date.parse(i.finishedAt) < 86400e3) today++; });
     });
     var stats = [['output today', today, 'merged'], ['assembling', assembling, 'commit'], ['waiting on you', dur(wait), 'lines'], ['alerts', alerts, alerts ? 'pr' : 'commit']];
     var items = stats.map(function (st) { return '<span class="item"><i class="' + st[2] + '"></i><b>' + esc(st[1]) + '</b>' + esc(st[0]) + '</span>'; }).join('');
@@ -62,14 +63,16 @@
       return '<span class="chip ' + esc(sl.light) + '" style="border-left:3px solid ' + roleColor(sl.role, i) + '" title="' + esc(sl.role + ': ' + sl.phrase + (who ? ' · ' + who : '')) + '"><i class="led ' + esc(sl.light === 'empty' ? '' : sl.light) + ' still"></i>' + esc(sl.role) + (who ? '<small>' + esc(who) + '</small>' : '') + '</span>';
     }).join('') + '</span>';
   }
-  function row(f, iss, many) {
+  // One row per task. `plain` leaves the role chips out: a finished task is a summary line, and
+  // which roles worked on it is the detail screen's business.
+  function row(f, iss, many, plain) {
     var elapsed = iss.finishedAt ? iss.elapsedMs : iss.elapsedMs + drift();
     var phrase = iss.bucket === 'merged' ? 'merged ' + prNum(iss.prUrl) + (iss.finishedAt ? ' · ' + clock(iss.finishedAt) : '') : iss.cleared ? 'marked done by you' : iss.phrase;
     var wait = iss.humanWaitMs + (iss.bucket === 'inflight' && iss.light !== 'green' ? drift() : 0);
     return '<a class="row ' + esc(iss.light) + '" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '"><i class="led ' + esc(iss.light) + (iss.bucket !== 'inflight' ? ' still' : '') + '"></i>' +
       '<span class="t"><b>' + esc(iss.key) + '</b>' + esc(iss.title) + '</span>' +
       '<span class="e"><span class="you' + (wait ? '' : ' none') + '" title="time a person was waited on">' + (wait ? dur(wait) : '0') + '<small>you</small></span><small class="el">' + dur(elapsed) + '</small></span>' +
-      '<span class="s">' + chips(iss) + '<span>' + (many ? esc(f.name) + ' · ' : '') + esc(phrase) + '</span>' + stats(iss) + '</span>' +
+      '<span class="s">' + (plain ? '' : chips(iss)) + '<span>' + (many ? esc(f.name) + ' · ' : '') + esc(phrase) + '</span>' + stats(iss) + '</span>' +
       (iss.light === 'green' && iss.bucket === 'inflight' ? '<span class="craft"><i></i></span>' : '') + '</a>';
   }
   function taskCard(f, iss, alerts, many) {
@@ -81,15 +84,17 @@
     });
     if (!seen.merge && !seen.answer && iss.url) acts += '<a class="btn" href="' + esc(iss.url) + '" target="_blank" rel="noopener">Open issue</a>';
     var live = iss.runs.filter(function (r) { return r.agentAlive; });
-    if (live.length) acts += '<button class="btn" data-tail="' + esc(f.id) + '|' + esc(iss.key) + '">Scrollback</button>' + closeButton(f, iss, live);
-    acts += '<button class="btn done" data-done="' + esc(f.id) + '|' + esc(iss.key) + '" title="Clear its alerts and move it to output. Your call.">✓ Mark done</button>';
+    if (live.length) acts += '<button class="btn" data-tail="' + esc(f.id) + '|' + esc(iss.key) + '">Scrollback</button>';
+    acts += doneButton(f, iss, live);
     var tail = scrollback(f.id + '|' + iss.key);
     var wait = iss.humanWaitMs + (iss.light === 'green' ? 0 : drift());
     return '<div class="alert"><div class="k"><i class="led ' + esc(iss.light) + ' still"></i><b>' + esc(iss.key) + ' ' + esc(iss.title) + (many ? ' · ' + esc(f.name) : '') + '</b><span class="you' + (wait > 1000 ? '' : ' none') + '" title="time a person was waited on">' + (wait > 1000 ? dur(wait) : '0') + '<small>you</small></span></div>' +
       '<a class="open" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '">' + chips(iss) + stats(iss) + '</a><ul class="why">' + lines + '</ul>' + tail + '<div class="acts">' + acts + '</div></div>';
   }
-  function closeButton(f, iss, live) {
-    return '<button class="btn cancel" data-close="' + esc(f.id) + '|' + esc(iss.key) + '" data-agents="' + esc(live.map(function (r) { return r.agent; }).join(', ')) + '">✕ Close</button>';
+  // The one action on a task: a person says it is done. Its agents are closed, its alerts go,
+  // and it moves to output. `live` is the agents still up, named so the confirm can say who goes.
+  function doneButton(f, iss, live) {
+    return '<button class="btn done" data-done="' + esc(f.id) + '|' + esc(iss.key) + '" data-agents="' + esc(live.map(function (r) { return r.agent; }).join(', ')) + '" title="Close its agents, clear its alerts and move it to output. Your call.">✓ Mark done</button>';
   }
   // Every agent's last lines, one block per role with its colour in the gutter. Read only.
   function scrollback(key) {
@@ -101,6 +106,21 @@
     }).join('') + '</div>';
   }
   function section(title, count, body, extra) { return '<section><div class="sub">' + title + ' <span class="n' + (extra && extra.hot ? ' hot' : '') + '">' + count + '</span>' + (extra && extra.more || '') + '</div>' + body + '</section>'; }
+  // What this factory is, at a glance: where it reads issues from, the rules that pick them up
+  // (which issues, which role, which agent) and how its watcher is doing. Top of the overview.
+  function factoryCard(f) {
+    var alive = !f.watcher.stale;
+    var rules = f.rules.map(function (r, i) {
+      return '<div><b style="color:' + roleColor(r.role || r.name, i) + '">' + esc(r.role || r.name) + '</b><span><em>' + esc(r.agent + (r.model ? ' ' + r.model : '')) + '</em>' + (r.effort ? ' · ' + esc(r.effort) : '') + (r.basedOn ? ' · after ' + esc(r.basedOn) : '') + (r.passes > 1 ? ' · ' + r.passes + ' passes' : '') + '<code>' + esc(r.match || 'any issue') + '</code></span></div>';
+    }).join('') || '<div class="empty">No rules: this factory picks nothing up.</div>';
+    var meta = esc(f.tracker) + ' · ' + esc(f.repo.replace(/^.*\//, '')) + (f.maxConcurrent ? ' · cap ' + f.maxConcurrent : '') + (f.pollSeconds ? ' · every ' + f.pollSeconds + 's' : '') +
+      ' · ' + (f.watcher.lastPoll ? (alive ? 'polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago' : 'watcher not seen for ' + dur(Date.now() - Date.parse(f.watcher.lastPoll))) : (f.watcher.paneOnly ? 'watcher pane open' : 'watcher never seen'));
+    return section('<i class="led ' + (alive ? 'green' : 'red') + ' still"></i>' + esc(f.name), f.rules.length + ' rule' + (f.rules.length === 1 ? '' : 's'), '<div class="inset pane factory"><div class="fmeta' + (alive ? '' : ' stale') + '">' + meta + '</div><div class="team">' + rules + '</div></div>',
+      { more: '<span class="more" style="color:var(--muted)">' + esc(f.roles.join(' → ')) + '</span>' });
+  }
+  function legend() {
+    return '<div class="legend"><span><i class="led green still"></i>working</span><span><i class="led red"></i>blocked</span><span><i class="led yellow"></i>waiting on you</span><span><i class="led"></i>done</span><span><span class="chip empty"><i class="led still"></i>role</span>not started</span><span><span class="you">5m<small>you</small></span>waited on a person</span></div>';
+  }
 
   // ------------------------------------------------------------ screens
   function overview() {
@@ -112,18 +132,18 @@
       var byTask = {};
       x.alerts.forEach(function (a) { (byTask[a.issueKey] = byTask[a.issueKey] || []).push(a); });
       Object.keys(byTask).forEach(function (k) { var iss = x.issues.filter(function (i) { return i.key === k; })[0]; if (iss) alerts.push([x, iss, byTask[k]]); });
-      x.issues.forEach(function (i) { (i.bucket === 'inflight' ? inflight : i.bucket === 'merged' ? merged : done).push([x, i]); });
+      x.issues.forEach(function (i) { if (i.bucket === 'inflight') inflight.push([x, i]); else if (!byTask[i.key]) (i.bucket === 'merged' ? merged : done).push([x, i]); });
     });
     var body = '';
     if (!factories().length) body += '<div class="empty">No factory has reported yet. Start a watcher with <b>issue-herd</b> in a repository, and it appears here on its first poll.</div>';
+    else body += fs.map(factoryCard).join('') + legend();
     body += section('<i class="led ' + (alerts.length ? 'red' : '') + ' still"></i>Alerts', alerts.length, alerts.length ? '<div class="inset pane">' + alerts.map(function (p) { return taskCard(p[0], p[1], p[2], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing needs you. The factory is running by itself.</div></div>', { hot: alerts.length });
-    body += section('Assembling', inflight.length, inflight.length ? '<div class="inset pane">' + inflight.map(function (p) { return row(p[0], p[1], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">No issue in flight.</div></div>') +
-      '<div class="legend"><span><i class="led green still"></i>working</span><span><i class="led red"></i>blocked</span><span><i class="led yellow"></i>waiting on you</span><span><i class="led"></i>done</span><span><span class="chip empty"><i class="led still"></i>role</span>not started</span><span><span class="you">5m<small>you</small></span>waited on a person</span></div>';
+    body += section('Assembling', inflight.length, inflight.length ? '<div class="inset pane">' + inflight.map(function (p) { return row(p[0], p[1], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">No issue in flight.</div></div>');
     var out = merged.concat(done);
     var today = out.filter(function (p) { return p[1].finishedAt && Date.now() - Date.parse(p[1].finishedAt) < 86400e3; });
     var list = showAll ? out : today;
     var more = out.length > list.length ? '<button class="more" id="more">Show all ' + out.length + '</button>' : (showAll && out.length > today.length ? '<button class="more" id="more">Today only</button>' : '');
-    body += section(showAll ? 'Output' : 'Output today', list.length, list.length ? '<div class="inset pane">' + list.map(function (p) { return row(p[0], p[1], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing finished' + (showAll ? '' : ' today') + '.</div></div>', { more: more });
+    body += section(showAll ? 'Output' : 'Output today', list.length, list.length ? '<div class="inset pane">' + list.map(function (p) { return row(p[0], p[1], many, true); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing finished' + (showAll ? '' : ' today') + '.</div></div>', { more: more });
     var wait = fs.reduce(function (s, x) { return s + x.humanWaitMs; }, 0);
     body += '<div class="foot"><span>' + esc(fs.reduce(function (s, x) { return s + x.counts.running; }, 0)) + ' running · you were waited on for <b>' + dur(wait) + '</b> in total</span><span>' + (f && f.watcher.lastPoll ? 'polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago' : '') + '</span></div>';
     return head + belt() + '<div class="body">' + body + '</div>' + (sheet ? '<div class="dimmer" id="dim"></div>' : '');
@@ -137,12 +157,11 @@
         '<span class="m">' + esc(f.tracker) + ' · ' + esc(f.repo.replace(/^.*\//, '')) + ' · ' + (f.watcher.lastPoll ? (alive ? 'polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago' : 'watcher not seen for ' + dur(Date.now() - Date.parse(f.watcher.lastPoll))) : (f.watcher.paneOnly ? 'watcher pane ' + esc(f.watcher.workspaceId || '') + ' open' : 'watcher never seen')) + '</span></button>';
     }).join('');
     if (factories().length > 1) opts = '<button class="opt' + (chosen === 'all' || !current() ? ' on' : '') + '" data-choose="all"><i class="led green still"></i><span class="n">All factories</span><span class="c"><span class="pill">' + factories().reduce(function (s, f) { return s + f.counts.inflight; }, 0) + ' assembling</span></span><span class="m">every factory on ' + esc(document.body.dataset.hostname) + '</span></button>' + opts;
-    var f = current(), team = '';
-    if (f) team = '<div class="pane"><div class="sub">' + esc(f.name) + ' · ' + f.rules.length + ' rule' + (f.rules.length === 1 ? '' : 's') + (f.maxConcurrent ? ' <span class="n">cap ' + f.maxConcurrent + '</span>' : '') + '</div><div class="inset pane team">' +
-      f.rules.map(function (r) { return '<div><b>' + esc(r.role || r.name) + '</b><span><em>' + esc(r.agent + (r.model ? ' ' + r.model : '')) + '</em>' + (r.effort ? ' · ' + esc(r.effort) : '') + (r.basedOn ? ' · basedOn ' + esc(r.basedOn) : '') + ' · ' + esc(r.match) + '</span></div>'; }).join('') +
-      '</div><div class="acts" style="margin-top:8px"><span class="pill">' + (f.watcher.version ? 'issue-herd ' + esc(f.watcher.version) : 'version unknown') + '</span>' + (f.watcher.workspaceId ? '<span class="pill">workspace ' + esc(f.watcher.workspaceId) + '</span>' : '') + '</div></div>';
+    // The chosen factory's rules live at the top of the overview now; the picker is for choosing.
+    var f = current(), about = '';
+    if (f) about = '<div class="pane"><div class="acts"><span class="pill">' + (f.watcher.version ? 'issue-herd ' + esc(f.watcher.version) : 'version unknown') + '</span>' + (f.watcher.workspaceId ? '<span class="pill">workspace ' + esc(f.watcher.workspaceId) + '</span>' : '') + '</div></div>';
     var lock = document.body.dataset.gated === 'true' ? '<div class="pane"><button class="btn" id="lockbtn">Lock the console</button></div>' : '';
-    return '<div class="sheet" role="dialog" aria-label="Factories"><div class="titlebar"><h1>Factories on ' + esc(document.body.dataset.hostname) + '</h1><span class="drag"></span><button class="tbtn red" id="closesheet" aria-label="close">✕</button></div><div class="pane">' + opts + '</div>' + team + lock + '</div>';
+    return '<div class="sheet" role="dialog" aria-label="Factories"><div class="titlebar"><h1>Factories on ' + esc(document.body.dataset.hostname) + '</h1><span class="drag"></span><button class="tbtn red" id="closesheet" aria-label="close">✕</button></div><div class="pane">' + opts + '</div>' + about + lock + '</div>';
   }
 
   function detail(fid, key) {
@@ -176,8 +195,8 @@
     var results = iss.runs.filter(function (r) { return r.result && r.result.summary; }).map(function (r) { return '<div class="inset pane"><div class="sub" style="padding-top:0">' + esc(r.role || r.rule) + ' · ' + esc(verdict(r)) + '</div>' + (r.result.summary.length > 600 && !expanded[r.key] ? '<p class="summary clamp">' + esc(r.result.summary) + '</p><button class="more" data-expand="' + esc(r.key) + '">Read all</button>' : '<p class="summary">' + esc(r.result.summary) + '</p>' + (r.result.notes ? '<p class="summary" style="color:var(--dim)">' + esc(r.result.notes) + '</p>' : '')) + '</div>'; }).join('');
     if (results) results = section('Reports', iss.runs.filter(function (r) { return r.result; }).length, results);
     var live = iss.runs.filter(function (r) { return r.agentAlive; });
-    var acts = live.length ? section('Agents still up', live.length, '<div class="inset pane">' + scrollback(f.id + '|' + iss.key) + '<div class="acts"><button class="btn" data-tail="' + esc(f.id) + '|' + esc(iss.key) + '">Scrollback</button>' + closeButton(f, iss, live) + '</div></div>') : '';
-    acts += '<div class="acts">' + (iss.cleared ? '<span class="pill">marked done by you</span><button class="btn" data-undone="' + esc(f.id) + '|' + esc(iss.key) + '">Undo</button>' : '<button class="btn done" data-done="' + esc(f.id) + '|' + esc(iss.key) + '">✓ Mark done</button>') + '</div>';
+    var acts = live.length ? section('Agents still up', live.length, '<div class="inset pane">' + scrollback(f.id + '|' + iss.key) + '<div class="acts"><button class="btn" data-tail="' + esc(f.id) + '|' + esc(iss.key) + '">Scrollback</button></div></div>') : '';
+    acts += '<div class="acts">' + (iss.cleared && !live.length ? '<span class="pill">marked done by you</span><button class="btn" data-undone="' + esc(f.id) + '|' + esc(iss.key) + '">Undo</button>' : doneButton(f, iss, live)) + '</div>';
     return head + belt() + '<div class="ehead"><span class="key">' + esc(f.name) + '</span><h2>' + esc(iss.title) + '</h2>' + status + '</div><div class="body">' + links + roles + change + results + acts + '</div>';
   }
 
@@ -200,18 +219,15 @@
     else if (t.dataset.choose) { chosen = t.dataset.choose; try { localStorage.setItem('factory', chosen); } catch (x) { /* fine */ } sheet = false; render(); }
     else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; fetch('/api/tail?factory=' + encodeURIComponent(p[0]) + '&issue=' + encodeURIComponent(p[1])).then(function (r) { return r.json(); }).then(function (j) { tails[t.dataset.tail] = j.blocks || '(empty)'; render(); }); }
     else if (t.dataset.done || t.dataset.undone) {
-      var d = (t.dataset.done || t.dataset.undone).split('|'), undo = !!t.dataset.undone;
-      if (!undo && !confirm('Mark ' + d[1] + ' done? Its alerts are cleared and it moves to output. Agents still up on it keep running; use Close for those. A new run on it brings it back.')) return;
+      var d = (t.dataset.done || t.dataset.undone).split('|'), undo = !!t.dataset.undone, agents = t.dataset.agents;
+      if (!undo && !confirm('Mark ' + d[1] + ' done? ' + (agents ? 'Every agent still up on it (' + agents + ') is sent its exit command and shuts down the way it wants; workspaces and worktrees stay. ' : '') + 'Its alerts are cleared and it moves to output. A new run on it brings it back.')) return;
       t.disabled = true;
       fetch(undo ? '/api/undone' : '/api/done', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: d[0], issue: d[1] }) })
-        .then(function (r) { return r.json(); }).then(function (j) { toast(j.ok ? d[1] + (undo ? ' is back' : ' marked done') : 'Could not: ' + (j.error || 'unknown')); }).catch(function () { toast('The console did not answer.'); });
-    }
-    else if (t.dataset.close) {
-      var q = t.dataset.close.split('|');
-      if (!confirm('Close ' + q[1] + '? Every agent still up on it (' + t.dataset.agents + ') is sent its exit command and shuts down the way it wants. Workspaces and worktrees stay.')) return;
-      t.disabled = true;
-      fetch('/api/close', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: q[0], issue: q[1] }) })
-        .then(function (r) { return r.json(); }).then(function (j) { toast(j.ok ? (j.outcomes.length ? j.outcomes.map(function (o) { return o.agent + ' ' + o.outcome; }).join(' · ') : 'nothing was running') : 'Could not close: ' + (j.error || 'unknown')); }).catch(function () { toast('The console did not answer.'); });
+        .then(function (r) { return r.json(); }).then(function (j) {
+          if (!j.ok || j.error) return toast('Could not: ' + (j.error || 'unknown'));
+          var closed = (j.outcomes || []).map(function (o) { return o.agent + ' ' + o.outcome; }).join(' · ');
+          toast(undo ? d[1] + ' is back' : d[1] + ' marked done' + (closed ? ' · ' + closed : ''));
+        }).catch(function () { toast('The console did not answer.'); });
     }
   });
   document.getElementById('app').addEventListener('click', function (e) { if (e.target.id === 'dim') { sheet = false; render(); } });

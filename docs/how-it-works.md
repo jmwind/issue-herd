@@ -195,22 +195,28 @@ issue-herd console set-passcode    # gate it, and serve it on this machine's Tai
 Three screens, in Factorio's idiom because a factory is what this is:
 
 - **Overview.** A factory picker in the title bar (one machine runs several; the mark beside it
-  opens issue-herd on GitHub in a new tab), then **Alerts**
-  (one card per task that needs a person, with what to do about it), **Assembling** (one row per
-  open issue, with how long it has waited on you), and **Output today**. Every task shows the
-  roles that worked on it, lines added and removed with a size grade, and the state of its issue
-  and its pull request. The belt across the top carries the factory's four numbers.
+  opens issue-herd on GitHub in a new tab), then the factory itself at a glance — its tracker and
+  repository, every rule with the role it plays, the agent and model behind it and the issues it
+  matches, and whether the watcher is alive — with the legend for the lights under it. Then
+  **Alerts** (one card per task that needs a person, with what to do about it), **Assembling**
+  (one row per open issue, with the roles on it and how long it has waited on you), and **Output
+  today** (one plain line per finished task; the roles are on the detail screen). Every task shows
+  lines added and removed with a size grade, and the state of its issue and its pull request. The
+  belt across the top carries the factory's four numbers.
 - **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
   waiting on you, done) plus a "you" row, lines added and removed with a size grade and its reason,
   each role's report, a merged scrollback (the last 100 lines of every agent on the task, one
   block per role in that role's colour, read only; while an agent is working, herdr can only
-  give the screen it is showing right now, so the block is shorter), and one close button.
-- **Factory picker.** Every factory with its tracker, last poll, running and alert counts, a
-  watcher not seen for three polls marked stale, and the chosen factory's rules in three lines.
+  give the screen it is showing right now, so the block is shorter), and one **Mark done** button.
+- **Factory picker.** Every factory with its tracker, last poll, running and alert counts, and a
+  watcher not seen for three polls marked stale.
 
 **What raises an alert.** A person actually being the one waited for: a dialog, a question, a
-decision, a failure, or a pull request no role is still working on. An agent still sitting on its
-workspace after the task is over gets a card too. While any role is still running on a task, the
+decision, a failure, or a pull request no role is still working on. A task that has finished —
+merged, or done with nothing left for anyone — gets a card too, *waiting for your sign-off*,
+whatever became of its agents (exited on their own, exited by `onMerged`, or still holding a
+workspace): it stays in Alerts, and out of Output, until a person marks it done or a day has
+passed. While any role is still running on a task, the
 implementer's open PR is *waiting for review* — a fact on its chip, not an alert, and not your
 wait time — and a reviewer that has finished is done: its report is a line on the task (*found
 nothing blocking*, *has findings*), never a decision of its own. The merge alert shows those
@@ -229,14 +235,17 @@ branch. One call per task, every 90s for tasks in flight or finished this
 week and every 30 minutes for older ones; without a credential those fields are not shown.
 Nothing is written except the registry.
 
-**Mark done.** A task can sit in Alerts with nothing left to do about it: a failed start that was
-retried elsewhere, a report already acted on. The button clears its alerts and moves it to
-output; that is a person's decision, recorded in `~/.config/issue-herd/console.json` (the
-console's own file, never the watcher's state), and a newer run on the task brings it back.
-
-**Close.** One button per task: every agent still up on it is sent its own exit command (`/exit`
-for Claude Code, `/quit` for codex) and shuts down the way it wants. Workspaces and worktrees
-stay; `onMerged` is still where clean-up is configured.
+**Mark done.** The one action on a task, and a person's to take: a finished task sits in Alerts
+— even after an auto-merge — until someone has looked at it (the reports, the scrollback) and
+says it is done. The button sends every agent still up on the task its own exit command
+(`/exit` for Claude Code, `/quit` for codex, each shutting down the way it wants), clears the
+task's alerts and moves it to output. The decision is recorded in
+`~/.config/issue-herd/console.json` (the console's own file, never the watcher's state); a newer
+run on the task brings it back, and so does Undo on the detail screen (without restarting the
+agents). An agent that does not exit (herdr could not prompt it, or it did not go within the
+timeout) keeps the task in Alerts and nothing is recorded: a task with an agent still on it is
+not done, whatever was clicked. Workspaces and worktrees stay; `onMerged` is still where
+clean-up is configured.
 
 **The gate.** With no passcode the console binds to loopback only and asks nothing. With one
 (`set-passcode`, at least four digits because the phone's keypad has no letters; stored as a
