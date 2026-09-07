@@ -11,6 +11,8 @@
     "src",
     "prompts",
     "config.example.json",
+    "assets",
+    "docs",
     "README.md",
     "LICENSE"
   ],
