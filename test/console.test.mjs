@@ -116,6 +116,21 @@ test('a task a person marked done loses its alerts and sits in output, until a n
   assert.equal(retried.issues[0].cleared, false); assert.ok(retried.alerts.length >= 1, 'the newer run brings the task back');
 });
 
+test('a merged task shows as finished even when one of its role runs failed', () => {
+  const runs = {
+    'GH-5@impl': { rule: 'implement', role: 'impl', status: 'merged', issueKey: 'GH-5', title: 'Logo', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-5-impl', prUrl: 'https://github.com/o/r/pull/6' },
+    'GH-5@review': { rule: 'tech-lead', role: 'review', status: 'failed', issueKey: 'GH-5', title: 'Logo', startedAt: iso(11, 5), finishedAt: iso(11, 6), agentName: 'gh-5-review', error: 'timed out' },
+  };
+  const v = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, now: T(12, 0) });
+  const t = v.issues[0];
+  assert.equal(t.bucket, 'merged'); assert.equal(t.light, 'grey'); assert.equal(t.phrase, 'merged');
+  assert.deepEqual(t.slots.map((s) => s.light), ['grey', 'red'], 'the failed review is still a fact on its chip');
+  assert.deepEqual(v.alerts.map((a) => a.kind), ['failed'], 'and still an alert for a day');
+  // a finished, unmerged task is described by its outcome, not by a failed sibling
+  const done = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { ...runs, 'GH-5@impl': { ...runs['GH-5@impl'], status: 'done', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/6' } } } }, now: T(12, 0) }).issues[0];
+  assert.equal(done.bucket, 'done'); assert.equal(done.light, 'grey'); assert.equal(done.phrase, 'impl PR open');
+});
+
 test('factoryView without roles still lists each run as one slot', () => {
   const v = factoryView({ id: 'x', repo: '/r', config: { rules: [{ name: 'ai', match: 'any:true' }] }, state: { runs: { 'GH-1': { rule: 'ai', status: 'running', title: 't', startedAt: iso(14, 0), agentName: 'gh-1' } } }, index: indexSnapshot({ agents: [{ name: 'gh-1', agent_status: 'working' }] }), now: T(14, 5) });
   assert.deepEqual(v.roles, []);

@@ -176,10 +176,17 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     const bucket = isCleared && !running ? (merged ? 'merged' : 'done') : live.length ? 'inflight' : merged ? 'merged' : 'done';
     const slots = roleList.length ? roleList.map((role) => { const r = iss.runs.find((x) => x.role === role); return { role, light: r ? (r.status === 'merged' || r.status === 'done' ? 'grey' : r.light) : 'empty', phrase: r?.phrase || 'not started' }; })
       : iss.runs.map((r) => ({ role: r.role || 'run', light: r.status === 'merged' || r.status === 'done' ? 'grey' : r.light, phrase: r.phrase }));
-    const phrase = lead ? (lead.role && roleList.length > 1 ? `${lead.role} ${lead.phrase}` : lead.phrase) : '';
+    // The task's light and phrase follow the task, not its unluckiest run: a merged task is
+    // finished even if a reviewer never started, and a finished one is described by its outcome.
+    const outcome = (s) => iss.runs.find((r) => r.result?.status === s);
+    const finishedLead = outcome('needs_human') || outcome('pr_open') || outcome('nothing_to_do') || iss.runs.find((r) => r.status === 'merged') || lead;
+    const light = bucket === 'inflight' ? (lead?.light || 'grey') : 'grey';
+    const phrase = bucket === 'merged' ? 'merged'
+      : bucket === 'done' ? (finishedLead ? (finishedLead.role && roleList.length > 1 ? `${finishedLead.role} ${finishedLead.phrase}` : finishedLead.phrase) : '')
+      : lead ? (lead.role && roleList.length > 1 ? `${lead.role} ${lead.phrase}` : lead.phrase) : '';
     const size = iss.runs.map((r) => r.size).find(Boolean) || null;
     return {
-      key: iss.key, title: iss.title, url: iss.url, bucket, light: lead?.light || 'grey', phrase,
+      key: iss.key, title: iss.title, url: iss.url, bucket, light, phrase,
       prUrl: anyPr, merged, prState: prStateOf, issueState, cleared: isCleared, slots, startedAt: new Date(startedAt).toISOString(), elapsedMs: lastEnd - startedAt,
       humanWaitMs: iss.runs.reduce((s, r) => s + r.humanWaitMs, 0), size, runs: iss.runs,
       finishedAt: iss.runs.every((r) => r.finishedAt) ? new Date(lastEnd).toISOString() : null,
