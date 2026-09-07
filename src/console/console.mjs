@@ -273,18 +273,24 @@ export class FactoryConsole {
     return { f, iss };
   }
 
-  /** A person decided the task is done: its alerts go, and it moves to output. Undone by a new run on it, or by hand. */
-  markDone({ factory, issue }, done = true) {
+  /**
+   * A person decided the task is done: every agent still up on it is sent its own exit command,
+   * its alerts go, and it moves to output. One action, one decision — a task is over when a person
+   * says so, even after an auto-merge. Undone by a new run on it, or by hand (which does not bring
+   * the agents back). Returns what happened to each agent that was still up.
+   */
+  async markDone({ factory, issue }, done = true) {
     const { f } = this.findTask({ factory, issue });
+    const outcomes = done ? await this.closeTask({ factory, issue }) : [];
     this.notes.done ||= {};
     const k = `${f.repo}|${issue}`;
     if (done) this.notes.done[k] = { at: new Date().toISOString() }; else delete this.notes.done[k];
     writeNotes(this.notesFile, this.notes);
     setTimeout(() => this.tick().catch(() => {}), 50);
-    return done;
+    return { done, outcomes };
   }
 
-  /** One button per task: every agent still up on it is sent its own exit command. */
+  /** Every agent still up on the task is sent its own exit command and shuts down the way it wants. */
   async closeTask({ factory, issue }) {
     const { iss } = this.findTask({ factory, issue });
     const outcomes = [];
@@ -294,7 +300,6 @@ export class FactoryConsole {
       outcomes.push({ run: r.key, role: r.role, agent: r.agent, outcome });
       this.sizes.delete(r.key);
     }
-    setTimeout(() => this.tick().catch(() => {}), 500);
     return outcomes;
   }
 

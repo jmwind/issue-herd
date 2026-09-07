@@ -10,6 +10,7 @@ import { Gate, hashPasscode, verifyPasscode } from '../src/console/passcode.mjs'
 import { stampFactory, loadRegistry, isStale, forgetFactory } from '../src/console/registry.mjs';
 import { complexity } from '../src/console/git.mjs';
 import { createHandler, listen, tailscaleAddresses } from '../src/console/server.mjs';
+import { FactoryConsole } from '../src/console/console.mjs';
 
 const T = (h, m, s = 0) => new Date(2026, 8, 7, h, m, s).getTime();
 const iso = (h, m, s = 0) => new Date(T(h, m, s)).toISOString();
@@ -231,12 +232,37 @@ test('tailscale addresses are the 100.64/10 IPv4 ones only', () => {
   assert.deepEqual(tailscaleAddresses({ lo: [{ family: 'IPv4', address: '127.0.0.1' }], ts: [{ family: 'IPv4', address: '100.101.7.22' }, { family: 'IPv6', address: 'fd7a::1' }], en0: [{ family: 'IPv4', address: '192.168.1.5' }] }), ['100.101.7.22']);
 });
 
+test('markDone: the one action — every agent still up on the task gets its exit command, the decision is recorded, undo leaves the agents alone', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  process.env.ISSUE_HERD_CONSOLE_NOTES = path.join(dir, 'console.json');
+  t.after(() => { delete process.env.ISSUE_HERD_CONSOLE_NOTES; });
+  const stopped = [];
+  const herdr = { run: async () => null, stopAgent: async (agent, opts) => { stopped.push([agent, opts.exitCommand]); return 'exited'; } };
+  const app = new FactoryConsole({ herdr, registryFile: path.join(dir, 'factories.json'), hostname: 'box' });
+  app.current.factories = [{ id: 'f', repo: '/r', issues: [{ key: 'GH-1', runs: [
+    { key: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', agentAlive: true },
+    { key: 'GH-1@review', role: 'review', agent: 'gh-1-review', agentKind: 'codex', agentAlive: true },
+    { key: 'GH-1@usability', role: 'usability', agent: 'gh-1-usability', agentKind: 'claude', agentAlive: false },
+  ] }] }];
+  const done = await app.markDone({ factory: 'f', issue: 'GH-1' });
+  assert.equal(done.done, true);
+  assert.deepEqual(done.outcomes.map((o) => [o.role, o.outcome]), [['impl', 'exited'], ['review', 'exited']], 'only the agents still up are closed');
+  assert.deepEqual(stopped, [['gh-1-impl', '/exit'], ['gh-1-review', '/quit']], 'each agent gets its own exit command');
+  assert.ok(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done['/r|GH-1'].at, 'the decision is the console\'s own note');
+  const undone = await app.markDone({ factory: 'f', issue: 'GH-1' }, false);
+  assert.deepEqual(undone, { done: false, outcomes: [] });
+  assert.equal(stopped.length, 2, 'undo does not touch the agents');
+  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {});
+  await assert.rejects(app.markDone({ factory: 'f', issue: 'GH-9' }), /no task GH-9/);
+  app.stop();
+});
+
 /** The HTTP surface with a stand-in orchestrator. */
 async function serve(t, { hash = null } = {}) {
   const calls = [];
   const app = { view: () => ({ hostname: 'box', factories: [] }), subscribe: () => () => {}, exit: async (a) => { calls.push(a); return 'exited'; }, tail: async () => 'tail text',
-    closeTask: async (a) => { calls.push({ close: a }); return [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }]; },
-    markDone: (a, done) => { calls.push({ done: a, value: done }); return done; },
+    markDone: async (a, done) => { calls.push({ done: a, value: done }); return { done, outcomes: done ? [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }] : [] }; },
     tailTask: async () => [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', alive: true, phrase: 'working', text: 'impl lines' }, { run: 'GH-1@review', role: 'review', agent: 'gh-1-review', agentKind: 'codex', alive: false, phrase: 'done', text: null }] };
   const gate = new Gate({ hash });
   const { handler } = createHandler({ gate, console: app, hostname: 'box' });
@@ -255,12 +281,12 @@ test('http: an ungated console serves the app and the state, and refuses cross-o
   const ok = await fetch(base + '/api/exit', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', run: 'GH-1' }) });
   assert.equal(ok.status, 200); assert.deepEqual(await ok.json(), { ok: true, outcome: 'exited' }); assert.deepEqual(calls, [{ factory: 'f', run: 'GH-1' }]);
   assert.equal((await fetch(base + '/app.css')).headers.get('content-type'), 'text/css; charset=utf-8');
-  const closed = await fetch(base + '/api/close', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', issue: 'GH-1' }) });
-  assert.equal(closed.status, 200); assert.equal((await closed.json()).outcomes[0].outcome, 'exited'); assert.deepEqual(calls.at(-1), { close: { factory: 'f', issue: 'GH-1' } });
-  assert.equal((await fetch(base + '/api/close', { method: 'POST', body: '{}' })).status, 403, 'closing a task is same-origin only');
   const done = await fetch(base + '/api/done', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', issue: 'GH-1' }) });
-  assert.deepEqual(await done.json(), { ok: true, done: true }); assert.deepEqual(calls.at(-1), { done: { factory: 'f', issue: 'GH-1' }, value: true });
+  assert.deepEqual(await done.json(), { ok: true, done: true, outcomes: [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }] }, 'marking done reports what happened to the agents it closed');
+  assert.deepEqual(calls.at(-1), { done: { factory: 'f', issue: 'GH-1' }, value: true });
+  assert.equal((await fetch(base + '/api/done', { method: 'POST', body: '{}' })).status, 403, 'marking done is same-origin only');
   assert.equal((await fetch(base + '/api/undone', { method: 'POST', body: '{}' })).status, 403);
+  assert.equal((await fetch(base + '/api/close', { method: 'POST', headers: { origin: 'http://' + host }, body: '{}' })).status, 404, 'there is no separate close: Mark done is the one action');
   const blocks = (await (await fetch(base + '/api/tail?factory=f&issue=GH-1')).json()).blocks;
   assert.deepEqual(blocks.map((b) => [b.role, b.alive]), [['impl', true], ['review', false]]);
 });

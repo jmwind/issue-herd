@@ -173,6 +173,11 @@ button{font:inherit;color:inherit}
 .team b{color:var(--orange-2)}
 .team span{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .team span em{font-style:normal;color:var(--text)}
+/* the factory card at the top of the overview: what it reads, which rules pick issues up, how the watcher is */
+.factory .fmeta{font-size:13px;color:var(--muted)}
+.factory .fmeta.stale{color:var(--red-2)}
+.factory .team span{white-space:normal;overflow:visible}
+.factory .team code{display:block;font:12px/1.4 ui-monospace,Menlo,monospace;color:var(--muted);overflow-wrap:anywhere}
 /* unlock */
 .lock{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px 20px;text-align:center}
 .lock .pad{width:60px;height:60px}
