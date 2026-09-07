@@ -194,7 +194,8 @@ issue-herd console set-passcode    # gate it, and serve it on this machine's Tai
 
 Three screens, in Factorio's idiom because a factory is what this is:
 
-- **Overview.** A factory picker in the title bar (one machine runs several), then **Alerts**
+- **Overview.** A factory picker in the title bar (one machine runs several; the mark beside it
+  opens issue-herd on GitHub in a new tab), then **Alerts**
   (one card per task that needs a person, with what to do about it), **Assembling** (one row per
   open issue, with how long it has waited on you), and **Output today**. Every task shows the
   roles that worked on it, lines added and removed with a size grade, and the state of its issue
