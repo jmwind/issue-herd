@@ -7,7 +7,10 @@
   var root = document.getElementById('app');
   var GEAR = '<svg class="gear" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm9.4 5.3-2.1-.4a7.5 7.5 0 0 0-.6-1.5l1.2-1.8-1.9-1.9-1.8 1.2c-.5-.3-1-.5-1.5-.6l-.4-2.1h-2.6l-.4 2.1c-.5.1-1 .3-1.5.6L8 6.7 6.1 8.6l1.2 1.8c-.3.5-.5 1-.6 1.5l-2.1.4v2.6l2.1.4c.1.5.3 1 .6 1.5l-1.2 1.8 1.9 1.9 1.8-1.2c.5.3 1 .5 1.5.6l.4 2.1h2.6l.4-2.1c.5-.1 1-.3 1.5-.6l1.8 1.2 1.9-1.9-1.2-1.8c.3-.5.5-1 .6-1.5l2.1-.4z"/></svg>';
   var INSERTER = '<div class="inserter"><svg viewBox="0 0 32 30"><rect x="10" y="22" width="12" height="6" fill="#4A4A4A" stroke="#0A0A0A"/><g class="arm"><rect x="14" y="4" width="4" height="22" fill="#E39827" stroke="#0A0A0A"/><rect x="10" y="1" width="12" height="5" fill="#5C5C5C" stroke="#0A0A0A"/></g></svg></div>';
-  var view = null, sheet = false, showAll = false, tails = {}, receivedAt = 0;
+  var view = null, sheet = false, showAll = false, tails = {}, expanded = {}, receivedAt = 0;
+  var MARK = (document.getElementById('mark') || { innerHTML: '' }).innerHTML;
+  var ROLE_COLORS = { impl: 'var(--orange-2)', review: '#8FA9B8', usability: '#B79CD9' }, EXTRA = ['#D9C07A', '#7ED184', '#E05252'];
+  function roleColor(role, i) { return ROLE_COLORS[role] || EXTRA[i % EXTRA.length]; }
   var chosen = null; try { chosen = localStorage.getItem('factory'); } catch (e) { /* private mode */ }
 
   // ------------------------------------------------------------ helpers
@@ -17,6 +20,16 @@
   function clock(iso) { if (!iso) return ''; var d = new Date(iso); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
   function prNum(url) { return url ? '#' + url.split('/').pop() : ''; }
   function factories() { return view ? view.factories : []; }
+  // One line of facts per task: size and grade, the issue's state, the PR's state.
+  function stats(iss) {
+    var out = [];
+    if (iss.size) out.push('<span class="st"><b class="add">+' + iss.size.added + '</b> <b class="del">−' + iss.size.removed + '</b>' + (iss.size.complexity ? ' <em>' + esc(iss.size.complexity.grade) + '</em>' : '') + '</span>');
+    if (iss.issueState) out.push('<span class="st' + (iss.issueState === 'closed' ? ' closed' : '') + '">issue ' + esc(iss.issueState) + '</span>');
+    if (iss.prUrl) out.push('<span class="st pr-' + esc(iss.prState) + '">PR ' + esc(prNum(iss.prUrl)) + ' ' + esc(iss.prState) + '</span>');
+    else out.push('<span class="st dim">no PR</span>');
+    return '<span class="stats">' + out.join('') + '</span>';
+  }
+  var SHORT = { blocked: 'blocked on a dialog', question: 'stopped to ask', merge: 'PR waits for your merge', needs_human: 'needs your decision', holding: 'still holding its workspace', stopped: 'stopped without a result', failed: 'failed', gone: 'agent gone' };
   function current() { if (!view) return null; if (chosen === 'all' || !chosen) return factories().length === 1 ? factories()[0] : null; return factories().filter(function (f) { return f.id === chosen; })[0] || null; }
   function shown() { var f = current(); return f ? [f] : factories(); }
   function factoryOf(issueKey, id) { return factories().filter(function (f) { return f.id === id; })[0]; }
@@ -24,7 +37,7 @@
   // ------------------------------------------------------------ pieces
   function titlebar(inner) {
     var ok = view && view.herdr.connected;
-    return '<div class="titlebar">' + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + (ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering') + '">' + GEAR + esc(document.body.dataset.hostname) + '</span></div>';
+    return '<div class="titlebar">' + MARK + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + (ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering') + '">' + GEAR + esc(document.body.dataset.hostname) + '</span></div>';
   }
   function belt() {
     var fs = shown(), today = 0, assembling = 0, wait = 0, alerts = 0;
@@ -39,36 +52,49 @@
   // The roles that worked on a task, in team order, each with its light; a role the team has but
   // nobody has started yet is a dashed chip, so the team's shape is visible on every task.
   function chips(iss) {
-    return '<span class="chips">' + iss.slots.map(function (sl) {
+    return '<span class="chips">' + iss.slots.map(function (sl, i) {
       var r = iss.runs.filter(function (x) { return x.role === sl.role || (!x.role && sl.role === 'run'); })[0];
       var who = r ? (r.agentKind || '') : '';
-      return '<span class="chip ' + esc(sl.light) + '" title="' + esc(sl.role + ': ' + sl.phrase + (who ? ' · ' + who : '')) + '"><i class="led ' + esc(sl.light === 'empty' ? '' : sl.light) + ' still"></i>' + esc(sl.role) + (who ? '<small>' + esc(who) + '</small>' : '') + '</span>';
+      return '<span class="chip ' + esc(sl.light) + '" style="border-left:3px solid ' + roleColor(sl.role, i) + '" title="' + esc(sl.role + ': ' + sl.phrase + (who ? ' · ' + who : '')) + '"><i class="led ' + esc(sl.light === 'empty' ? '' : sl.light) + ' still"></i>' + esc(sl.role) + (who ? '<small>' + esc(who) + '</small>' : '') + '</span>';
     }).join('') + '</span>';
   }
   function row(f, iss, many) {
     var elapsed = iss.finishedAt ? iss.elapsedMs : iss.elapsedMs + drift();
-    var phrase = iss.bucket === 'merged' ? 'merged ' + prNum(iss.prUrl) + (iss.finishedAt ? ' · ' + clock(iss.finishedAt) : '') : iss.phrase;
+    var phrase = iss.bucket === 'merged' ? 'merged ' + prNum(iss.prUrl) + (iss.finishedAt ? ' · ' + clock(iss.finishedAt) : '') : iss.cleared ? 'marked done by you' : iss.phrase;
     var wait = iss.humanWaitMs + (iss.bucket === 'inflight' && iss.light !== 'green' ? drift() : 0);
     return '<a class="row ' + esc(iss.light) + '" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '"><i class="led ' + esc(iss.light) + (iss.bucket !== 'inflight' ? ' still' : '') + '"></i>' +
       '<span class="t"><b>' + esc(iss.key) + '</b>' + esc(iss.title) + '</span>' +
       '<span class="e"><span class="you' + (wait ? '' : ' none') + '" title="time a person was waited on">' + (wait ? dur(wait) : '0') + '<small>you</small></span><small class="el">' + dur(elapsed) + '</small></span>' +
-      '<span class="s">' + chips(iss) + '<span>' + (many ? esc(f.name) + ' · ' : '') + esc(phrase) + '</span></span>' +
+      '<span class="s">' + chips(iss) + '<span>' + (many ? esc(f.name) + ' · ' : '') + esc(phrase) + '</span>' + stats(iss) + '</span>' +
       (iss.light === 'green' && iss.bucket === 'inflight' ? '<span class="craft"><i></i></span>' : '') + '</a>';
   }
   function taskCard(f, iss, alerts, many) {
-    var lines = alerts.map(function (a) { return '<li><i class="led ' + esc(a.light) + ' still"></i><b>' + esc(a.role || 'agent') + '</b> ' + esc(a.text) + ' <small>' + dur(a.sinceMs + drift()) + '</small></li>'; }).join('');
+    var lines = alerts.map(function (a) { return '<li><i class="led ' + esc(a.light) + ' still"></i><b>' + esc(a.role || 'agent') + '</b> ' + esc(SHORT[a.kind] || a.kind) + (a.kind === 'holding' && a.workspaceId ? ' ' + esc(a.workspaceId) : '') + ' <small>' + dur(a.sinceMs + drift()) + '</small></li>'; }).join('');
     var acts = '', seen = {};
     alerts.forEach(function (a) {
       if (a.kind === 'merge' && a.prUrl && !seen.merge) { seen.merge = 1; acts += '<a class="btn confirm" href="' + esc(a.prUrl) + '" target="_blank" rel="noopener">✓ Merge on GitHub</a>'; }
       if (a.kind === 'needs_human' && a.url && !seen.answer) { seen.answer = 1; acts += '<a class="btn confirm" href="' + esc(a.url) + '" target="_blank" rel="noopener">Answer on the issue</a>'; }
-      if (a.kind === 'blocked' || a.kind === 'question') acts += '<button class="btn" data-tail="' + esc(f.id) + '|' + esc(a.runKey) + '">Scrollback · ' + esc(a.role || a.agent) + '</button>';
     });
     if (!seen.merge && !seen.answer && iss.url) acts += '<a class="btn" href="' + esc(iss.url) + '" target="_blank" rel="noopener">Open issue</a>';
-    iss.runs.filter(function (r) { return r.agentAlive; }).forEach(function (r) { acts += '<button class="btn cancel" data-exit="' + esc(f.id) + '|' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">✕ Exit ' + esc(r.role || 'agent') + '</button>'; });
-    var tail = alerts.map(function (a) { var k = f.id + '|' + a.runKey; return tails[k] ? '<pre>' + esc(tails[k]) + '</pre>' : ''; }).join('');
+    var live = iss.runs.filter(function (r) { return r.agentAlive; });
+    if (live.length) acts += '<button class="btn" data-tail="' + esc(f.id) + '|' + esc(iss.key) + '">Scrollback</button>' + closeButton(f, iss, live);
+    acts += '<button class="btn done" data-done="' + esc(f.id) + '|' + esc(iss.key) + '" title="Clear its alerts and move it to output. Your call.">✓ Mark done</button>';
+    var tail = scrollback(f.id + '|' + iss.key);
     var wait = iss.humanWaitMs + (iss.light === 'green' ? 0 : drift());
     return '<div class="alert"><div class="k"><i class="led ' + esc(iss.light) + ' still"></i><b>' + esc(iss.key) + ' ' + esc(iss.title) + (many ? ' · ' + esc(f.name) : '') + '</b><span class="you' + (wait > 1000 ? '' : ' none') + '" title="time a person was waited on">' + (wait > 1000 ? dur(wait) : '0') + '<small>you</small></span></div>' +
-      '<a class="open" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '">' + chips(iss) + '</a><ul class="why">' + lines + '</ul>' + tail + '<div class="acts">' + acts + '</div></div>';
+      '<a class="open" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '">' + chips(iss) + stats(iss) + '</a><ul class="why">' + lines + '</ul>' + tail + '<div class="acts">' + acts + '</div></div>';
+  }
+  function closeButton(f, iss, live) {
+    return '<button class="btn cancel" data-close="' + esc(f.id) + '|' + esc(iss.key) + '" data-agents="' + esc(live.map(function (r) { return r.agent; }).join(', ')) + '">✕ Close</button>';
+  }
+  // Every agent's last lines, one block per role with its colour in the gutter. Read only.
+  function scrollback(key) {
+    var blocks = tails[key]; if (!blocks) return '';
+    if (typeof blocks === 'string') return '<pre>' + esc(blocks) + '</pre>';
+    return '<div class="scrollback">' + blocks.map(function (b, i) {
+      var c = roleColor(b.role, i);
+      return '<div class="sb" style="border-left-color:' + c + '"><div class="sbh" style="color:' + c + '">' + esc(b.role || b.agent) + ' <small>' + esc(b.agent + ' · ' + b.agentKind + ' · ' + (b.alive ? b.phrase : 'agent gone')) + '</small></div>' + (b.text ? '<pre>' + esc(b.text) + '</pre>' : '<pre class="dim">(no scrollback: the agent is no longer running)</pre>') + '</div>';
+    }).join('') + '</div>';
   }
   function section(title, count, body, extra) { return '<section><div class="sub">' + title + ' <span class="n' + (extra && extra.hot ? ' hot' : '') + '">' + count + '</span>' + (extra && extra.more || '') + '</div>' + body + '</section>'; }
 
@@ -118,19 +144,19 @@
   function detail(fid, key) {
     var f = factoryOf(key, fid), iss = f && f.issues.filter(function (i) { return i.key === key; })[0];
     if (!iss) return titlebar('<h1>' + esc(key) + '</h1>') + '<div class="body"><div class="empty">No such run here. <a href="#/">Back</a></div></div>';
-    var head = '<div class="titlebar"><h1>' + esc(iss.key) + '</h1><span class="drag"></span><a class="tbtn red" href="#/" aria-label="back">✕</a></div>';
+    var head = '<div class="titlebar">' + MARK + '<h1>' + esc(iss.key) + '</h1><span class="drag"></span><a class="tbtn red" href="#/" aria-label="back">✕</a></div>';
     var elapsed = iss.finishedAt ? iss.elapsedMs : iss.elapsedMs + drift();
     var lead = iss.runs.filter(function (r) { return r.needsYou; })[0] || iss.runs.filter(function (r) { return r.status === 'running'; })[0] || iss.runs[0];
     var status = '<div class="status"><i class="led ' + esc(iss.light) + (iss.bucket !== 'inflight' ? ' still' : '') + '"></i><b>' + esc(iss.bucket === 'merged' ? 'Merged' : lead.phrase) + '</b>' + (iss.finishedAt ? ' at ' + clock(iss.finishedAt) : '') + ' <small>' + dur(elapsed) + ' end to end</small><span class="you big" title="time a person was waited on">' + dur(iss.humanWaitMs) + '<small>you</small></span></div>';
     var ws = iss.runs.map(function (r) { return r.workspaceId; }).filter(Boolean)[0];
-    var links = '<div class="links">' + (iss.url ? '<a href="' + esc(iss.url) + '" target="_blank" rel="noopener">Issue<small>' + esc(iss.key) + '</small></a>' : '<span>Issue<small>no link</small></span>') +
-      (iss.prUrl ? '<a href="' + esc(iss.prUrl) + '" target="_blank" rel="noopener">Pull request<small>' + esc(prNum(iss.prUrl)) + (iss.merged ? ' merged' : '') + '</small></a>' : '<span>Pull request<small>none yet</small></span>') +
+    var links = '<div class="links">' + (iss.url ? '<a href="' + esc(iss.url) + '" target="_blank" rel="noopener">Issue<small>' + esc(iss.key) + (iss.issueState ? ' ' + esc(iss.issueState) : '') + '</small></a>' : '<span>Issue<small>no link</small></span>') +
+      (iss.prUrl ? '<a href="' + esc(iss.prUrl) + '" target="_blank" rel="noopener">Pull request<small>' + esc(prNum(iss.prUrl)) + ' ' + esc(iss.prState) + '</small></a>' : '<span>Pull request<small>none yet</small></span>') +
       (ws ? '<span title="open it in herdr">Workspace<small>' + esc(ws) + '</small></span>' : '<span>Workspace<small>none</small></span>') + '</div>';
     var t0 = Date.parse(iss.startedAt), t1 = iss.finishedAt ? Date.parse(iss.finishedAt) : Date.now(); if (t1 - t0 < 60000) t1 = t0 + 60000;
-    var bars = iss.runs.map(function (r) {
+    var bars = iss.runs.map(function (r, ri) {
       var segs = r.segments.map(function (s) { var l = Math.max(0, (s.from - t0) / (t1 - t0) * 100), w = Math.max(0.5, (Math.min(s.to, t1) - s.from) / (t1 - t0) * 100); return '<i class="' + esc(s.kind) + '" style="left:' + l.toFixed(2) + '%;width:' + w.toFixed(2) + '%"></i>'; }).join('');
       var v = dur((r.finishedAt ? r.elapsedMs : r.elapsedMs + drift())) + ' · ' + esc(r.result ? r.result.status.replace('_', ' ') : r.phrase);
-      return '<div class="role"><span class="n">' + esc(r.role || r.rule) + '<small>' + esc(r.agentKind) + (r.pass > 1 ? ' · pass ' + r.pass : '') + '</small></span><div class="bar">' + segs + '</div><span class="v">' + v + '</span></div>';
+      return '<div class="role"><span class="n" style="color:' + roleColor(r.role, ri) + '">' + esc(r.role || r.rule) + '<small>' + esc(r.agentKind) + (r.pass > 1 ? ' · pass ' + r.pass : '') + '</small></span><div class="bar">' + segs + '</div><span class="v">' + v + '</span></div>';
     }).join('');
     var waits = [];
     iss.runs.forEach(function (r) { r.segments.forEach(function (s) { if (s.kind === 'blocked' || s.kind === 'question') waits.push(s); }); });
@@ -143,10 +169,11 @@
         (size.commits.length ? '<dt>last commit</dt><dd>' + esc(size.commits[0].sha + ' ' + size.commits[0].subject) + '</dd>' : '') +
         (size.paths.length ? '<dt>touched</dt><dd>' + esc(size.paths.slice(0, 6).join(', ') + (size.paths.length > 6 ? ' +' + (size.paths.length - 6) : '')) + '</dd>' : '') + '</dl></div>');
     } else change = section('Recipe output', '—', '<div class="inset pane"><div class="empty">No branch measured yet.</div></div>');
-    var results = iss.runs.filter(function (r) { return r.result && r.result.summary; }).map(function (r) { return '<div class="inset pane"><div class="sub" style="padding-top:0">' + esc(r.role || r.rule) + ' · ' + esc(r.result.status.replace('_', ' ')) + '</div><p class="summary">' + esc(r.result.summary) + '</p>' + (r.result.notes ? '<p class="summary" style="color:var(--dim)">' + esc(r.result.notes) + '</p>' : '') + '</div>'; }).join('');
+    var results = iss.runs.filter(function (r) { return r.result && r.result.summary; }).map(function (r) { return '<div class="inset pane"><div class="sub" style="padding-top:0">' + esc(r.role || r.rule) + ' · ' + esc(r.result.status.replace('_', ' ')) + '</div>' + (r.result.summary.length > 600 && !expanded[r.key] ? '<p class="summary clamp">' + esc(r.result.summary) + '</p><button class="more" data-expand="' + esc(r.key) + '">Read all</button>' : '<p class="summary">' + esc(r.result.summary) + '</p>' + (r.result.notes ? '<p class="summary" style="color:var(--dim)">' + esc(r.result.notes) + '</p>' : '')) + '</div>'; }).join('');
     if (results) results = section('Reports', iss.runs.filter(function (r) { return r.result; }).length, results);
     var live = iss.runs.filter(function (r) { return r.agentAlive; });
-    var acts = live.length ? '<div class="acts">' + live.map(function (r) { return '<button class="btn cancel" data-exit="' + esc(f.id) + '|' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">✕ Exit ' + esc(r.role || 'agent') + ' (' + esc(r.agent) + ')</button>'; }).join('') + '</div>' : '';
+    var acts = live.length ? section('Agents still up', live.length, '<div class="inset pane">' + scrollback(f.id + '|' + iss.key) + '<div class="acts"><button class="btn" data-tail="' + esc(f.id) + '|' + esc(iss.key) + '">Scrollback</button>' + closeButton(f, iss, live) + '</div></div>') : '';
+    acts += '<div class="acts">' + (iss.cleared ? '<span class="pill">marked done by you</span><button class="btn" data-undone="' + esc(f.id) + '|' + esc(iss.key) + '">Undo</button>' : '<button class="btn done" data-done="' + esc(f.id) + '|' + esc(iss.key) + '">✓ Mark done</button>') + '</div>';
     return head + belt() + '<div class="ehead"><span class="key">' + esc(f.name) + '</span><h2>' + esc(iss.title) + '</h2>' + status + '</div><div class="body">' + links + roles + change + results + acts + '</div>';
   }
 
@@ -164,15 +191,23 @@
     if (t.id === 'pick') { sheet = true; render(); }
     else if (t.id === 'closesheet' || t.id === 'dim') { sheet = false; render(); }
     else if (t.id === 'more') { showAll = !showAll; render(); }
+    else if (t.dataset.expand) { expanded[t.dataset.expand] = true; render(); }
     else if (t.id === 'lockbtn') { fetch('/lock', { method: 'POST' }).then(function () { location.replace('/'); }); }
     else if (t.dataset.choose) { chosen = t.dataset.choose; try { localStorage.setItem('factory', chosen); } catch (x) { /* fine */ } sheet = false; render(); }
-    else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; fetch('/api/tail?factory=' + encodeURIComponent(p[0]) + '&run=' + encodeURIComponent(p[1])).then(function (r) { return r.json(); }).then(function (j) { tails[t.dataset.tail] = j.text || '(empty)'; render(); }); }
-    else if (t.dataset.exit) {
-      var q = t.dataset.exit.split('|');
-      if (!confirm('Send the exit command to agent ' + t.dataset.agent + '? It shuts itself down the way it wants; the workspace and worktree stay.')) return;
+    else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; fetch('/api/tail?factory=' + encodeURIComponent(p[0]) + '&issue=' + encodeURIComponent(p[1])).then(function (r) { return r.json(); }).then(function (j) { tails[t.dataset.tail] = j.blocks || '(empty)'; render(); }); }
+    else if (t.dataset.done || t.dataset.undone) {
+      var d = (t.dataset.done || t.dataset.undone).split('|'), undo = !!t.dataset.undone;
+      if (!undo && !confirm('Mark ' + d[1] + ' done? Its alerts are cleared and it moves to output. Agents still up on it keep running; use Close for those. A new run on it brings it back.')) return;
       t.disabled = true;
-      fetch('/api/exit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: q[0], run: q[1] }) })
-        .then(function (r) { return r.json(); }).then(function (j) { toast(j.ok ? 'Agent ' + t.dataset.agent + ' ' + j.outcome : 'Could not exit: ' + (j.error || 'unknown')); }).catch(function () { toast('The console did not answer.'); });
+      fetch(undo ? '/api/undone' : '/api/done', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: d[0], issue: d[1] }) })
+        .then(function (r) { return r.json(); }).then(function (j) { toast(j.ok ? d[1] + (undo ? ' is back' : ' marked done') : 'Could not: ' + (j.error || 'unknown')); }).catch(function () { toast('The console did not answer.'); });
+    }
+    else if (t.dataset.close) {
+      var q = t.dataset.close.split('|');
+      if (!confirm('Close ' + q[1] + '? Every agent still up on it (' + t.dataset.agents + ') is sent its exit command and shuts down the way it wants. Workspaces and worktrees stay.')) return;
+      t.disabled = true;
+      fetch('/api/close', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: q[0], issue: q[1] }) })
+        .then(function (r) { return r.json(); }).then(function (j) { toast(j.ok ? (j.outcomes.length ? j.outcomes.map(function (o) { return o.agent + ' ' + o.outcome; }).join(' · ') : 'nothing was running') : 'Could not close: ' + (j.error || 'unknown')); }).catch(function () { toast('The console did not answer.'); });
     }
   });
   document.getElementById('app').addEventListener('click', function (e) { if (e.target.id === 'dim') { sheet = false; render(); } });

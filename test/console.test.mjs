@@ -96,6 +96,26 @@ test('factoryView: issues bucketed, role slots in order, alerts ranked, human wa
   assert.deepEqual(v.rules.map((r) => r.agent), ['claude', 'codex']);
 });
 
+test('factoryView: what the tracker and GitHub said lands on the task, and a merged PR moves it to output', () => {
+  const runs = { 'GH-8': { rule: 'ai', status: 'done', issueKey: 'GH-8', title: 'x', startedAt: iso(12, 0), finishedAt: iso(12, 30), agentName: 'gh-8', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/9' } } };
+  const unknown = factoryView({ id: 'x', repo: '/r', state: { runs }, now: T(13, 0) }).issues[0];
+  assert.equal(unknown.issueState, null); assert.equal(unknown.prState, 'open'); assert.equal(unknown.bucket, 'done');
+  const known = factoryView({ id: 'x', repo: '/r', state: { runs }, enrich: { issues: { 'GH-8': 'closed' }, prs: { 'https://github.com/o/r/pull/9': 'merged' } }, now: T(13, 0) }).issues[0];
+  assert.equal(known.issueState, 'closed'); assert.equal(known.prState, 'merged'); assert.equal(known.bucket, 'merged'); assert.equal(known.merged, true);
+  const none = factoryView({ id: 'x', repo: '/r', state: { runs: { 'GH-1': { rule: 'ai', status: 'running', title: 't', startedAt: iso(14, 0), agentName: 'gh-1' } } }, now: T(14, 5) }).issues[0];
+  assert.equal(none.prState, 'none');
+});
+
+test('a task a person marked done loses its alerts and sits in output, until a newer run starts on it', () => {
+  const runs = { 'GH-1': { rule: 'ai', status: 'failed', title: 'old', startedAt: iso(9, 0), finishedAt: iso(9, 1), agentName: 'gh-1', error: 'boom' } };
+  const before = factoryView({ id: 'x', repo: '/r', state: { runs }, now: T(12, 0) });
+  assert.equal(before.alerts.length, 1);
+  const after = factoryView({ id: 'x', repo: '/r', state: { runs }, cleared: { 'GH-1': T(10, 0) }, now: T(12, 0) });
+  assert.equal(after.alerts.length, 0); assert.equal(after.issues[0].cleared, true); assert.equal(after.issues[0].bucket, 'done');
+  const retried = factoryView({ id: 'x', repo: '/r', state: { runs: { ...runs, 'GH-1@impl': { rule: 'ai', role: 'impl', status: 'failed', issueKey: 'GH-1', title: 'old', startedAt: iso(11, 0), finishedAt: iso(11, 1), agentName: 'gh-1-impl', error: 'again' } } }, cleared: { 'GH-1': T(10, 0) }, now: T(12, 0) });
+  assert.equal(retried.issues[0].cleared, false); assert.ok(retried.alerts.length >= 1, 'the newer run brings the task back');
+});
+
 test('factoryView without roles still lists each run as one slot', () => {
   const v = factoryView({ id: 'x', repo: '/r', config: { rules: [{ name: 'ai', match: 'any:true' }] }, state: { runs: { 'GH-1': { rule: 'ai', status: 'running', title: 't', startedAt: iso(14, 0), agentName: 'gh-1' } } }, index: indexSnapshot({ agents: [{ name: 'gh-1', agent_status: 'working' }] }), now: T(14, 5) });
   assert.deepEqual(v.roles, []);
@@ -156,7 +176,10 @@ test('tailscale addresses are the 100.64/10 IPv4 ones only', () => {
 /** The HTTP surface with a stand-in orchestrator. */
 async function serve(t, { hash = null } = {}) {
   const calls = [];
-  const app = { view: () => ({ hostname: 'box', factories: [] }), subscribe: () => () => {}, exit: async (a) => { calls.push(a); return 'exited'; }, tail: async () => 'tail text' };
+  const app = { view: () => ({ hostname: 'box', factories: [] }), subscribe: () => () => {}, exit: async (a) => { calls.push(a); return 'exited'; }, tail: async () => 'tail text',
+    closeTask: async (a) => { calls.push({ close: a }); return [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }]; },
+    markDone: (a, done) => { calls.push({ done: a, value: done }); return done; },
+    tailTask: async () => [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', alive: true, phrase: 'working', text: 'impl lines' }, { run: 'GH-1@review', role: 'review', agent: 'gh-1-review', agentKind: 'codex', alive: false, phrase: 'done', text: null }] };
   const gate = new Gate({ hash });
   const { handler } = createHandler({ gate, console: app, hostname: 'box' });
   const bound = await listen({ handler, port: 0, gated: false });
@@ -174,6 +197,14 @@ test('http: an ungated console serves the app and the state, and refuses cross-o
   const ok = await fetch(base + '/api/exit', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', run: 'GH-1' }) });
   assert.equal(ok.status, 200); assert.deepEqual(await ok.json(), { ok: true, outcome: 'exited' }); assert.deepEqual(calls, [{ factory: 'f', run: 'GH-1' }]);
   assert.equal((await fetch(base + '/app.css')).headers.get('content-type'), 'text/css; charset=utf-8');
+  const closed = await fetch(base + '/api/close', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', issue: 'GH-1' }) });
+  assert.equal(closed.status, 200); assert.equal((await closed.json()).outcomes[0].outcome, 'exited'); assert.deepEqual(calls.at(-1), { close: { factory: 'f', issue: 'GH-1' } });
+  assert.equal((await fetch(base + '/api/close', { method: 'POST', body: '{}' })).status, 403, 'closing a task is same-origin only');
+  const done = await fetch(base + '/api/done', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', issue: 'GH-1' }) });
+  assert.deepEqual(await done.json(), { ok: true, done: true }); assert.deepEqual(calls.at(-1), { done: { factory: 'f', issue: 'GH-1' }, value: true });
+  assert.equal((await fetch(base + '/api/undone', { method: 'POST', body: '{}' })).status, 403);
+  const blocks = (await (await fetch(base + '/api/tail?factory=f&issue=GH-1')).json()).blocks;
+  assert.deepEqual(blocks.map((b) => [b.role, b.alive]), [['impl', true], ['review', false]]);
 });
 
 test('http: a gated console shows the lock page, refuses the API, unlocks with the passcode, and locks out guesses', async (t) => {

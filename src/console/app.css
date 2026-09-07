@@ -21,6 +21,7 @@ button{font:inherit;color:inherit}
 /* title bar */
 .titlebar{display:flex;align-items:center;gap:10px;padding:max(8px,env(safe-area-inset-top)) 10px 6px;background:var(--frame);box-shadow:inset 0 -1px 0 var(--lo);position:sticky;top:0;z-index:5}
 .titlebar h1{margin:0;font:700 17px var(--font);color:var(--heading);white-space:nowrap}
+.titlebar .mark{width:26px;height:26px;flex:none;filter:drop-shadow(0 1px 0 #000)}
 .drag{flex:1;height:12px;background:repeating-linear-gradient(135deg,var(--hi) 0 2px,transparent 2px 6px);opacity:.55;min-width:16px}
 .tbtn{width:30px;height:30px;border:0;color:var(--text);font:700 14px var(--font);cursor:pointer;display:grid;place-items:center;text-decoration:none}
 .tbtn.red{background:var(--red)}
@@ -54,6 +55,7 @@ button{font:inherit;color:inherit}
 .btn{font:700 14px var(--font);padding:7px 14px;border:0;min-height:38px;cursor:pointer;color:var(--text);background:var(--frame-2);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge);text-decoration:none;display:inline-flex;align-items:center;gap:6px}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.confirm{background:linear-gradient(var(--green-2),var(--green));color:#0D2611;box-shadow:inset 1px 1px 0 #A8E8AD,inset -1px -1px 0 #2E6B36,0 0 0 1px var(--edge)}
+.btn.done{color:var(--green-2)}
 .btn.cancel{background:linear-gradient(var(--red-2),var(--red));color:#fff;box-shadow:inset 1px 1px 0 #F08A8A,inset -1px -1px 0 #6E1E1E,0 0 0 1px var(--edge)}
 .btn:focus-visible,.row:focus-visible,.picker:focus-visible,.opt:focus-visible,.keys button:focus-visible{outline:2px solid var(--orange-2);outline-offset:2px}
 /* machine rows */
@@ -86,6 +88,13 @@ button{font:inherit;color:inherit}
 .why li .led{position:relative;top:1px}
 .why li b{color:var(--orange-2)}
 .why li small{color:var(--dim);margin-left:auto}
+/* merged scrollback: one block per role, its colour in the gutter */
+.scrollback{display:flex;flex-direction:column;gap:6px}
+.sb{border-left:4px solid var(--hi);background:var(--inset);box-shadow:inset 0 1px 0 var(--lo),inset 0 -1px 0 var(--hi)}
+.sbh{padding:4px 8px 0;font:700 12px var(--font);letter-spacing:.04em;text-transform:uppercase}
+.sbh small{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)}
+.sb pre{margin:0;padding:6px 8px;font:12px/1.35 ui-monospace,Menlo,monospace;color:var(--text);white-space:pre-wrap;max-height:220px;overflow:auto;background:none;box-shadow:none}
+.sb pre.dim{color:var(--dim)}
 .craft{position:absolute;left:1px;right:1px;bottom:1px;height:3px;background:var(--inset-2)}
 .craft i{display:block;height:100%;background:var(--green-2);animation:craft 2.8s linear infinite}
 @keyframes craft{from{width:0}to{width:100%}}
@@ -132,7 +141,15 @@ button{font:inherit;color:inherit}
 .facts{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0;font-size:14px}
 .facts dt{color:var(--muted)}.facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .facts dd b{color:var(--green-2)}.facts dd s{text-decoration:none;color:var(--red-2)}.facts dd em{font-style:normal;color:var(--orange-2);font-weight:700}
-.summary{margin:0;font-size:14px;color:var(--muted);white-space:pre-wrap}
+.summary{margin:0;font-size:14px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
+.summary.clamp{max-height:9.5em;overflow:hidden;-webkit-mask-image:linear-gradient(#000 60%,transparent);mask-image:linear-gradient(#000 60%,transparent)}
+.pane > .more{align-self:flex-start;font:700 13px var(--font);color:var(--orange-2);background:none;border:0;cursor:pointer;padding:0}
+/* the facts line: size and grade, issue state, PR state */
+.stats{display:inline-flex;gap:10px;flex-wrap:wrap;font:600 12px var(--font);color:var(--muted);align-items:baseline}
+.stats .st b{font-weight:700}.stats .add{color:var(--green-2)}.stats .del{color:var(--red-2)}.stats em{font-style:normal;color:var(--orange-2);font-weight:700;margin-left:2px}
+.stats .closed,.stats .pr-merged{color:#B79CD9}.stats .pr-open{color:var(--green-2)}.stats .pr-closed{color:var(--red-2)}.stats .dim{color:var(--dim)}
+.alert .open .stats{display:flex;margin-top:6px}
+.row .s .stats{flex-basis:100%}
 .checks{display:flex;flex-direction:column;gap:3px;font-size:14px}
 /* picker sheet */
 .dimmer{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9}

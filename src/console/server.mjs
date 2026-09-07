@@ -15,6 +15,11 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COOKIE = 'issue_herd_console';
 
 function asset(name) { return fs.readFileSync(path.join(HERE, name), 'utf8'); }
+/** The mark, inlined into the title bar. Posts in paper on the console's dark ground, the arrow in ember, per assets/logo/README.md. */
+function mark() {
+  try { return fs.readFileSync(path.join(HERE, '..', '..', 'assets', 'logo', 'mark.svg'), 'utf8').replace(/<style>[\s\S]*?<\/style>/, '').replace('stroke="#141210"', 'stroke="#F6F2ED"').replace('width="96" height="96"', 'class="mark"'); }
+  catch { return ''; }
+}
 
 /** Tailscale's IPv4 range is 100.64.0.0/10; the console binds there when it is gated. */
 export function tailscaleAddresses(ifaces = os.networkInterfaces()) {
@@ -55,7 +60,8 @@ function sameOrigin(req) {
 export function createHandler({ gate, console: app, hostname = os.hostname(), log = () => {} }) {
   const clients = new Set();
   const pages = { app: asset('app.html'), unlock: asset('unlock.html'), css: asset('app.css'), js: asset('app.js') };
-  const html = (tpl) => tpl.replace(/\{\{hostname\}\}/g, hostname).replace(/\{\{gated\}\}/g, gate.enabled ? 'true' : 'false');
+  const logo = mark();
+  const html = (tpl) => tpl.replace(/\{\{hostname\}\}/g, hostname).replace(/\{\{gated\}\}/g, gate.enabled ? 'true' : 'false').replace(/\{\{mark\}\}/g, logo);
 
   const send = (res, code, body, type = 'application/json; charset=utf-8', extra = {}) => {
     res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', ...extra });
@@ -109,8 +115,24 @@ export function createHandler({ gate, console: app, hostname = os.hostname(), lo
         return;
       }
       if (req.method === 'GET' && url.pathname === '/api/tail') {
-        const text = await app.tail({ factory: url.searchParams.get('factory'), run: url.searchParams.get('run') });
+        const factory = url.searchParams.get('factory');
+        if (url.searchParams.get('issue')) return send(res, 200, { blocks: await app.tailTask({ factory, issue: url.searchParams.get('issue') }) });
+        const text = await app.tail({ factory, run: url.searchParams.get('run') });
         return send(res, 200, { text });
+      }
+      if (req.method === 'POST' && (url.pathname === '/api/done' || url.pathname === '/api/undone')) {
+        if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
+        let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return send(res, 400, { error: 'bad json' }); }
+        const done = app.markDone({ factory: body.factory, issue: body.issue }, url.pathname === '/api/done');
+        log(`console: ${body.issue} in ${body.factory} marked ${done ? 'done' : 'not done'} by a person`);
+        return send(res, 200, { ok: true, done });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/close') {
+        if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
+        let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return send(res, 400, { error: 'bad json' }); }
+        const outcomes = await app.closeTask({ factory: body.factory, issue: body.issue });
+        log(`console: close ${body.issue} in ${body.factory} → ${outcomes.map((o) => `${o.agent} ${o.outcome}`).join(', ') || 'nothing was running'}`);
+        return send(res, 200, { ok: true, outcomes });
       }
       if (req.method === 'POST' && url.pathname === '/api/exit') {
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });

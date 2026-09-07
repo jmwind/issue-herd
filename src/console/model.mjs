@@ -120,7 +120,7 @@ export function runState(run, agent) {
  *   sizes     { [runKey]: runSize() result } for whichever runs the caller measured
  *   registry  the registry entry for this repo, or null
  */
-export function factoryView({ id, repo, config = {}, state = { runs: {} }, events = [], index = indexSnapshot(null), sizes = {}, registry = null, stale = false, now = Date.now() }) {
+export function factoryView({ id, repo, config = {}, state = { runs: {} }, events = [], index = indexSnapshot(null), sizes = {}, registry = null, stale = false, enrich = { issues: {}, prs: {} }, cleared = {}, now = Date.now() }) {
   const name = config.name || registry?.name || repo.split('/').pop();
   const tracker = typeof config.tracker === 'object' ? config.tracker?.type : (config.tracker || registry?.tracker || 'linear');
   const rules = (config.rules || []).filter((r) => r.enabled !== false).map((r) => ({
@@ -159,19 +159,28 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
   const issues = [...byIssue.values()].map((iss) => {
     iss.runs.sort((a, b) => roleOrder(a.role) - roleOrder(b.role) || (a.role || '').localeCompare(b.role || ''));
     const live = iss.runs.filter((r) => r.status === 'running' || r.status === 'starting' || r.status === 'awaiting_merge');
-    const merged = iss.runs.some((r) => r.status === 'merged');
     const anyPr = iss.runs.map((r) => r.prUrl).find(Boolean) || null;
+    // What the tracker and GitHub said, when this machine could ask; null means unknown.
+    const issueState = enrich.issues?.[iss.key] ?? null;
+    const prLive = anyPr ? (enrich.prs?.[anyPr] ?? null) : null;
+    const merged = iss.runs.some((r) => r.status === 'merged') || prLive === 'merged';
+    // The PR's state as far as anyone knows: GitHub's answer first, then what the runs recorded.
+    const prStateOf = !anyPr ? 'none' : prLive || (merged ? 'merged' : 'open');
     const lead = live.find((r) => r.needsYou) || live.find((r) => r.light === 'green') || live[0] || iss.runs.find((r) => r.needsYou) || iss.runs[0];
     const startedAt = iss.runs.map((r) => Date.parse(r.startedAt || '')).filter(Number.isFinite).sort()[0] || now;
     const lastEnd = iss.runs.every((r) => r.finishedAt) ? Math.max(...iss.runs.map((r) => Date.parse(r.finishedAt))) : now;
-    const bucket = live.length ? 'inflight' : merged ? 'merged' : 'done';
+    // A person marked it done in the console, and nothing has started on it since.
+    const clearedAt = cleared[iss.key] || 0;
+    const isCleared = clearedAt > 0 && iss.runs.every((r) => (Date.parse(r.startedAt || '') || 0) <= clearedAt);
+    const running = iss.runs.some((r) => r.status === 'running' || r.status === 'starting');
+    const bucket = isCleared && !running ? (merged ? 'merged' : 'done') : live.length ? 'inflight' : merged ? 'merged' : 'done';
     const slots = roleList.length ? roleList.map((role) => { const r = iss.runs.find((x) => x.role === role); return { role, light: r ? (r.status === 'merged' || r.status === 'done' ? 'grey' : r.light) : 'empty', phrase: r?.phrase || 'not started' }; })
       : iss.runs.map((r) => ({ role: r.role || 'run', light: r.status === 'merged' || r.status === 'done' ? 'grey' : r.light, phrase: r.phrase }));
     const phrase = lead ? (lead.role && roleList.length > 1 ? `${lead.role} ${lead.phrase}` : lead.phrase) : '';
     const size = iss.runs.map((r) => r.size).find(Boolean) || null;
     return {
       key: iss.key, title: iss.title, url: iss.url, bucket, light: lead?.light || 'grey', phrase,
-      prUrl: anyPr, merged, slots, startedAt: new Date(startedAt).toISOString(), elapsedMs: lastEnd - startedAt,
+      prUrl: anyPr, merged, prState: prStateOf, issueState, cleared: isCleared, slots, startedAt: new Date(startedAt).toISOString(), elapsedMs: lastEnd - startedAt,
       humanWaitMs: iss.runs.reduce((s, r) => s + r.humanWaitMs, 0), size, runs: iss.runs,
       finishedAt: iss.runs.every((r) => r.finishedAt) ? new Date(lastEnd).toISOString() : null,
     };
@@ -182,6 +191,7 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
   const alerts = [];
   const DAY = 86400e3;
   for (const iss of issues) for (const r of iss.runs) {
+    if (iss.cleared) continue;
     let why = r.needsYou;
     // A run that failed or stopped is worth a card while it is news. After a day it is history:
     // state.json keeps it forever, and the issue has usually been retried or given up on by then.

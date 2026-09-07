@@ -190,11 +190,14 @@ Three screens, in Factorio's idiom because a factory is what this is:
 
 - **Overview.** A factory picker in the title bar (one machine runs several), then **Alerts**
   (one card per task that needs a person, with what to do about it), **Assembling** (one row per
-  open issue, with how long it has waited on you), and **Output today**. The belt across the top
+  open issue, with how long it has waited on you), and **Output today**. Every task shows the
+  roles that worked on it, lines added and removed with a size grade, and the state of its issue
+  and its pull request. The belt across the top
   carries the factory's four numbers.
 - **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
   waiting on you, done) plus a "you" row, lines added and removed with a size grade and its reason,
-  each role's report, and the exit button.
+  each role's report, a merged scrollback (the last 100 lines of every agent on the task, one
+  block per role in that role's colour, read only), and one close button.
 - **Factory picker.** Every factory with its tracker, last poll, running and alert counts, a
   watcher not seen for three polls marked stale, and the chosen factory's rules in three lines.
 
@@ -202,11 +205,20 @@ Three screens, in Factorio's idiom because a factory is what this is:
 (name, tracker, version, last poll); the console lists those entries, plus any `<name>Watch`
 workspace herdr shows, and reads each factory's `config.json`, `state.json` and log directly. Agent
 state is one `herdr api snapshot` per tick (every 2s). Lines changed come from `git diff` in the
-run's worktree. Nothing is written except the registry, and no tracker is called.
+run's worktree. The issue's state (open, closed) and the PR's (open, closed, merged) come from the
+tracker and GitHub with the credentials this machine already has (the saved login, `gh`, or the
+factory's own `.env.local`), one call per task, every 90s for tasks in flight or finished this
+week and every 30 minutes for older ones; without a credential those fields are not shown.
+Nothing is written except the registry.
 
-**Exit.** The button sends the agent its own exit command (`/exit` for Claude Code, `/quit` for
-codex) and lets it shut down the way it wants. The workspace and the worktree stay; `onMerged`
-is still where clean-up is configured.
+**Mark done.** A task can sit in Alerts with nothing left to do about it: a failed start that was
+retried elsewhere, a report already acted on. The button clears its alerts and moves it to
+output; that is a person's decision, recorded in `~/.config/issue-herd/console.json` (the
+console's own file, never the watcher's state), and a newer run on the task brings it back.
+
+**Close.** One button per task: every agent still up on it is sent its own exit command (`/exit`
+for Claude Code, `/quit` for codex) and shuts down the way it wants. Workspaces and worktrees
+stay; `onMerged` is still where clean-up is configured.
 
 **The gate.** With no passcode the console binds to loopback only and asks nothing. With one
 (`set-passcode`, at least four digits because the phone's keypad has no letters; stored as a
