@@ -231,7 +231,9 @@ served before the passcode: a correct entry sets an `HttpOnly`, `SameSite=Strict
 five wrong entries from one address lock the gate for five minutes and are logged; actions are
 POSTs checked for a same-origin `Origin`. Tailscale encrypts the wire, so the console speaks plain
 HTTP. `--port N` or `ISSUE_HERD_CONSOLE_PORT` changes the port; `console clear-passcode` goes
-back to loopback only.
+back to loopback only. No tailnet? `--host 192.168.1.20` binds one named address as well (your
+Wi-Fi one, for a phone on the same network), gated the same way; it is refused without a passcode,
+and `0.0.0.0` is refused always.
 
 ## Manual testing and screenshots
 

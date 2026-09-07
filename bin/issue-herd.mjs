@@ -12,7 +12,7 @@
 //   issue-herd logout [tracker] forget the saved token
 //   issue-herd smoke           end-to-end test against herdr with a fake issue (no tracker calls)
 //   issue-herd init [--tracker linear|github]   scaffold .issue-herd/ in this repo
-//   issue-herd console         the factory floor: every factory on this machine, in a browser (phone first)
+//   issue-herd console [--port N] [--host ADDR]  the factory floor: every factory on this machine, in a browser (phone first)
 //   issue-herd console set-passcode   set the passcode (digits) the console asks for; also serves it over Tailscale
 //   issue-herd console clear-passcode forget the passcode; the console goes back to loopback only
 //   issue-herd update          reinstall the latest version from GitHub
@@ -1296,21 +1296,27 @@ async function consoleCommand(args) {
     console.log('✓ console passcode cleared · the console serves on loopback only');
     return;
   }
-  if (args[0] && args[0] !== '--port') throw new Error('usage: issue-herd console [--port N] | set-passcode | clear-passcode');
+  if (args[0] && args[0] !== '--port' && args[0] !== '--host') throw new Error('usage: issue-herd console [--port N] [--host ADDR]... | set-passcode | clear-passcode');
+  // --host binds one more address by name (the Wi-Fi one, say, when there is no tailnet). Only
+  // behind the gate: without a passcode the console is a local console and stays on loopback.
+  const hosts = args.flatMap((a, i) => (a === '--host' ? [args[i + 1] ?? ''] : []));
+  if (hosts.some((h) => !h || h.startsWith('--'))) throw new Error('usage: issue-herd console --host <address>');
+  if (hosts.some((h) => h === '0.0.0.0' || h === '::')) throw new Error('--host names one address; the console never binds to every interface');
   const portArg = args.indexOf('--port') >= 0 ? (args[args.indexOf('--port') + 1] ?? '') : null;
   const port = portArg === null ? Number(process.env.ISSUE_HERD_CONSOLE_PORT || 8498) : Number(portArg);
   if (portArg === '' || !Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`usage: issue-herd console --port <number>${portArg ? ` (got ${JSON.stringify(portArg)})` : ''}`);
   const gate = new Gate({ hash: loadCredentials(file).console?.passcode || null });
+  if (hosts.length && !gate.enabled) throw new Error('--host needs a passcode first (issue-herd console set-passcode); an ungated console stays on loopback');
   const herdr = new Herdr({ log: (m) => process.env.ISSUE_HERD_DEBUG && log('  $', m) });
   const app = new FactoryConsole({ herdr, version: PKG.version, log: (m) => log(m) });
   const { handler, broadcast } = createHandler({ gate, console: app, log: (m) => log(m) });
   app.subscribe(() => broadcast());
   let bound;
-  try { bound = await listen({ handler, port, gated: gate.enabled }); }
+  try { bound = await listen({ handler, port, gated: gate.enabled, extraHosts: hosts }); }
   catch (e) { if (e.code === 'EADDRINUSE') throw new Error(`port ${port} is busy — a console is probably already open at http://127.0.0.1:${port}/ ; use --port N for a second one`); throw e; }
   app.start();
   const where = !gate.enabled ? 'no passcode set (run `issue-herd console set-passcode`), serving on loopback only'
-    : bound.urls.length > 1 ? 'passcode set, serving on loopback and Tailscale' : 'passcode set · no Tailscale address on this machine, so loopback only';
+    : bound.urls.length > 1 ? `passcode set, serving on loopback${tailscaleAddresses().length ? ' and Tailscale' : ''}${hosts.length ? ` and ${hosts.join(', ')}` : ''}` : 'passcode set · no Tailscale address on this machine, so loopback only';
   log(`issue-herd ${PKG.version} console · ${where}`);
   for (const u of bound.urls) log(`  ${u}`);
   log(`  herdr: ${await herdr.serverRunning() ? 'connected' : 'NOT RUNNING — agent state will show as gone until it is'}`);
