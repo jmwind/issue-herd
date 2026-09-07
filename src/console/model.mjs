@@ -91,9 +91,9 @@ export function runState(run, agent) {
   if (st === 'running' || st === 'starting') {
     const a = agent?.agent_status;
     if (!agent) return { light: 'red', phrase: 'agent gone', needsYou: 'gone' };
-    if (a === 'blocked') return { light: 'red', phrase: 'waiting for input', needsYou: 'blocked' };
+    if (a === 'blocked') return { light: 'red', phrase: 'blocked on a dialog', needsYou: 'blocked' };
     if (a === 'working') return { light: 'green', phrase: 'working', needsYou: null };
-    if (a === 'idle' || a === 'done' || a === 'unknown') return { light: 'yellow', phrase: 'asking a question', needsYou: 'question' };
+    if (a === 'idle' || a === 'done' || a === 'unknown') return { light: 'yellow', phrase: 'waiting on you', needsYou: 'question' };
     return { light: 'green', phrase: a || 'starting', needsYou: null };
   }
   if (st === 'awaiting_merge') return { light: 'yellow', phrase: 'awaiting your merge', needsYou: 'merge' };
@@ -190,10 +190,10 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     if (why === 'blocked') alerts.push(alert('blocked', iss, r, `Waiting for approval or input in workspace ${r.workspaceId || '?'}.`, now));
     else if (why === 'question') alerts.push(alert('question', iss, r, `Stopped without a result and is probably asking a question in workspace ${r.workspaceId || '?'}.`, now));
     else if (why === 'merge') alerts.push(alert('merge', iss, r, 'Pull request open. Waiting for your merge.', now));
-    else if (why === 'needs_human') alerts.push(alert('needs_human', iss, r, r.result?.summary ? r.result.summary.slice(0, 240) : 'Stopped for a decision only you can make.', now));
+    else if (why === 'needs_human') alerts.push(alert('needs_human', iss, r, r.result?.summary ? clip(r.result.summary, 240) : 'Stopped for a decision only you can make.', now));
     else if (why === 'gone') alerts.push(alert('gone', iss, r, 'The run is marked running but herdr has no such agent.', now));
     else if (why === 'stopped') alerts.push(alert('stopped', iss, r, `The agent ended without writing a result. Workspace ${r.workspaceId || '?'} is still open.`, now));
-    else if (why === 'failed') alerts.push(alert('failed', iss, r, r.error || r.result?.summary?.slice(0, 240) || 'Failed.', now));
+    else if (why === 'failed') alerts.push(alert('failed', iss, r, r.error || (r.result?.summary ? clip(r.result.summary, 240) : 'Failed.'), now));
   }
   const weight = { blocked: 0, question: 1, needs_human: 2, merge: 3, stopped: 4, failed: 5, gone: 6, holding: 7 };
   alerts.sort((a, b) => weight[a.kind] - weight[b.kind] || b.sinceMs - a.sinceMs);
@@ -208,6 +208,8 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     alerts, issues,
   };
 }
+
+function clip(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; }
 
 function alert(kind, iss, r, text, now) {
   const since = kind === 'merge' || kind === 'holding' || kind === 'needs_human' || kind === 'stopped' || kind === 'failed'

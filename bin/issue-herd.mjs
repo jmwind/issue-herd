@@ -13,7 +13,8 @@
 //   issue-herd smoke           end-to-end test against herdr with a fake issue (no tracker calls)
 //   issue-herd init [--tracker linear|github]   scaffold .issue-herd/ in this repo
 //   issue-herd console         the factory floor: every factory on this machine, in a browser (phone first)
-//   issue-herd console set-passcode   set the passcode the console asks for; unlocks serving over Tailscale
+//   issue-herd console set-passcode   set the passcode (digits) the console asks for; also serves it over Tailscale
+//   issue-herd console clear-passcode forget the passcode; the console goes back to loopback only
 //   issue-herd update          reinstall the latest version from GitHub
 //   issue-herd --version
 //
@@ -25,6 +26,7 @@
 //   <repo>/.issue-herd/state/             state.json, runs/<KEY>/, logs/ (gitignored)
 //   <repo>/.env, <repo>/.env.local         LINEAR_API_KEY / GITHUB_TOKEN (gitignored), if you prefer a file
 //   ~/.config/issue-herd/credentials.json tokens saved by `issue-herd login` (per user, mode 600)
+//   ~/.config/issue-herd/factories.json   which factories run on this machine, stamped by each watcher every poll (per user)
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1280,11 +1282,13 @@ function update() {
 async function consoleCommand(args) {
   const file = credentialsPath();
   if (args[0] === 'set-passcode') {
-    const a = await askSecret('New console passcode (at least 4 characters): ');
+    const a = await askSecret('New console passcode (at least 4 digits): ');
     const b = await askSecret('Again: ');
+    if (a === undefined || b === undefined) throw new Error('nothing read from stdin — run set-passcode in a terminal');
     if (a !== b) throw new Error('the two entries differ; nothing changed');
     saveCredential('console', { passcode: hashPasscode(a) }, file);
-    console.log(`✓ console passcode saved in ${file.replace(os.homedir(), '~')} · the console now serves on Tailscale too: ${tailscaleAddresses().join(', ') || 'no Tailscale address found on this machine right now'}`);
+    const ts = tailscaleAddresses();
+    console.log(`✓ console passcode saved in ${file.replace(os.homedir(), '~')} · ${ts.length ? `the console now serves on Tailscale too: ${ts.join(', ')}` : 'no Tailscale address on this machine yet; start the console again once there is one and it will serve there too'}`);
     return;
   }
   if (args[0] === 'clear-passcode') {
@@ -1293,17 +1297,21 @@ async function consoleCommand(args) {
     return;
   }
   if (args[0] && args[0] !== '--port') throw new Error('usage: issue-herd console [--port N] | set-passcode | clear-passcode');
-  const portArg = args.indexOf('--port') >= 0 ? args[args.indexOf('--port') + 1] : null;
-  const port = Number(portArg || process.env.ISSUE_HERD_CONSOLE_PORT || 8498);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`not a port: ${portArg}`);
+  const portArg = args.indexOf('--port') >= 0 ? (args[args.indexOf('--port') + 1] ?? '') : null;
+  const port = portArg === null ? Number(process.env.ISSUE_HERD_CONSOLE_PORT || 8498) : Number(portArg);
+  if (portArg === '' || !Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`usage: issue-herd console --port <number>${portArg ? ` (got ${JSON.stringify(portArg)})` : ''}`);
   const gate = new Gate({ hash: loadCredentials(file).console?.passcode || null });
   const herdr = new Herdr({ log: (m) => process.env.ISSUE_HERD_DEBUG && log('  $', m) });
   const app = new FactoryConsole({ herdr, version: PKG.version, log: (m) => log(m) });
   const { handler, broadcast } = createHandler({ gate, console: app, log: (m) => log(m) });
   app.subscribe(() => broadcast());
-  const bound = await listen({ handler, port, gated: gate.enabled });
+  let bound;
+  try { bound = await listen({ handler, port, gated: gate.enabled }); }
+  catch (e) { if (e.code === 'EADDRINUSE') throw new Error(`port ${port} is busy — a console is probably already open at http://127.0.0.1:${port}/ ; use --port N for a second one`); throw e; }
   app.start();
-  log(`issue-herd ${PKG.version} console · ${gate.enabled ? 'passcode set, serving on loopback and Tailscale' : 'no passcode set (run `issue-herd console set-passcode`), serving on loopback only'}`);
+  const where = !gate.enabled ? 'no passcode set (run `issue-herd console set-passcode`), serving on loopback only'
+    : bound.urls.length > 1 ? 'passcode set, serving on loopback and Tailscale' : 'passcode set · no Tailscale address on this machine, so loopback only';
+  log(`issue-herd ${PKG.version} console · ${where}`);
   for (const u of bound.urls) log(`  ${u}`);
   log(`  herdr: ${await herdr.serverRunning() ? 'connected' : 'NOT RUNNING — agent state will show as gone until it is'}`);
   process.on('uncaughtException', (e) => log(`unexpected error (kept running): ${e.stack || e.message}`));
@@ -1315,7 +1323,7 @@ async function main(argv) {
   if (argv[0] === '--version' || argv[0] === '-V' || argv[0] === 'version') { console.log(PKG.version); return; }
   if (argv[0] === 'update' || argv[0] === 'upgrade') return update();
   if ((argv[0] || '') === 'init') return init(argv.slice(1));
-  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 28).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
+  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 30).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
   loadEnv();
   const cmd = argv[0] || 'run';
   if (cmd === 'login' || cmd === 'logout') return auth(cmd, argv.slice(1));

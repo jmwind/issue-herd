@@ -26,6 +26,8 @@ your-repo/
 └── .env.example             documents that variable                 (committed)
 
 ~/.config/issue-herd/credentials.json   what `issue-herd login` saved, per user, mode 600
+~/.config/issue-herd/factories.json     which factories run on this machine, stamped by each watcher every poll
+```
 
 ```bash
 cd ~/Code/your-repo

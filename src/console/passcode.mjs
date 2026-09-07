@@ -12,7 +12,8 @@ const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 32 };
 
 export function hashPasscode(code) {
   const c = String(code ?? '');
-  if (c.length < 4) throw new Error('a passcode needs at least 4 characters');
+  // The console's keypad is 0-9 and the phone shows a numeric pad, so a passcode is digits.
+  if (!/^[0-9]{4,}$/.test(c)) throw new Error('a passcode is at least 4 digits — the console\'s keypad has no letters');
   const salt = crypto.randomBytes(16);
   const hash = crypto.scryptSync(c, salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p });
   return `scrypt$${salt.toString('base64')}$${hash.toString('base64')}`;

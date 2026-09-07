@@ -1,5 +1,8 @@
 # Factory console: proposal for #38
 
+> Superseded by the shipped console — see [How it works](../how-it-works.md#the-console-issue-herd-console).
+> Kept for the reasoning behind the design; where the two disagree, the shipped console is right.
+
 A locally hosted, single-page console that shows every issue-herd factory running on this machine,
 what each agent is doing, what is waiting on you, and one click to the issue, the PR, or the herdr
 workspace. This is the plan the issue asked for before any implementation: the UX, the technical

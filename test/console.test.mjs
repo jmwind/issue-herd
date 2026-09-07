@@ -56,7 +56,7 @@ test('the snapshot is indexed and watcher workspaces are found by their label', 
 });
 
 test('runState maps run + agent onto a light, a phrase and whether a person is needed', () => {
-  assert.deepEqual(runState({ status: 'running' }, { agent_status: 'blocked' }), { light: 'red', phrase: 'waiting for input', needsYou: 'blocked' });
+  assert.deepEqual(runState({ status: 'running' }, { agent_status: 'blocked' }), { light: 'red', phrase: 'blocked on a dialog', needsYou: 'blocked' });
   assert.equal(runState({ status: 'running' }, { agent_status: 'idle' }).needsYou, 'question');
   assert.equal(runState({ status: 'running' }, null).needsYou, 'gone');
   assert.equal(runState({ status: 'awaiting_merge' }, null).needsYou, 'merge');
@@ -82,7 +82,7 @@ test('factoryView: issues bucketed, role slots in order, alerts ranked, human wa
   assert.deepEqual(v.roles, ['impl', 'review']);
   assert.deepEqual(v.issues.map((i) => [i.key, i.bucket]), [['GH-7', 'inflight'], ['GH-8', 'done'], ['GH-9', 'merged']]);
   const gh7 = v.issues[0];
-  assert.equal(gh7.light, 'red'); assert.equal(gh7.phrase, 'impl waiting for input');
+  assert.equal(gh7.light, 'red'); assert.equal(gh7.phrase, 'impl blocked on a dialog');
   assert.deepEqual(gh7.slots.map((s) => s.light), ['red', 'empty']);
   assert.equal(gh7.size.added, 10);
   // GH-7 is blocked (from 14:10 with no unblock inside the fixture window? no: the log unblocks it, so the live
@@ -123,7 +123,8 @@ test('complexity grades from size facts, with a reason', () => {
 test('passcode: hash verifies, wrong code fails, gate locks after five misses and sessions expire', () => {
   const hash = hashPasscode('2468');
   assert.ok(verifyPasscode('2468', hash)); assert.ok(!verifyPasscode('2469', hash)); assert.ok(!verifyPasscode('2468', 'garbage'));
-  assert.throws(() => hashPasscode('12'), /at least 4/);
+  assert.throws(() => hashPasscode('12'), /at least 4 digits/);
+  assert.throws(() => hashPasscode('floorpass'), /digits/, 'letters cannot be typed on the phone keypad');
   let t = 1000; const gate = new Gate({ hash, sessionMs: 60_000, now: () => t });
   for (let i = 0; i < 4; i++) assert.equal(gate.tryUnlock('0000', 'a').attemptsLeft, 4 - i);
   const fifth = gate.tryUnlock('0000', 'a');

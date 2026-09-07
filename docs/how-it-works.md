@@ -188,17 +188,12 @@ issue-herd console set-passcode    # gate it, and serve it on this machine's Tai
 
 Three screens, in Factorio's idiom because a factory is what this is:
 
-- **Overview.** A factory picker in the title bar (one machine runs several), then **Alerts** — one
-  card per thing only a person can clear: an agent blocked on a dialog (with "read scrollback"),
-  an agent that stopped to ask, a run that ended `needs_human`, a pull request waiting for your
-  merge, a finished run still holding its workspace — one card per task, listing every reason and
-  every role that worked on it — then **Assembling**, one row per open issue with a status light,
-  a chip per role that worked on it (dashed when the team has that role but nobody started), a
-  short state phrase, the time on task, and front and center **how long a person was waited on**
-  for that task, then **Output today**. The belt under the title bar carries the factory's four
-  numbers: output today, assembling, waiting on you, alerts.
+- **Overview.** A factory picker in the title bar (one machine runs several), then **Alerts**
+  (one card per task that needs a person, with what to do about it), **Assembling** (one row per
+  open issue, with how long it has waited on you), and **Output today**. The belt across the top
+  carries the factory's four numbers.
 - **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
-  asking, done) plus a "you" row, lines added and removed with a size grade and its reason,
+  waiting on you, done) plus a "you" row, lines added and removed with a size grade and its reason,
   each role's report, and the exit button.
 - **Factory picker.** Every factory with its tracker, last poll, running and alert counts, a
   watcher not seen for three polls marked stale, and the chosen factory's rules in three lines.
@@ -214,7 +209,8 @@ codex) and lets it shut down the way it wants. The workspace and the worktree st
 is still where clean-up is configured.
 
 **The gate.** With no passcode the console binds to loopback only and asks nothing. With one
-(`set-passcode`; stored as a salted scrypt hash in `credentials.json`, never in a repository) it
+(`set-passcode`, at least four digits because the phone's keypad has no letters; stored as a
+salted scrypt hash in `credentials.json`, never in a repository) it
 also binds to this machine's Tailscale address, never `0.0.0.0`, and nothing about any factory is
 served before the passcode: a correct entry sets an `HttpOnly`, `SameSite=Strict` cookie for a day;
 five wrong entries from one address lock the gate for five minutes and are logged; actions are

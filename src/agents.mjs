@@ -35,8 +35,9 @@ const PROFILES = {
   },
   codex: {
     label: 'Codex CLI',
-    // Codex leaves the TUI with /quit, not /exit. Only reached by `onMerged.exitAgent`, which is
-    // off by default, and stopAgent gives up and says so rather than hanging on the wrong word.
+    // Codex leaves the TUI with /quit, not /exit. Reached by `onMerged.exitAgent` (off by default)
+    // and by the console's Exit button, and stopAgent gives up and says so rather than hanging on
+    // the wrong word.
     exit: '/quit',
     argv: ({ permissionMode, model, effort }) => [
       // No session-name flag, so the run's name lives in herdr's agent name and nowhere else.
