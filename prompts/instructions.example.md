@@ -20,7 +20,8 @@
 
 ## Branch and PR conventions
 
-- Branch names: `claude/<slug>`. PRs target `main`. Title with the issue key. Do not merge.
+- Branch names: `claude/<slug>`. PRs target `main`. Title with the issue key. Do not merge unless the
+  issue grants it (the brief says how) — or write "never merge" here if an agent never should.
 
 ## Stop and ask (`needs_human`) when
 

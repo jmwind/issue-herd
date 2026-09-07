@@ -70,8 +70,13 @@ same name in `.issue-herd/prompts/`:
 | `prompts/smoke.md` | `issue-herd smoke` | prove the pipeline works, change nothing |
 
 Every one of them is a plain markdown file with `{{placeholders}}`, and the reviewing three all end
-with "do not push, do not merge" — the verdict is a comment on the issue, and merging stays a
-person's job.
+with "do not push, do not merge" — the verdict is a comment on the issue, and merging is never a
+reviewer's. It is a person's job too, with one exception the implementer's brief spells out: when
+the issue itself says the PR may be merged once reviewed, the implementer merges it, and only after
+every reviewing role the repository runs has said OK on the issue. One missing or negative verdict
+and the PR stays open, and so does a repository with no reviewing role at all — "once reviewed"
+with nobody to review it is not a grant. A repository's own instructions can forbid merging
+outright.
 
 ## A second opinion: a reviewer on another provider
 
@@ -216,6 +221,15 @@ implementer's branch, so they run the tests rather than take its word for them).
 told to add the label in `.issue-herd/instructions.md`, which is the file every brief on this repo
 ends with — the reviewers are told to leave labels alone. Three different models, because a review
 by the model that wrote the code is a re-read, not a review.
+
+Say who merges in `.issue-herd/instructions.md` too — the scaffolded copy only says "unless the
+issue grants it". This repository's says: the owner, unless the issue says "auto merge when
+reviewed" (or words to that effect), in which case the implementer merges once `OK TO MERGE TO
+MAIN` and `USABILITY: OK` have both landed on the issue. The implementer's brief tells it to stay
+up after its result is in, waiting for the two reports, and to merge nothing while either is
+missing. That needs `onDone.closeWorkspace` off (the default) on the implementer's rule, and
+`onDone.comment` on for every reviewer's — a verdict the implementer cannot see on the issue is a
+verdict it will wait for forever.
 
 Nothing here is GitHub-specific except the handoff: on Linear the same shape uses
 `"match": "label:ai and state:\"In Review\""` and `onDone.state`, and no label is needed.
