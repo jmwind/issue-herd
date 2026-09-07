@@ -66,8 +66,8 @@
     if (!seen.merge && !seen.answer && iss.url) acts += '<a class="btn" href="' + esc(iss.url) + '" target="_blank" rel="noopener">Open issue</a>';
     iss.runs.filter(function (r) { return r.agentAlive; }).forEach(function (r) { acts += '<button class="btn cancel" data-exit="' + esc(f.id) + '|' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">✕ Exit ' + esc(r.role || 'agent') + '</button>'; });
     var tail = alerts.map(function (a) { var k = f.id + '|' + a.runKey; return tails[k] ? '<pre>' + esc(tails[k]) + '</pre>' : ''; }).join('');
-    var wait = iss.humanWaitMs + drift();
-    return '<div class="alert"><div class="k"><i class="led ' + esc(iss.light) + ' still"></i><b>' + esc(iss.key) + ' ' + esc(iss.title) + (many ? ' · ' + esc(f.name) : '') + '</b><span class="you" title="time a person was waited on">' + dur(wait) + '<small>you</small></span></div>' +
+    var wait = iss.humanWaitMs + (iss.light === 'green' ? 0 : drift());
+    return '<div class="alert"><div class="k"><i class="led ' + esc(iss.light) + ' still"></i><b>' + esc(iss.key) + ' ' + esc(iss.title) + (many ? ' · ' + esc(f.name) : '') + '</b><span class="you' + (wait > 1000 ? '' : ' none') + '" title="time a person was waited on">' + (wait > 1000 ? dur(wait) : '0') + '<small>you</small></span></div>' +
       '<a class="open" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '">' + chips(iss) + '</a><ul class="why">' + lines + '</ul>' + tail + '<div class="acts">' + acts + '</div></div>';
   }
   function section(title, count, body, extra) { return '<section><div class="sub">' + title + ' <span class="n' + (extra && extra.hot ? ' hot' : '') + '">' + count + '</span>' + (extra && extra.more || '') + '</div>' + body + '</section>'; }
