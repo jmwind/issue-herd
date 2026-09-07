@@ -223,3 +223,29 @@ test('catching up never throws, whatever it is pointed at', (t) => {
   assert.equal(catchUp({ git, repo: dir, at: null, base: 'x' }).moved, false);
   assert.equal(catchUp({ git, repo: dir, at: wt.path, base: null }).moved, false);
 });
+
+test('a worktree put back on an existing branch is not silently left behind', () => {
+  // The case the "was it just created?" test missed: onMerged.removeWorktree (or a person) removes
+  // the directory but the branch survives, so the next turn re-creates the worktree *on that
+  // branch* — `base` is ignored, and the run looks brand new. Without catching up, the reviewer
+  // reads the code from the turn before and confirms its own findings were never addressed.
+  const dir = repo({ after: () => {} });
+  try {
+    commitOn(dir, '7-fix', 'f.txt', 'v1\n');
+    const first = makeWorktree({ git, repo: dir, slug: 'rev', branch: '7-fix-review', base: '7-fix' });
+    assert.equal(first.base, '7-fix');
+    const v2 = commitOn(dir, '7-fix', 'f.txt', 'v2\n');
+    git(['worktree', 'remove', '--force', first.path], dir);
+
+    const again = makeWorktree({ git, repo: dir, slug: 'rev', branch: '7-fix-review', base: '7-fix' });
+    assert.equal(again.created, true, 'the directory really is new');
+    assert.equal(again.base, null, 'but it did not start from the base — the branch already existed');
+    assert.equal(fs.readFileSync(path.join(again.path, 'f.txt'), 'utf8'), 'v1\n', 'so it is behind');
+    // `!made.base` is the condition that catches this; `!made.created` did not.
+    assert.equal(catchUp({ git, repo: dir, at: again.path, base: '7-fix' }).at, v2);
+    assert.equal(fs.readFileSync(path.join(again.path, 'f.txt'), 'utf8'), 'v2\n');
+  } finally {
+    try { execFileSync('git', ['worktree', 'prune'], { cwd: dir, stdio: 'ignore' }); } catch { /* going away */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

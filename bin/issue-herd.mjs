@@ -232,6 +232,10 @@ function loadConfig() {
     rule.passes = normalizePasses(rule.passes, `rule "${rule.name}"`);
     rule.basedOn = normalizeRole(rule.basedOn, `rule "${rule.name}" ("basedOn")`);
     if (rule.basedOn && rule.basedOn === rule.role) throw new Error(`rule "${rule.name}": "basedOn" is its own role (${rule.role}) — a worktree cannot start from itself`);
+    // Only "self" mode creates the worktree, so only "self" mode can decide where it starts.
+    // Accepting it quietly elsewhere would give you a reviewer on the default branch and a config
+    // that says otherwise.
+    if (rule.basedOn && rule.worktree !== 'self') throw new Error(`rule "${rule.name}": "basedOn" needs "worktree": "self" (issue-herd creates the worktree, so it can start it from another role's branch); this rule is ${JSON.stringify(rule.worktree)}`);
     for (const k of EVENTS) {
       // `"onMerged": null` (or false) — in the rule or in the defaults — turns that step off
       // entirely, rather than falling back to the very defaults it is trying to switch off.
@@ -303,7 +307,7 @@ function briefVars({ issue, rule, run, tracker }) {
   const comments = issue.comments?.length
     ? issue.comments.map((c) => `- **${c.author}** (${c.createdAt.slice(0, 10)}): ${c.body.replace(/\r?\n/g, '\n  ')}`).join('\n')
     : '_none_';
-  return {
+  const vars = {
     tracker,
     identifier: issue.identifier,
     ref: issue.ref || issue.identifier,
@@ -323,7 +327,7 @@ function briefVars({ issue, rule, run, tracker }) {
     // A worktree started from another role's branch already holds the code under review, which is
     // the difference between reading a diff and running its tests. Say so, or the agent will go
     // looking for the change somewhere else.
-    baseLine: run.basedOn
+    _baseLine: run.basedOn
       ? `- **The code you are looking at is already here.** This worktree was created from \`${run.basedOn}\`, the
   implementer's branch, so the change is checked out and you can build it and run its tests in place.
   On a later turn it is fast-forwarded to whatever that branch is now. Do not push from here.`
@@ -337,9 +341,9 @@ function briefVars({ issue, rule, run, tracker }) {
     passes: String(passLimit(rule)),
     // Only a rule that gets more than one turn says anything about turns, and only a later turn
     // points at what the earlier one left behind.
-    passLine: passLimit(rule) > 1 ? passLine(run, rule) : '',
+    _passLine: passLimit(rule) > 1 ? passLine(run, rule) : '',
     // A whole line, so a roleless brief says nothing about roles at all rather than "role: none".
-    roleLine: rule.role
+    _roleLine: rule.role
       ? `- Role: \`${rule.role}\` — this run holds the \`${rule.role}\` claim on the issue. Other agents may hold
   other roles (implementation, review, splitting) on the same issue at the same time: do your role's
   work only, and do not undo or redo theirs.`
@@ -347,6 +351,11 @@ function briefVars({ issue, rule, run, tracker }) {
     instructions: rule.instructions || '',
     date: new Date().toISOString().slice(0, 10),
   };
+  // One block, not three placeholders: an ordinary run has nothing to say about roles, turns or a
+  // base branch, and three empty substitutions leave three blank lines in the middle of the brief.
+  vars.runLines = [vars._roleLine, vars._passLine, vars._baseLine].filter(Boolean).join('\n');
+  for (const k of ['_roleLine', '_passLine', '_baseLine']) delete vars[k];
+  return vars;
 }
 
 // ---------------------------------------------------------------- core
@@ -413,7 +422,7 @@ class IssueHerd {
     // with it the session that may still be up; another role's run is a different key entirely.
     const key = runKeyFor(issue.identifier, rule.role);
     const previous = this.state.runs[key]; // a run we are retrying; its session may still be up
-    const slug = `${key.toLowerCase().replace(/\./g, '-')}-${slugify(issue.title, 32)}`.replace(/-+$/, '');
+    const slug = `${slugify(key, 48)}-${slugify(issue.title, 32)}`.replace(/-+$/, '');
     const archiveDir = path.join(RUNS_DIR, key); // in the watcher's checkout: issue.json now, result.json copied on finish
     fs.mkdirSync(archiveDir, { recursive: true });
     const run = {
@@ -479,9 +488,11 @@ class IssueHerd {
         const made = makeWorktree({ git, repo: rule.repo, dir: rule.worktreeDir, slug, branch: run.wantBranch || `herd/${slug}`, base: run.basedOn });
         run.worktreePath = made.path;
         log(`${key}: worktree ${made.created ? 'created' : 'reused'} at ${made.path}${made.base ? ` from ${made.base}` : ''}`);
-        // Reused means a turn we have had before, and the reason there is another one is that the
-        // branch we are reviewing has moved. Catch up, or this turn reads the last turn's code.
-        if (!made.created && run.basedOn) {
+        // Anything but a worktree we just cut from the base is potentially behind it: a directory
+        // reused from an earlier turn, and also a fresh directory put back on a branch that already
+        // existed (the worktree was removed but the branch survived). Both leave this turn reading
+        // the last turn's code, which is how a reviewer confirms its own findings were ignored.
+        if (run.basedOn && !made.base) {
           const r = catchUp({ git, repo: rule.repo, at: made.path, base: run.basedOn });
           log(`${key}: ${r.moved ? `caught up to ${run.basedOn} (${String(r.from).slice(0, 7)} → ${String(r.at).slice(0, 7)})` : `not moved onto ${run.basedOn}: ${r.reason}`}`);
         }

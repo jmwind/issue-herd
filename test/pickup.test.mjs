@@ -106,13 +106,13 @@ test('a role reaches the herdr sidebar, the agent name and the run key', (t) => 
   const herdr = fakeHerdr(t, { mode: 'blocked-first', cwd: dir });
   const r = smoke(dir, herdr);
   assert.equal(r.status, 0, r.out);
-  const key = /picking up (SMOKE-\d+\.review)/.exec(r.out)?.[1];
+  const key = /picking up (SMOKE-\d+@review)/.exec(r.out)?.[1];
   assert.ok(key, `no role-scoped run key in the log:\n${r.out}`);
   assert.match(r.out, /role review/);
   // the sidebar label is "<issue key> <role> <title>"
-  assert.match(herdr.calls(), new RegExp(`workspace create .*--label ${key.replace('.review', '')} review issue-herd smoke test`));
+  assert.match(herdr.calls(), new RegExp(`workspace create .*--label ${key.replace('@review', '')} review issue-herd smoke test`));
   // the agent is named for the run key, so the two roles on an issue are two agents
-  assert.match(herdr.calls(), new RegExp(`agent start ${key.replace('.', '-').toLowerCase()} --kind claude`));
+  assert.match(herdr.calls(), new RegExp(`agent start ${key.replace('@', '-').toLowerCase()} --kind claude`));
   // and the rule's model reaches the agent's own command line
   assert.match(herdr.calls(), /--model opus/);
 });

@@ -47,14 +47,26 @@ export function pickupMarker(role) {
   return role ? `${CLAIM_MARKER} as \`${role}\`` : CLAIM_MARKER;
 }
 
+/**
+ * The separator between an issue key and a role in a run key.
+ *
+ * "@" and not "." because the split has to be unambiguous both ways: checkIssue() lets an
+ * identifier contain dots, letters, digits, "-" and "_", so "V1.2" is a legal issue key and
+ * "V1.2.review" could be read as issue V1.2 in role "review" or issue V1 in role "2.review". No
+ * identifier and no role can contain "@", so there is exactly one way to read a run key. It is
+ * also safe unquoted in a shell (`issue-herd reset GH-7@review`), in a file name, and in a herdr
+ * agent name once slugified.
+ */
+export const ROLE_SEPARATOR = '@';
+
 /** The key a run is filed under: the issue key, plus the role when there is one. */
 export function runKeyFor(identifier, role) {
-  return role ? `${identifier}.${role}` : String(identifier);
+  return role ? `${identifier}${ROLE_SEPARATOR}${role}` : String(identifier);
 }
 
-/** The issue key a run key belongs to — `issue-herd reset GH-7` has to find `GH-7.review` too. */
+/** The issue key a run key belongs to — `issue-herd reset GH-7` has to find `GH-7@review` too. */
 export function issueKeyOf(runKey) {
-  const i = String(runKey).indexOf('.');
+  const i = String(runKey).indexOf(ROLE_SEPARATOR);
   return i === -1 ? String(runKey) : String(runKey).slice(0, i);
 }
 

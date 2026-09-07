@@ -2,8 +2,7 @@
 
 This is a plumbing test, not real work. Do not edit any files, do not run git commands, do not
 open a PR.
-{{roleLine}}
-{{passLine}}
+{{runLines}}
 
 Do exactly this and nothing else:
 

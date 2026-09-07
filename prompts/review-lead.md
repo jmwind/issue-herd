@@ -10,9 +10,7 @@ herdr pane on the owner's machine — nobody is watching, and your review lands 
 - Your worktree: `{{branch}}` (yours, not the implementer's — do not push to it)
 - Run directory: `{{runDir}}`
 - **Result file you must write when finished: `{{resultPath}}`**
-{{roleLine}}
-{{passLine}}
-{{baseLine}}
+{{runLines}}
 
 ## What you are looking for
 

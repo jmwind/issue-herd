@@ -245,7 +245,8 @@ The same fields work on every tracker; what they map to on GitHub is in
                               // More gives it another turn each time the issue moves on after it finished —
                               // review, then confirm the fix, then the thumbs up. See Roles.
     "basedOn": null,          // a role name: start this rule's worktree from *that* role's branch, so a
-                              // reviewer holds the code it is reviewing. null = the default branch. See Roles.
+                              // reviewer holds the code it is reviewing. Needs "worktree": "self".
+                              // null = the default branch. See Roles.
     "skipIfAssignedToOthers": true,   // leave issues held by other people alone
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
     "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
@@ -400,7 +401,7 @@ Give a rule a `role` and everything the run is keyed by follows it:
 |---|---|---|
 | claim label | `herdr` | `herdr:review` |
 | pickup comment | `🐑 **issue-herd** picked this up on …` | `🐑 **issue-herd** picked this up as \`review\` on …` |
-| run key (`status`, `reset`, `runs/<KEY>/`) | `GH-7` | `GH-7.review` |
+| run key (`status`, `reset`, `runs/<KEY>/`) | `GH-7` | `GH-7@review` |
 | herdr sidebar | `GH-7 Fix the thing` | `GH-7 review Fix the thing` |
 | herdr agent | `gh-7` | `gh-7-review` |
 | worktree directory | `gh-7-fix-the-thing` | `gh-7-review-fix-the-thing` |
@@ -439,7 +440,7 @@ Give a rule a `role` and everything the run is keyed by follows it:
   [A second opinion](#a-second-opinion-a-reviewer-on-another-provider).
 - **A reviewer can hold the code it reviews.** `"basedOn": "impl"` starts this role's worktree from
   that role's branch — see [Reviewing the actual code](#reviewing-the-actual-code-basedon).
-- `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7.review`
+- `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7@review`
   forgets just that one.
 
 ### A second opinion: a reviewer on another provider
@@ -470,7 +471,7 @@ the agent's *own* command line and the four things a rule asks for are spelled d
 | model | `--model opus` | `--model gpt-5-codex` |
 | effort | `--effort high` | `-c model_reasoning_effort="high"` |
 | unattended | `--permission-mode auto` | `--sandbox workspace-write --approve-for-me` |
-| session name | `--name GH-7.review` | (none — herdr's agent name is the name) |
+| session name | `--name GH-7@review` | (none — herdr's agent name is the name) |
 | leaves with | `/exit` | `/quit` |
 
 An agent with no translation still runs: it gets `--model` and whatever the rule puts in
@@ -509,6 +510,9 @@ then `reset --hard`), or the second review would read the first turn's code and 
 findings had been ignored. That reset only ever runs in a worktree issue-herd made for this role,
 and only ever moves it onto a *different* branch, so what it discards is a reviewer's scratch
 files, never anyone's commits.
+
+`basedOn` needs `"worktree": "self"` — only the mode where issue-herd creates the worktree can
+decide where it starts, so the other modes refuse it at config load rather than quietly ignoring it.
 
 If the other role has no run on this issue yet, or never settled a branch, you get a log line and
 an ordinary worktree. A reviewer on the default branch is a poor review; a failed run is no review
@@ -648,7 +652,7 @@ workspace and open the port in your browser.
 - Re-run an issue that finished or stopped: remove the `herdr` claim label on the issue (with roles,
   the one for the role you want back — `herdr:review`), delete the pickup comment if you want a
   clean thread, then `issue-herd reset ENG-123` (or `reset GH-7`, which forgets every role's run on
-  the issue; `reset GH-7.review` forgets one). It will be picked up on the next poll if the rule
+  the issue; `reset GH-7@review` forgets one). It will be picked up on the next poll if the rule
   still matches.
 - `no Linear credentials` / `no GitHub credentials` — run `issue-herd login`, or put the token in
   `.env.local`. A `401` means the token it found (the banner says where) is dead: `login` again.

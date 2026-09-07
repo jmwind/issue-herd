@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ROLE_RE, ROLE_SEPARATOR,
   alreadyTaken, applyRoles, checkRoleBranches, claimLabelFor, issueKeyOf,
   heldByAPerson, nextPass, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker,
   runKeyFor, workspaceLabel,
@@ -24,9 +25,21 @@ test('a role scopes the claim label, and no role leaves it exactly as it was', (
 
 test('a role scopes the run key, and the issue key is recoverable from it', () => {
   assert.equal(runKeyFor('GH-7', null), 'GH-7');
-  assert.equal(runKeyFor('GH-7', 'review'), 'GH-7.review');
-  assert.equal(issueKeyOf('GH-7.review'), 'GH-7');
+  assert.equal(runKeyFor('GH-7', 'review'), 'GH-7@review');
+  assert.equal(issueKeyOf('GH-7@review'), 'GH-7');
   assert.equal(issueKeyOf('GH-7'), 'GH-7');
+});
+
+test('a run key can always be read back, whatever the tracker calls its issues', () => {
+  // checkIssue() lets an identifier hold dots, dashes and underscores, so a "." separator made
+  // "V1.2.review" ambiguous: issue V1.2 in role "review", or issue V1 in role "2.review"?
+  // `issue-herd reset V1.2` read it the second way and forgot the wrong runs. No identifier and
+  // no role can contain the separator, so there is exactly one way to split.
+  for (const id of ['GH-7', 'DEV-123', 'V1.2', 'a_b-c.d', '7']) {
+    assert.equal(issueKeyOf(runKeyFor(id, 'review')), id, id);
+    assert.equal(issueKeyOf(runKeyFor(id, null)), id, `${id} roleless`);
+    assert.ok(!ROLE_SEPARATOR.match(ROLE_RE), 'the separator must not be a legal role character');
+  }
 });
 
 test('roles are checked at config load, because they become labels and directory names', () => {
@@ -133,14 +146,14 @@ test('one poll can hand the same issue to an implementer and a reviewer', () => 
   // runs on one issue, neither skipping the other.
   const rules = [rule({ name: 'impl', role: 'impl' }), rule({ name: 'rev', role: 'review' })];
   const got = pick([issue()], rules);
-  assert.deepEqual(got.map((c) => [c.key, c.rule.name]), [['GH-7.impl', 'impl'], ['GH-7.review', 'rev']]);
+  assert.deepEqual(got.map((c) => [c.key, c.rule.name]), [['GH-7@impl', 'impl'], ['GH-7@review', 'rev']]);
 });
 
 test('a run in flight blocks its own role and nothing else', () => {
   const rules = [rule({ name: 'impl', role: 'impl' }), rule({ name: 'rev', role: 'review' })];
   const running = { status: 'running', pass: 1, claimed: 'herdr:impl' };
-  const got = pick([issue()], rules, { runFor: (key) => (key === 'GH-7.impl' ? running : null) });
-  assert.deepEqual(got.map((c) => c.key), ['GH-7.review']);
+  const got = pick([issue()], rules, { runFor: (key) => (key === 'GH-7@impl' ? running : null) });
+  assert.deepEqual(got.map((c) => c.key), ['GH-7@review']);
 });
 
 test('within one role the first matching rule still wins, and only it', () => {
@@ -161,9 +174,9 @@ test('a guard that fires is reported against the run key it stopped, not the iss
   const skipped = [];
   const rules = [rule({ name: 'impl', role: 'impl' }), rule({ name: 'rev', role: 'review' })];
   const got = pick([issue({ labels: ['herdr:impl'] })], rules, { onSkip: (key, r, why) => skipped.push([key, r.name, why]) });
-  assert.deepEqual(got.map((c) => c.key), ['GH-7.review']);
+  assert.deepEqual(got.map((c) => c.key), ['GH-7@review']);
   assert.equal(skipped.length, 1);
-  assert.equal(skipped[0][0], 'GH-7.impl');
+  assert.equal(skipped[0][0], 'GH-7@impl');
   assert.match(skipped[0][2], /herdr:impl/);
 });
 
@@ -238,7 +251,7 @@ test('a turn we already hold the claim for skips the guards it would fail', () =
     issues: [held], rules, viewer: { id: 'u1' }, matches: () => true,
     runFor: () => finished(), onSkip: (k, r, why) => skipped.push(why),
   });
-  assert.deepEqual(got.map((c) => [c.key, c.pass, c.holdsClaim]), [['GH-7.review', 2, true]]);
+  assert.deepEqual(got.map((c) => [c.key, c.pass, c.holdsClaim]), [['GH-7@review', 2, true]]);
   assert.deepEqual(skipped, []);
   // A second machine, with no run of its own for that role, is still refused by the label.
   const other = pickCandidates({ issues: [held], rules, viewer: { id: 'u1' }, matches: () => true, runFor: () => null, onSkip: (k, r, why) => skipped.push(why) });
@@ -272,12 +285,12 @@ test('a person taking the issue over ends the role\'s remaining turns', () => {
     runFor: () => finished(), onSkip: (k, r, why) => skipped.push([k, why]),
   });
   assert.deepEqual(got, []);
-  assert.deepEqual(skipped, [['GH-7.review', 'assigned to Alex']]);
+  assert.deepEqual(skipped, [['GH-7@review', 'assigned to Alex']]);
 
   // and with nobody else on it, the turn is still granted
   const free = issue({ labels: ['herdr:review'], comments: [pickupComment('review')], updatedAt: '2026-01-02T00:00:00Z' });
   const ok = pickCandidates({ issues: [free], rules, viewer, matches: () => true, runFor: () => finished() });
-  assert.deepEqual(ok.map((c) => [c.key, c.pass]), [['GH-7.review', 2]]);
+  assert.deepEqual(ok.map((c) => [c.key, c.pass]), [['GH-7@review', 2]]);
 });
 
 test('the person guard is separate from the claim guards, and answers on its own', () => {
