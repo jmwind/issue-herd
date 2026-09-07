@@ -148,7 +148,7 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
       startedAt: run.startedAt || null, finishedAt: run.finishedAt || null,
       elapsedMs: (finished || now) - started,
       light: st.light, phrase: st.phrase, needsYou: st.needsYou,
-      result: run.result ? { status: run.result.status, prUrl: run.result.prUrl || null, summary: run.result.summary || '', notes: run.result.notes || '' } : null,
+      result: run.result ? { status: run.result.status, prUrl: run.result.prUrl || null, summary: run.result.summary || '', notes: run.result.notes || '', live: !!run.resultIsLive } : null,
       prUrl: run.prUrl || run.result?.prUrl || null, error: run.error || null,
       segments: segs, humanWaitMs: humanWaitMs(run, segs, now), size,
     };

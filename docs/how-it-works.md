@@ -205,7 +205,9 @@ Three screens, in Factorio's idiom because a factory is what this is:
 (name, tracker, version, last poll); the console lists those entries, plus any `<name>Watch`
 workspace herdr shows, and reads each factory's `config.json`, `state.json` and log directly. Agent
 state is one `herdr api snapshot` per tick (every 2s). Lines changed come from `git diff` in the
-run's worktree. The issue's state (open, closed) and the PR's (open, closed, merged) come from the
+run's worktree. A run's `result.json` in its worktree is read live, so an agent that rewrote it
+after the watcher recorded the first version (a plan that became a PR) is shown as it stands.
+The issue's state (open, closed) and the PR's (open, closed, merged) come from the
 tracker and GitHub with the credentials this machine already has (the saved login, `gh`, or the
 factory's own `.env.local`); a run that never recorded a PR gets the one GitHub has for its
 branch. One call per task, every 90s for tasks in flight or finished this

@@ -113,6 +113,24 @@ export class FactoryConsole {
     return this.caches.get(repo);
   }
 
+  /**
+   * The watcher reads a run's result.json once, when the agent first stops. An agent that keeps
+   * going and rewrites it (a plan that became a PR) leaves state.json behind. The file in the
+   * worktree is the agent's latest word, so when it parses and differs, it wins here.
+   */
+  withLiveResults(c, state) {
+    const runs = {};
+    for (const [key, run] of Object.entries(state.runs || {})) {
+      if (!run.resultPath || !(run.status === 'done' || run.status === 'awaiting_merge')) { runs[key] = run; continue; }
+      c.results ||= new Map();
+      if (!c.results.has(key)) c.results.set(key, new Cached((f) => JSON.parse(fs.readFileSync(f, 'utf8'))));
+      const live = c.results.get(key).get(run.resultPath);
+      if (!live || typeof live !== 'object' || !live.status || JSON.stringify(live) === JSON.stringify(run.result)) { runs[key] = run; continue; }
+      runs[key] = { ...run, result: live, prUrl: run.prUrl || live.prUrl || null, resultIsLive: true };
+    }
+    return { ...state, runs };
+  }
+
   async sizeFor(key, run, repo, now) {
     if (!run.branch || !LIVE.has(run.status)) return this.sizes.get(key)?.value || null;
     const c = this.sizes.get(key);
@@ -200,7 +218,7 @@ export class FactoryConsole {
       const c = this.cacheFor(f.repo);
       const dir = path.join(f.repo, '.issue-herd');
       const config = mergeConfig(c.config.get(path.join(dir, 'config.json')) || {}, c.local.get(path.join(dir, 'config.local.json')));
-      const state = c.state.get(path.join(dir, 'state', 'state.json')) || { runs: {} };
+      const state = this.withLiveResults(c, c.state.get(path.join(dir, 'state', 'state.json')) || { runs: {} });
       const events = c.log.get(path.join(dir, 'state', 'logs', 'issue-herd.log')) || [];
       const sizes = {};
       for (const [key, run] of Object.entries(state.runs || {})) { const s = await this.sizeFor(key, run, f.repo, now); if (s) sizes[key] = s; }
