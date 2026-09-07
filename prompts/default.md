@@ -12,6 +12,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
 - **Result file you must write when finished: `{{resultPath}}`**
 {{roleLine}}
 {{passLine}}
+{{baseLine}}
 
 ## Issue description
 

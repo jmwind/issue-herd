@@ -171,3 +171,19 @@ test('reset by issue key forgets every role\'s run on it; by run key, only that 
 
   assert.match(run(all, ['reset', 'GH-9']).out, /no run called GH-9/);
 });
+
+test('"basedOn" names another role, checked at config load', (t) => {
+  const rules = (basedOn) => [
+    { name: 'impl', match: 'label:ai', role: 'impl' },
+    { name: 'rev', match: 'label:ai', role: 'review', basedOn },
+  ];
+  const ok = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('impl') }) });
+  assert.equal(run(ok, ['status']).status, 0);
+
+  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('code review') }) });
+  assert.match(run(bad, ['status']).out, /rule "rev" \("basedOn"\): role "code review"/);
+
+  // a worktree cannot start from itself
+  const self = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('review') }) });
+  assert.match(run(self, ['status']).out, /"basedOn" is its own role/);
+});

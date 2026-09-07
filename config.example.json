@@ -18,6 +18,7 @@
     "claimLabel": "herdr",
     "role": null,
     "passes": 1,
+    "basedOn": null,
     "skipIfAssignedToOthers": true,
     "onPickup": {
       "comment": true,

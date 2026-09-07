@@ -11,6 +11,7 @@ comment on the {{tracker}} issue.
 - **Result file you must write when finished: `{{resultPath}}`**
 {{roleLine}}
 {{passLine}}
+{{baseLine}}
 
 ## Scope
 
@@ -38,7 +39,9 @@ one does.
 
 ## How to work
 
-1. Find the pull request (`gh pr list --search "{{ref}}"`), read it with `gh pr diff`.
+1. Read the change: `git diff main...HEAD` in this worktree when it was started from the
+   implementer's branch, otherwise find the PR with `gh pr list --search "{{ref}}"` and use
+   `gh pr diff`.
 2. For each candidate, work out the concrete path from an attacker's input to the effect. If you
    cannot write that path down, it is a note, not a finding.
 3. Read the code around the diff — most real findings are in what the change assumes is already safe.

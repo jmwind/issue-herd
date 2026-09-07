@@ -244,6 +244,8 @@ The same fields work on every tracker; what they map to on GitHub is in
     "passes": 1,              // how many turns this rule gets on one issue. 1 = take it once and be done.
                               // More gives it another turn each time the issue moves on after it finished —
                               // review, then confirm the fix, then the thumbs up. See Roles.
+    "basedOn": null,          // a role name: start this rule's worktree from *that* role's branch, so a
+                              // reviewer holds the code it is reviewing. null = the default branch. See Roles.
     "skipIfAssignedToOthers": true,   // leave issues held by other people alone
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
     "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
@@ -435,6 +437,8 @@ Give a rule a `role` and everything the run is keyed by follows it:
   the agent to implement the issue and open a PR, which is not what a reviewer should do.
 - **Each role picks its own agent.** `agentKind`, `model` and `effort` are per rule — see
   [A second opinion](#a-second-opinion-a-reviewer-on-another-provider).
+- **A reviewer can hold the code it reviews.** `"basedOn": "impl"` starts this role's worktree from
+  that role's branch — see [Reviewing the actual code](#reviewing-the-actual-code-basedon).
 - `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7.review`
   forgets just that one.
 
@@ -482,6 +486,33 @@ Two things worth knowing:
   codex's `auto` is the widest *sandboxed* setting, not
   `--dangerously-bypass-approvals-and-sandbox`. If you want that, type it into `agentArgs`, which
   is appended last and overrides everything above it.
+
+### Reviewing the actual code: `basedOn`
+
+A worktree is cut from the default branch, which is fine for the rule that is about to write the
+change and useless for a rule that is about to read it: the reviewer would hold `main`, and
+"run the tests the implementer said passed" is not something it could do.
+
+```jsonc
+{ "name": "review", "role": "review", "basedOn": "impl", "match": "…" }
+```
+
+`basedOn` names another **role**, and the branch is read from that role's run on the same issue —
+what git reported after that worktree was made, never what a template asked for. The reviewer gets
+its own branch (`7-fix-the-thing-review`) starting at the implementer's commits, so the change is
+checked out, the tests are runnable, and `git diff main...HEAD` is the diff under review. Two
+worktrees, two branches, no fighting over a checkout.
+
+On a **later turn** the worktree already exists — and the reason there is a later turn is that the
+implementer pushed something. So it is fast-forwarded to whatever that branch is now (`git fetch`,
+then `reset --hard`), or the second review would read the first turn's code and conclude its own
+findings had been ignored. That reset only ever runs in a worktree issue-herd made for this role,
+and only ever moves it onto a *different* branch, so what it discards is a reviewer's scratch
+files, never anyone's commits.
+
+If the other role has no run on this issue yet, or never settled a branch, you get a log line and
+an ordinary worktree. A reviewer on the default branch is a poor review; a failed run is no review
+at all. The brief says which it got.
 
 ### More than one turn: `passes`
 

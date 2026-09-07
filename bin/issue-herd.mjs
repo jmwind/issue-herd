@@ -38,7 +38,7 @@ import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCrede
 import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
-import { makeWorktree, removeWorktree } from '../src/worktree.mjs';
+import { catchUp, makeWorktree, removeWorktree } from '../src/worktree.mjs';
 import { agentArgv, describeAgent, exitCommandFor, TRANSLATED_KINDS } from '../src/agents.mjs';
 import { parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
 import { GitHubTracker } from '../src/trackers/github.mjs';
@@ -186,6 +186,12 @@ const DEFAULTS = {
     // role another turn each time the issue moves on after it stopped — review, then confirm the
     // fix, then give the thumbs up — and never otherwise.
     passes: 1,
+    // Whose branch this rule's worktree starts from: the name of another role. A reviewer cut from
+    // the default branch cannot run the tests the implementer said passed — it does not have the
+    // code. With "basedOn": "impl" the worktree is created at that role's branch, and on a later
+    // turn it is fast-forwarded to whatever that branch is now. null starts from the default
+    // branch, which is what every rule did before this existed.
+    basedOn: null,
     skipIfAssignedToOthers: true,
     onPickup: { comment: true, state: 'In Progress', assignToMe: true },
     onDone: { comment: true, state: 'In Review', notify: true, closeWorkspace: false },
@@ -224,6 +230,8 @@ function loadConfig() {
     const rule = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: REPO };
     rule.role = normalizeRole(rule.role, `rule "${rule.name}"`);
     rule.passes = normalizePasses(rule.passes, `rule "${rule.name}"`);
+    rule.basedOn = normalizeRole(rule.basedOn, `rule "${rule.name}" ("basedOn")`);
+    if (rule.basedOn && rule.basedOn === rule.role) throw new Error(`rule "${rule.name}": "basedOn" is its own role (${rule.role}) — a worktree cannot start from itself`);
     for (const k of EVENTS) {
       // `"onMerged": null` (or false) — in the rule or in the defaults — turns that step off
       // entirely, rather than falling back to the very defaults it is trying to switch off.
@@ -311,6 +319,15 @@ function briefVars({ issue, rule, run, tracker }) {
     comments,
     repo: rule.repo,
     branch: run.branch || '(current branch)',
+    basedOn: run.basedOn || '',
+    // A worktree started from another role's branch already holds the code under review, which is
+    // the difference between reading a diff and running its tests. Say so, or the agent will go
+    // looking for the change somewhere else.
+    baseLine: run.basedOn
+      ? `- **The code you are looking at is already here.** This worktree was created from \`${run.basedOn}\`, the
+  implementer's branch, so the change is checked out and you can build it and run its tests in place.
+  On a later turn it is fast-forwarded to whatever that branch is now. Do not push from here.`
+      : '',
     worktreeMode: rule.worktree,
     resultPath: run.resultPath,
     runDir: run.dir,
@@ -458,9 +475,16 @@ class IssueHerd {
         ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `herd/${slug}`, label });
         run.worktreePath = ws.path;
       } else if (rule.worktree === 'self') {
-        const made = makeWorktree({ git, repo: rule.repo, dir: rule.worktreeDir, slug, branch: run.wantBranch || `herd/${slug}` });
+        run.basedOn = this.baseBranchFor(issue, rule, key);
+        const made = makeWorktree({ git, repo: rule.repo, dir: rule.worktreeDir, slug, branch: run.wantBranch || `herd/${slug}`, base: run.basedOn });
         run.worktreePath = made.path;
-        log(`${key}: worktree ${made.created ? 'created' : 'reused'} at ${made.path}`);
+        log(`${key}: worktree ${made.created ? 'created' : 'reused'} at ${made.path}${made.base ? ` from ${made.base}` : ''}`);
+        // Reused means a turn we have had before, and the reason there is another one is that the
+        // branch we are reviewing has moved. Catch up, or this turn reads the last turn's code.
+        if (!made.created && run.basedOn) {
+          const r = catchUp({ git, repo: rule.repo, at: made.path, base: run.basedOn });
+          log(`${key}: ${r.moved ? `caught up to ${run.basedOn} (${String(r.from).slice(0, 7)} → ${String(r.at).slice(0, 7)})` : `not moved onto ${run.basedOn}: ${r.reason}`}`);
+        }
         ws = await this.workspaceIn(made.path, rule.repo, label);
       } else {
         ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { HERD_ISSUE: key } });
@@ -574,6 +598,23 @@ class IssueHerd {
     }
     try { run.issueUpdatedAt = (await this.tracker.issueByKey(run.issueKey || issueKeyOf(key)))?.updatedAt || null; } catch { /* finishedAt is the fallback */ }
     saveState(this.state);
+  }
+
+  /**
+   * The branch this rule's worktree should start from, or null for the default branch.
+   *
+   * `basedOn` names another *role*, and the branch is read from that role's run on this same
+   * issue — which is the only place the truth lives, because it is what git reported after that
+   * worktree was made rather than what its template asked for. No such run, or a run that never
+   * settled a branch, is a log line and a normal worktree: a reviewer looking at the default
+   * branch is a poor review, and a failed run is no review at all.
+   */
+  baseBranchFor(issue, rule, key) {
+    if (!rule.basedOn) return null;
+    const from = this.state.runs[runKeyFor(issue.identifier, rule.basedOn)];
+    if (!from) { log(`${key}: no '${rule.basedOn}' run on ${issue.identifier} yet, so its worktree starts from the default branch`); return null; }
+    if (!from.branch) { log(`${key}: the '${rule.basedOn}' run has no branch of its own, so this worktree starts from the default branch`); return null; }
+    return from.branch;
   }
 
   /** The directory Claude is working in: the worktree it created, or the repo. Polls herdr until it settles. */

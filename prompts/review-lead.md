@@ -12,6 +12,7 @@ herdr pane on the owner's machine — nobody is watching, and your review lands 
 - **Result file you must write when finished: `{{resultPath}}`**
 {{roleLine}}
 {{passLine}}
+{{baseLine}}
 
 ## What you are looking for
 
@@ -35,12 +36,17 @@ the house style is worse than no review.
 
 ## How to work
 
-1. `gh pr list --search "{{ref}}"` (or read the issue thread) to find the pull request. Read it
-   with `gh pr diff` and `gh pr view --comments`.
-2. Read the surrounding code, not just the diff. Most real findings live in what the diff assumes.
-3. Run the repository's own checks if they are cheap. Do not rewrite the code — if a fix is one
-   obvious line, describe it rather than committing it.
-4. **Do not push, do not commit, do not merge, do not approve on GitHub.** Your output is the
+1. Work out what changed: `git log --oneline main..HEAD` and `git diff main...HEAD` in this
+   worktree, and `gh pr view {{ref}} --comments` for the thread. If your worktree was not started
+   from the implementer's branch, find the PR with `gh pr list --search "{{ref}}"` and read it with
+   `gh pr diff`.
+2. **Run the checks yourself.** The implementer's result says what it tested; your job is to find
+   out whether that is true. Run what the repository's `AGENTS.md` / `CLAUDE.md` says to run, and
+   say plainly in `testing` what you ran and what happened. "The implementer says the tests pass"
+   is not a review.
+3. Read the surrounding code, not just the diff. Most real findings live in what the diff assumes.
+4. Do not rewrite the code — if a fix is one obvious line, describe it rather than committing it.
+5. **Do not push, do not commit, do not merge, do not approve on GitHub.** Your output is the
    result file and the comment issue-herd makes from it.
 
 ## What to say
