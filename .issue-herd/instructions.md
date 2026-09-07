@@ -28,7 +28,8 @@ issue-herd works its own GitHub issues with this file. Keep it short and concret
 
 ## Branch and PR conventions
 
-- PRs target `main`. Put `Fixes #<n>` in the body. Do not merge.
+- PRs target `main`. Put `Fixes #<n>` in the body. Do not merge unless the issue says you may —
+  see "Who merges" below.
 - Releases are cut by a maintainer with `npm run release`; do not bump the version.
 
 ## Stop and ask (`needs_human`) when
@@ -47,7 +48,18 @@ which role you are.
   the two reviewers — without it, nobody reviews you.
 - **`review`** (tech lead) and **`usability`** read that PR and report back as a comment on the
   issue. They do not commit, push, merge, or touch labels: the handoff is the implementer's to
-  make and the merge is a human's.
+  make, and the merge is never theirs.
+
+## Who merges
+
+The owner, unless the issue says otherwise. When the issue description, or a comment on it from
+the owner, says the PR may be merged once reviewed ("auto merge when reviewed", "happy for you to
+merge"), the **implementer** merges it — after **both** reviewers have reported on the issue and
+neither said no: `review` with `OK TO MERGE TO MAIN` and `usability` with `USABILITY: OK`. Both,
+not one; a report that has not arrived is not a yes, and a `NOT OK` or a blocking usability finding
+means the PR stays open for the owner. Then `gh pr merge <n> --merge` (`main` is merge commits),
+check `gh pr view <n> --json state` says `MERGED`, and say on the issue that you merged and why you
+were allowed to. Write `result.json` before you start waiting for the reviewers, not after the merge.
 
 Spend the main agent on thinking. Bulk reading — finding a symbol, summarising a file, checking how
 a convention is used elsewhere — goes to sub-agents where your agent has them.

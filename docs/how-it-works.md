@@ -98,8 +98,11 @@ given. See [More than one turn](roles.md#more-than-one-turn-passes).
    you get one comment and one notification telling you which workspace to open.
 8. Workspaces are left open so you can inspect, test, and steer.
 9. On `pr_open`, the run is not over: issue-herd keeps watching the pull request (once a minute,
-   whatever `pollSeconds` says). When GitHub says it is **merged**, you get a notification saying so
-   and naming the workspace and worktree the run is still holding, and the run is recorded as
+   whatever `pollSeconds` says). Merging is yours, unless the issue said the PR may be merged once
+   reviewed — then the implementer merges it itself, and only after every reviewing role has said
+   OK on the issue ([roles](roles.md#the-briefs-that-ship)). When GitHub says it is **merged**, you
+   get a notification saying so and naming the workspace and worktree the run is still holding, and
+   the run is recorded as
    `merged`. Nothing is torn down unless you asked for it in `onMerged` — see below. A PR **closed
    without merging** just stops being watched.
 
