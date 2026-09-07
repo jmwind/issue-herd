@@ -172,6 +172,30 @@ test('reset by issue key forgets every role\'s run on it; by run key, only that 
   assert.match(run(all, ['reset', 'GH-9']).out, /no run called GH-9/);
 });
 
+test('reset with no key lists the run keys it could take, then the usage line', (t) => {
+  // Reproduced before the fix: a bare `usage: issue-herd reset <KEY>` at the one moment you are
+  // least likely to remember the key, now that a key can carry a role (GH-7@review).
+  const runs = {
+    'GH-7@impl': { rule: 'r', role: 'impl', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' },
+    'GH-7@review': { rule: 'r', role: 'review', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' },
+    'GH-70': { rule: 'r', status: 'running', startedAt: '2026-01-01T00:00', title: 'b' },
+  };
+  const dir = repo(t, { '.issue-herd/config.json': config(), '.issue-herd/state/state.json': JSON.stringify({ runs }) });
+  const r = run(dir, ['reset']);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /tracked runs: GH-7@impl, GH-7@review, GH-70/);
+  assert.match(r.out, /usage: issue-herd reset <KEY>/);
+  assert.ok(r.out.indexOf('tracked runs') < r.out.indexOf('usage:'), 'the keys come before the usage line');
+  // Nothing was forgotten by asking.
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(dir, '.issue-herd/state/state.json'), 'utf8')).runs), Object.keys(runs));
+
+  const empty = repo(t, { '.issue-herd/config.json': config() });
+  const e = run(empty, ['reset']);
+  assert.equal(e.status, 1);
+  assert.match(e.out, /no runs yet/);
+  assert.match(e.out, /usage: issue-herd reset <KEY>/);
+});
+
 test('"basedOn" names another role, checked at config load', (t) => {
   const rules = (basedOn) => [
     { name: 'impl', match: 'label:ai', role: 'impl' },

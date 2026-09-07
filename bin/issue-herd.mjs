@@ -7,7 +7,7 @@
 //   issue-herd dry-run         show what would be picked up, touch nothing
 //   issue-herd match "<expr>"  evaluate an expression against live open issues
 //   issue-herd status          show tracked runs
-//   issue-herd reset <KEY>     forget a run so the issue can be picked up again
+//   issue-herd reset <KEY>     forget a run so the issue can be picked up again (no key: list the runs)
 //   issue-herd login [tracker] sign in (browser when possible) and save the token for this machine
 //   issue-herd logout [tracker] forget the saved token
 //   issue-herd smoke           end-to-end test against herdr with a fake issue (no tracker calls)
@@ -1225,10 +1225,17 @@ async function main(argv) {
     return;
   }
   if (cmd === 'reset') {
-    const key = argv[1]; if (!key) throw new Error('usage: issue-herd reset <KEY>');
+    const s = loadState();
+    const key = argv[1];
+    if (!key) {
+      // The moment you need the run key is the moment you least remember it, so list the ones
+      // this could take — the same keys `status` shows — before the usage line.
+      const keys = Object.keys(s.runs);
+      console.error(keys.length ? `tracked runs: ${keys.join(', ')}` : `no runs yet in ${REPO}`);
+      throw new Error('usage: issue-herd reset <KEY>');
+    }
     // Naming the issue forgets every role's run on it (GH-7 clears GH-7, GH-7.impl, GH-7.review);
     // naming one run key forgets only that one.
-    const s = loadState();
     const gone = Object.keys(s.runs).filter((k) => k === key || issueKeyOf(k) === key);
     for (const k of gone) delete s.runs[k];
     saveState(s);

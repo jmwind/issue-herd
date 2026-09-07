@@ -115,7 +115,7 @@ Unit tests for the tool itself: `npm test` in this repo.
 | `issue-herd dry-run` | the config's rules, print what would be picked up, change nothing |
 | `issue-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing; for testing a rule before adding it |
 | `issue-herd status` | tracked runs and their outcome |
-| `issue-herd reset <KEY>` | forget a run so the issue can be picked up again |
+| `issue-herd reset <KEY>` | forget a run so the issue can be picked up again; with no key, list the run keys it could take |
 | `issue-herd login [linear\|github] [--paste]` | sign in (browser when possible) and save the token for this machine; `--paste` skips straight to pasting a token |
 | `issue-herd logout [linear\|github]` | forget the saved token |
 | `issue-herd smoke` | end-to-end herdr test with a fake issue, no tracker calls |
