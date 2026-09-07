@@ -123,9 +123,9 @@ export function createHandler({ gate, console: app, hostname = os.hostname(), lo
       if (req.method === 'POST' && (url.pathname === '/api/done' || url.pathname === '/api/undone')) {
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
         let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return send(res, 400, { error: 'bad json' }); }
-        const { done, outcomes = [] } = await app.markDone({ factory: body.factory, issue: body.issue }, url.pathname === '/api/done');
-        log(`console: ${body.issue} in ${body.factory} marked ${done ? 'done' : 'not done'} by a person${done ? ` → ${outcomes.map((o) => `${o.agent} ${o.outcome}`).join(', ') || 'nothing was running'}` : ''}`);
-        return send(res, 200, { ok: true, done, outcomes });
+        const { done, outcomes = [], error = null } = await app.markDone({ factory: body.factory, issue: body.issue }, url.pathname === '/api/done');
+        log(`console: ${body.issue} in ${body.factory} ${error ? error : `marked ${done ? 'done' : 'not done'} by a person`}${outcomes.length || done ? ` → ${outcomes.map((o) => `${o.agent} ${o.outcome}`).join(', ') || 'nothing was running'}` : ''}`);
+        return send(res, 200, { ok: true, done, outcomes, error });
       }
       if (req.method === 'POST' && url.pathname === '/api/exit') {
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });

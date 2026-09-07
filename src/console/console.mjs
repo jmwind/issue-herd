@@ -278,10 +278,19 @@ export class FactoryConsole {
    * its alerts go, and it moves to output. One action, one decision — a task is over when a person
    * says so, even after an auto-merge. Undone by a new run on it, or by hand (which does not bring
    * the agents back). Returns what happened to each agent that was still up.
+   *
+   * An agent that does not exit (the prompt failed, or it did not go within herdr's timeout) keeps
+   * the task where it is: `done` comes back false, the note is not written, and the task's card
+   * stays in Alerts, because a task with an agent still on it is not done whatever anyone clicked.
    */
   async markDone({ factory, issue }, done = true) {
     const { f } = this.findTask({ factory, issue });
     const outcomes = done ? await this.closeTask({ factory, issue }) : [];
+    const stuck = outcomes.filter((o) => o.outcome === 'is still running');
+    if (stuck.length) {
+      setTimeout(() => this.tick().catch(() => {}), 50);
+      return { done: false, outcomes, error: `${stuck.map((o) => `${o.role || o.run} (${o.agent})`).join(', ')} still running; not marked done` };
+    }
     this.notes.done ||= {};
     const k = `${f.repo}|${issue}`;
     if (done) this.notes.done[k] = { at: new Date().toISOString() }; else delete this.notes.done[k];

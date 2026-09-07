@@ -89,10 +89,11 @@ test('factoryView: issues bucketed, role slots in order, alerts ranked, human wa
   // GH-7 is blocked (from 14:10 with no unblock inside the fixture window? no: the log unblocks it, so the live
   // blocked state comes from herdr, and the wait from the log is 4 + 3 minutes)
   assert.equal(gh7.humanWaitMs, 7 * 60e3);
-  // GH-8 finished but its agent is still up and idle → "holding"; GH-7's agent is blocked → first
-  assert.deepEqual(v.alerts.map((a) => a.kind), ['blocked', 'holding']);
+  // GH-8 finished but its agent is still up and idle → "holding"; GH-7's agent is blocked → first;
+  // GH-9 merged this morning with nobody left on it → waits for a person's sign-off, last
+  assert.deepEqual(v.alerts.map((a) => [a.kind, a.issueKey]), [['blocked', 'GH-7'], ['holding', 'GH-8'], ['finished', 'GH-9']]);
   assert.equal(v.alerts[0].workspaceId, 'w1');
-  assert.equal(v.counts.running, 1); assert.equal(v.counts.alerts, 2);
+  assert.equal(v.counts.running, 1); assert.equal(v.counts.alerts, 3);
   assert.equal(v.watcher.version, '0.2.4');
   assert.deepEqual(v.rules.map((r) => r.agent), ['claude', 'codex']);
 });
@@ -255,7 +256,37 @@ test('markDone: the one action — every agent still up on the task gets its exi
   assert.equal(stopped.length, 2, 'undo does not touch the agents');
   assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {});
   await assert.rejects(app.markDone({ factory: 'f', issue: 'GH-9' }), /no task GH-9/);
+  // An agent that will not go keeps the task where it is: nothing recorded, the card stays.
+  herdr.stopAgent = async (agent) => (agent === 'gh-1-review' ? 'is still running' : 'exited');
+  const stuck = await app.markDone({ factory: 'f', issue: 'GH-1' });
+  assert.equal(stuck.done, false);
+  assert.match(stuck.error, /review \(gh-1-review\) still running; not marked done/);
+  assert.deepEqual(stuck.outcomes.map((o) => o.outcome), ['exited', 'is still running'], 'what happened to each agent is still reported');
+  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {}, 'a partial shutdown is not a done note');
   app.stop();
+});
+
+test('a finished task waits in Alerts for a person\'s sign-off whatever became of its agents, and leaves on Mark done or after a day', () => {
+  // Auto-merged, every agent exited by onMerged: nobody is holding anything, and it still needs a person.
+  const runs = {
+    'GH-60@impl': { rule: 'implement', role: 'impl', status: 'merged', issueKey: 'GH-60', title: 'Auto-merged', startedAt: iso(9, 0), finishedAt: iso(9, 30), agentName: 'gh-60-impl', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/61' } },
+    'GH-60@review': { rule: 'tech-lead', role: 'review', status: 'done', issueKey: 'GH-60', title: 'Auto-merged', startedAt: iso(9, 5), finishedAt: iso(9, 20), agentName: 'gh-60-review', result: { status: 'nothing_to_do', summary: 'OK TO MERGE TO MAIN' } },
+  };
+  const v = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, now: T(10, 0) });
+  assert.equal(v.issues[0].bucket, 'merged');
+  assert.deepEqual(v.alerts.map((a) => [a.kind, a.issueKey, a.role, a.light]), [['finished', 'GH-60', 'impl', 'yellow']]);
+  assert.equal(v.alerts[0].text, 'Merged #61; review found nothing blocking. Look it over and mark it done.');
+  assert.equal(v.alerts[0].verdicts, 'review found nothing blocking');
+  assert.equal(v.alerts[0].sinceMs, 30 * 60e3, 'waiting since the last run finished');
+  // One card per task: a task that already has a card (here, an agent holding on) gets no second.
+  const holding = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, index: indexSnapshot({ agents: [{ name: 'gh-60-impl', agent_status: 'idle', workspace_id: 'w1' }] }), now: T(10, 0) });
+  assert.deepEqual(holding.alerts.map((a) => a.kind), ['holding']);
+  // Mark done clears it; a day later it is history either way.
+  assert.deepEqual(factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, cleared: { 'GH-60': T(10, 0) }, now: T(10, 1) }).alerts, []);
+  assert.deepEqual(factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, now: T(9, 31) + 86400e3 }).alerts, []);
+  // A task with nothing finished yet, or still in flight, is not "finished".
+  const busy = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { ...runs, 'GH-60@usability': { rule: 'usability', role: 'usability', status: 'running', issueKey: 'GH-60', title: 'Auto-merged', startedAt: iso(9, 40), agentName: 'gh-60-usability' } } }, index: indexSnapshot({ agents: [{ name: 'gh-60-usability', agent_status: 'working', workspace_id: 'w2' }] }), now: T(10, 0) });
+  assert.deepEqual(busy.alerts, []);
 });
 
 /** The HTTP surface with a stand-in orchestrator. */
@@ -282,7 +313,7 @@ test('http: an ungated console serves the app and the state, and refuses cross-o
   assert.equal(ok.status, 200); assert.deepEqual(await ok.json(), { ok: true, outcome: 'exited' }); assert.deepEqual(calls, [{ factory: 'f', run: 'GH-1' }]);
   assert.equal((await fetch(base + '/app.css')).headers.get('content-type'), 'text/css; charset=utf-8');
   const done = await fetch(base + '/api/done', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', issue: 'GH-1' }) });
-  assert.deepEqual(await done.json(), { ok: true, done: true, outcomes: [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }] }, 'marking done reports what happened to the agents it closed');
+  assert.deepEqual(await done.json(), { ok: true, done: true, outcomes: [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }], error: null }, 'marking done reports what happened to the agents it closed');
   assert.deepEqual(calls.at(-1), { done: { factory: 'f', issue: 'GH-1' }, value: true });
   assert.equal((await fetch(base + '/api/done', { method: 'POST', body: '{}' })).status, 403, 'marking done is same-origin only');
   assert.equal((await fetch(base + '/api/undone', { method: 'POST', body: '{}' })).status, 403);

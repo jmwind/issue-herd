@@ -21,6 +21,7 @@
   function prNum(url) { return url ? '#' + url.split('/').pop() : ''; }
   function factories() { return view ? view.factories : []; }
   function taskAlerts(f) { var keys = []; f.alerts.forEach(function (a) { if (keys.indexOf(a.issueKey) < 0) keys.push(a.issueKey); }); return keys.length; }
+  function hasAlert(f, iss) { return f.alerts.some(function (a) { return a.issueKey === iss.key; }); }
   // One line of facts per task: size and grade, the issue's state, the PR's state.
   function stats(iss) {
     var out = [];
@@ -32,7 +33,7 @@
   }
   // A run's result as a word: the raw status for the run that owns the PR, the model's reading for a reviewer (a report, not a decision).
   function verdict(r) { return r.result && r.ownsPr ? r.result.status.replace('_', ' ') : r.phrase; }
-  var SHORT = { blocked: 'blocked on a dialog', question: 'stopped to ask', merge: 'PR waits for your merge', needs_human: 'needs your decision', holding: 'still holding its workspace', stopped: 'stopped without a result', failed: 'failed', gone: 'agent gone' };
+  var SHORT = { blocked: 'blocked on a dialog', question: 'stopped to ask', merge: 'PR waits for your merge', needs_human: 'needs your decision', holding: 'still holding its workspace', stopped: 'stopped without a result', failed: 'failed', gone: 'agent gone', finished: 'finished, waiting for your sign-off' };
   function current() { if (!view) return null; if (chosen === 'all' || !chosen) return factories().length === 1 ? factories()[0] : null; return factories().filter(function (f) { return f.id === chosen; })[0] || null; }
   function shown() { var f = current(); return f ? [f] : factories(); }
   function factoryOf(issueKey, id) { return factories().filter(function (f) { return f.id === id; })[0]; }
@@ -47,7 +48,7 @@
     var fs = shown(), today = 0, assembling = 0, wait = 0, alerts = 0;
     fs.forEach(function (f) {
       alerts += taskAlerts(f); assembling += f.counts.inflight; wait += f.humanWaitMs;
-      f.issues.forEach(function (i) { if (i.bucket !== 'inflight' && i.finishedAt && Date.now() - Date.parse(i.finishedAt) < 86400e3) today++; });
+      f.issues.forEach(function (i) { if (i.bucket !== 'inflight' && !hasAlert(f, i) && i.finishedAt && Date.now() - Date.parse(i.finishedAt) < 86400e3) today++; });
     });
     var stats = [['output today', today, 'merged'], ['assembling', assembling, 'commit'], ['waiting on you', dur(wait), 'lines'], ['alerts', alerts, alerts ? 'pr' : 'commit']];
     var items = stats.map(function (st) { return '<span class="item"><i class="' + st[2] + '"></i><b>' + esc(st[1]) + '</b>' + esc(st[0]) + '</span>'; }).join('');
@@ -131,7 +132,7 @@
       var byTask = {};
       x.alerts.forEach(function (a) { (byTask[a.issueKey] = byTask[a.issueKey] || []).push(a); });
       Object.keys(byTask).forEach(function (k) { var iss = x.issues.filter(function (i) { return i.key === k; })[0]; if (iss) alerts.push([x, iss, byTask[k]]); });
-      x.issues.forEach(function (i) { (i.bucket === 'inflight' ? inflight : i.bucket === 'merged' ? merged : done).push([x, i]); });
+      x.issues.forEach(function (i) { if (i.bucket === 'inflight') inflight.push([x, i]); else if (!byTask[i.key]) (i.bucket === 'merged' ? merged : done).push([x, i]); });
     });
     var body = '';
     if (!factories().length) body += '<div class="empty">No factory has reported yet. Start a watcher with <b>issue-herd</b> in a repository, and it appears here on its first poll.</div>';
@@ -223,7 +224,7 @@
       t.disabled = true;
       fetch(undo ? '/api/undone' : '/api/done', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: d[0], issue: d[1] }) })
         .then(function (r) { return r.json(); }).then(function (j) {
-          if (!j.ok) return toast('Could not: ' + (j.error || 'unknown'));
+          if (!j.ok || j.error) return toast('Could not: ' + (j.error || 'unknown'));
           var closed = (j.outcomes || []).map(function (o) { return o.agent + ' ' + o.outcome; }).join(' · ');
           toast(undo ? d[1] + ' is back' : d[1] + ' marked done' + (closed ? ' · ' + closed : ''));
         }).catch(function () { toast('The console did not answer.'); });
