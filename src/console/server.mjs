@@ -15,10 +15,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COOKIE = 'issue_herd_console';
 
 function asset(name) { return fs.readFileSync(path.join(HERE, name), 'utf8'); }
-/** The mark, inlined into the title bar. Posts in paper on the console's dark ground, the arrow in ember, per assets/logo/README.md. */
+/** Where the mark in the title bar takes you: the project on GitHub, in a new tab. */
+export const REPO_URL = 'https://github.com/jmwind/issue-herd';
+
+/** The mark, inlined into the title bar as a link to the repository. Posts in paper on the console's dark ground, the arrow in ember, per assets/logo/README.md. */
 function mark() {
-  try { return fs.readFileSync(path.join(HERE, '..', '..', 'assets', 'logo', 'mark.svg'), 'utf8').replace(/<style>[\s\S]*?<\/style>/, '').replace('stroke="#141210"', 'stroke="#F6F2ED"').replace('width="96" height="96"', 'class="mark"'); }
-  catch { return ''; }
+  try {
+    const svg = fs.readFileSync(path.join(HERE, '..', '..', 'assets', 'logo', 'mark.svg'), 'utf8').replace(/<style>[\s\S]*?<\/style>/, '').replace('stroke="#141210"', 'stroke="#F6F2ED"').replace('width="96" height="96"', 'class="mark"').replace(' role="img" aria-label="issue-herd"', ' aria-hidden="true"');
+    return '<a class="home" href="' + REPO_URL + '" target="_blank" rel="noopener" title="issue-herd on GitHub" aria-label="issue-herd on GitHub">' + svg + '</a>';
+  } catch { return ''; }
 }
 
 /** Tailscale's IPv4 range is 100.64.0.0/10; the console binds there when it is gated. */
