@@ -190,7 +190,13 @@ Three screens, in Factorio's idiom because a factory is what this is:
 
 - **Overview.** A factory picker in the title bar (one machine runs several), then **Alerts**
   (one card per task that needs a person, with what to do about it), **Assembling** (one row per
-  open issue, with how long it has waited on you), and **Output today**. Every task shows the
+  open issue, with how long it has waited on you), and **Output today**. An alert is raised only
+  when a person is actually the one being waited for: a dialog, a question, a decision, a failure,
+  or a pull request whose reviews are all in. While any role is still running on a task, the
+  implementer's open PR is *waiting for review* (a fact on its chip, not an alert, and not your
+  wait time), and a reviewer that has finished is done — its report is a line on the task
+  (*found nothing blocking*, *has findings*), never a decision of its own. The merge alert
+  carries those verdicts, and its clock starts when the last reviewer finished. Every task shows the
   roles that worked on it, lines added and removed with a size grade, and the state of its issue
   and its pull request. The belt across the top
   carries the factory's four numbers.

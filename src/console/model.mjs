@@ -50,11 +50,15 @@ export function segments(run, events, now = Date.now()) {
   return segs;
 }
 
-/** Milliseconds a person was being waited for: dialogs, questions, and a PR waiting to be merged. */
-export function humanWaitMs(run, segs, now = Date.now()) {
+/**
+ * Milliseconds a person was being waited for: dialogs, questions, and a PR waiting to be merged.
+ * The merge wait counts from `merge.since` (default: when the run finished), and not at all while
+ * `merge.waiting` is false — a PR that reviewers are still reading is nobody's wait.
+ */
+export function humanWaitMs(run, segs, now = Date.now(), merge = {}) {
   let ms = 0;
   for (const s of segs) if (s.kind === 'blocked' || s.kind === 'question') ms += s.to - s.from;
-  if (run.status === 'awaiting_merge') ms += now - (Date.parse(run.finishedAt || '') || now);
+  if (run.status === 'awaiting_merge' && merge.waiting !== false) ms += now - (merge.since || Date.parse(run.finishedAt || '') || now);
   return Math.max(0, ms);
 }
 
@@ -85,21 +89,38 @@ export function watchWorkspaces(index) {
 
 const ROLE_ORDER = ['impl', 'review', 'usability'];
 
-/** The three-word state of one run for a row, and which light it gets. */
-export function runState(run, agent) {
+/** A run that made (or is the one that will merge) the task's pull request; every other role reviews it. */
+export function ownsPr(run) { return !!(run.prUrl || run.result?.prUrl) || run.status === 'awaiting_merge' || run.status === 'merged'; }
+
+/**
+ * The three-word state of one run for a row, and which light it gets. The task around the run
+ * decides two things a run cannot see on its own:
+ *   othersLive  another role is still running on the task, so a PR waiting to be merged is
+ *               waiting for review, not for a person;
+ *   reviewer    the task's PR belongs to another run, so this run's result is a report on it —
+ *               findings for whoever merges, never a decision the reviewer is holding open.
+ */
+export function runState(run, agent, { othersLive = false, reviewer = false } = {}) {
   const st = run.status;
+  const a = agent?.agent_status;
   if (st === 'running' || st === 'starting') {
-    const a = agent?.agent_status;
     if (!agent) return { light: 'red', phrase: 'agent gone', needsYou: 'gone' };
     if (a === 'blocked') return { light: 'red', phrase: 'blocked on a dialog', needsYou: 'blocked' };
     if (a === 'working') return { light: 'green', phrase: 'working', needsYou: null };
     if (a === 'idle' || a === 'done' || a === 'unknown') return { light: 'yellow', phrase: 'waiting on you', needsYou: 'question' };
     return { light: 'green', phrase: a || 'starting', needsYou: null };
   }
-  if (st === 'awaiting_merge') return { light: 'yellow', phrase: 'awaiting your merge', needsYou: 'merge' };
+  if (st === 'awaiting_merge') {
+    if (a === 'blocked') return { light: 'red', phrase: 'blocked on a dialog', needsYou: 'blocked' };
+    if (othersLive) return { light: a === 'working' ? 'green' : 'grey', phrase: 'waiting for review', needsYou: null };
+    if (a === 'working') return { light: 'green', phrase: 'working', needsYou: null };
+    return { light: 'yellow', phrase: 'awaiting your merge', needsYou: 'merge' };
+  }
   if (st === 'merged') return { light: 'grey', phrase: 'merged', needsYou: null };
   if (st === 'done') {
     const r = run.result?.status;
+    if (reviewer && r === 'needs_human') return { light: 'grey', phrase: 'has findings', needsYou: null };
+    if (reviewer && r === 'nothing_to_do') return { light: 'grey', phrase: 'found nothing blocking', needsYou: null };
     if (r === 'needs_human') return { light: 'yellow', phrase: 'needs you', needsYou: 'needs_human' };
     if (r === 'pr_open') return { light: 'grey', phrase: 'PR open', needsYou: null };
     if (r === 'nothing_to_do') return { light: 'grey', phrase: 'nothing to do', needsYou: null };
@@ -135,13 +156,22 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
   const byIssue = new Map();
   for (const [key, run] of Object.entries(state.runs || {})) {
     const issueKey = run.issueKey || issueKeyOf(key);
+    if (!byIssue.has(issueKey)) byIssue.set(issueKey, { key: issueKey, title: run.title || issueKey, url: run.url || null, runs: [] });
+    byIssue.get(issueKey).runs.push({ key, run });
+  }
+  const isLive = (r) => r.status === 'running' || r.status === 'starting';
+  for (const iss of byIssue.values()) iss.runs = iss.runs.map(({ key, run }) => {
+    const siblings = iss.runs.filter((o) => o.key !== key).map((o) => o.run);
     const agent = index.agents.get(run.agentName) || null;
-    const st = runState(run, agent);
+    const othersLive = siblings.some(isLive);
+    const st = runState(run, agent, { othersLive, reviewer: !ownsPr(run) && siblings.some(ownsPr) });
     const segs = segments(run, events.filter((e) => e.key === key), now);
     const started = Date.parse(run.startedAt || '') || now;
     const finished = Date.parse(run.finishedAt || '') || null;
     const size = sizes[key] || null;
-    const entry = {
+    // A PR is a person's to merge from the moment the last role on the task has finished with it.
+    const waitingSince = st.needsYou === 'merge' ? Math.max(finished || now, ...siblings.map((o) => Date.parse(o.finishedAt || '') || 0)) : null;
+    return {
       key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status,
       agent: run.agentName, agentKind: rules.find((r) => r.name === run.rule)?.agent || 'claude', agentStatus: agent?.agent_status || null, agentAlive: !!agent,
       workspaceId: run.workspaceId || agent?.workspace_id || null, branch: run.branch || null, worktree: run.workDir || run.worktreePath || null,
@@ -150,11 +180,9 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
       light: st.light, phrase: st.phrase, needsYou: st.needsYou,
       result: run.result ? { status: run.result.status, prUrl: run.result.prUrl || null, summary: run.result.summary || '', notes: run.result.notes || '', live: !!run.resultIsLive } : null,
       prUrl: run.prUrl || run.result?.prUrl || null, error: run.error || null,
-      segments: segs, humanWaitMs: humanWaitMs(run, segs, now), size,
+      segments: segs, humanWaitMs: humanWaitMs(run, segs, now, { waiting: st.needsYou === 'merge', since: waitingSince }), size, waitingSince,
     };
-    if (!byIssue.has(issueKey)) byIssue.set(issueKey, { key: issueKey, title: run.title || issueKey, url: run.url || null, runs: [] });
-    byIssue.get(issueKey).runs.push(entry);
-  }
+  });
 
   const issues = [...byIssue.values()].map((iss) => {
     iss.runs.sort((a, b) => roleOrder(a.role) - roleOrder(b.role) || (a.role || '').localeCompare(b.role || ''));
@@ -204,10 +232,16 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     // A run that failed or stopped is worth a card while it is news. After a day it is history:
     // state.json keeps it forever, and the issue has usually been retried or given up on by then.
     if ((why === 'failed' || why === 'stopped' || why === 'gone') && r.finishedAt && now - Date.parse(r.finishedAt) > DAY) why = null;
-    if (!why) { if (r.agentAlive && (r.status === 'done' || r.status === 'merged') && r.agentStatus !== 'working') alerts.push(alert('holding', iss, r, `Finished (${r.result?.status || r.status}) and still holding workspace ${r.workspaceId || '?'}.`, now)); continue; }
+    // A finished agent still holding its workspace is a fact, not an alert, while the task is in
+    // flight: workspaces are kept for whoever reviews the PR. Once the task is over it is clutter.
+    if (!why) { if (iss.bucket !== 'inflight' && r.agentAlive && (r.status === 'done' || r.status === 'merged') && r.agentStatus !== 'working') alerts.push(alert('holding', iss, r, `Finished (${r.result?.status || r.status}) and still holding workspace ${r.workspaceId || '?'}.`, now)); continue; }
     if (why === 'blocked') alerts.push(alert('blocked', iss, r, `Waiting for approval or input in workspace ${r.workspaceId || '?'}.`, now));
     else if (why === 'question') alerts.push(alert('question', iss, r, `Stopped without a result and is probably asking a question in workspace ${r.workspaceId || '?'}.`, now));
-    else if (why === 'merge') alerts.push(alert('merge', iss, r, 'Pull request open. Waiting for your merge.', now));
+    else if (why === 'merge') {
+      // The reviews are in; their verdicts are what the person merging wants to know.
+      const reviews = iss.runs.filter((o) => o.key !== r.key && o.result).map((o) => `${o.role || o.rule} ${o.phrase}`);
+      alerts.push(alert('merge', iss, r, `Pull request open${reviews.length ? `; ${reviews.join(', ')}` : ''}. Waiting for your merge.`, now));
+    }
     else if (why === 'needs_human') alerts.push(alert('needs_human', iss, r, r.result?.summary ? clip(r.result.summary, 240) : 'Stopped for a decision only you can make.', now));
     else if (why === 'gone') alerts.push(alert('gone', iss, r, 'The run is marked running but herdr has no such agent.', now));
     else if (why === 'stopped') alerts.push(alert('stopped', iss, r, `The agent ended without writing a result. Workspace ${r.workspaceId || '?'} is still open.`, now));
@@ -230,8 +264,8 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
 function clip(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; }
 
 function alert(kind, iss, r, text, now) {
-  const since = kind === 'merge' || kind === 'holding' || kind === 'needs_human' || kind === 'stopped' || kind === 'failed'
-    ? (Date.parse(r.finishedAt || '') || now)
+  const since = kind === 'merge' ? (r.waitingSince || Date.parse(r.finishedAt || '') || now)
+    : kind === 'holding' || kind === 'needs_human' || kind === 'stopped' || kind === 'failed' ? (Date.parse(r.finishedAt || '') || now)
     : (r.segments.filter((s) => s.kind === 'blocked' || s.kind === 'question').at(-1)?.from || now);
   return { kind, issueKey: iss.key, title: iss.title, runKey: r.key, role: r.role, agent: r.agent, agentKind: r.agentKind, workspaceId: r.workspaceId, prUrl: r.prUrl, url: iss.url, text, sinceMs: now - since, light: r.light };
 }

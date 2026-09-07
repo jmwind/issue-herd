@@ -70,7 +70,7 @@
       (iss.light === 'green' && iss.bucket === 'inflight' ? '<span class="craft"><i></i></span>' : '') + '</a>';
   }
   function taskCard(f, iss, alerts, many) {
-    var lines = alerts.map(function (a) { return '<li><i class="led ' + esc(a.light) + ' still"></i><b>' + esc(a.role || 'agent') + '</b> ' + esc(SHORT[a.kind] || a.kind) + (a.kind === 'holding' && a.workspaceId ? ' ' + esc(a.workspaceId) : '') + ' <small>' + dur(a.sinceMs + drift()) + '</small></li>'; }).join('');
+    var lines = alerts.map(function (a) { return '<li title="' + esc(a.text) + '"><i class="led ' + esc(a.light) + ' still"></i><b>' + esc(a.role || 'agent') + '</b> ' + esc(SHORT[a.kind] || a.kind) + (a.kind === 'holding' && a.workspaceId ? ' ' + esc(a.workspaceId) : '') + ' <small>' + dur(a.sinceMs + drift()) + '</small></li>'; }).join('');
     var acts = '', seen = {};
     alerts.forEach(function (a) {
       if (a.kind === 'merge' && a.prUrl && !seen.merge) { seen.merge = 1; acts += '<a class="btn confirm" href="' + esc(a.prUrl) + '" target="_blank" rel="noopener">✓ Merge on GitHub</a>'; }
