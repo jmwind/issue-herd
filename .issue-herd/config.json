@@ -3,11 +3,12 @@
   "pollSeconds": 30,
   "lookbackDays": 30,
   "maxConcurrent": 3,
+  "roles": ["impl", "review", "usability"],
   "defaults": {
     "worktree": "self",
     "branch": "{{issueBranchName}}{{roleSuffix}}",
     "permissionMode": "auto",
-    "claudeArgs": [],
+    "agentArgs": [],
     "maxConcurrent": 2,
     "prompt": "prompts/default.md",
     "instructionsFile": "instructions.md",
@@ -35,8 +36,29 @@
   },
   "rules": [
     {
-      "name": "ai-label",
-      "match": "label:ai"
+      "name": "implement",
+      "role": "impl",
+      "match": "label:ai and not label:ready-for-review",
+      "model": "claude-fable-5-1"
+    },
+    {
+      "name": "tech-lead",
+      "role": "review",
+      "match": "label:ai and label:ready-for-review",
+      "basedOn": "impl",
+      "agentKind": "codex",
+      "model": "gpt-6-astra",
+      "effort": "high",
+      "prompt": "prompts/review-lead.md"
+    },
+    {
+      "name": "usability",
+      "role": "usability",
+      "match": "label:ai and label:ready-for-review",
+      "basedOn": "impl",
+      "model": "opus",
+      "effort": "high",
+      "prompt": "prompts/review-usability.md"
     }
   ]
 }

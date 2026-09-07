@@ -413,7 +413,7 @@ Give a rule a `role` and everything the run is keyed by follows it:
   "rules": [
     { "name": "build",  "role": "impl",   "match": "label:ai and not state:started" },
     { "name": "review", "role": "review", "match": "label:ai and state:started",
-      "prompt": "prompts/review.md" }     // a reviewer needs its own brief, not the default one
+      "prompt": "prompts/review-lead.md" }  // a reviewer needs its own brief, not the default one
   ]
 }
 ```
@@ -443,6 +443,24 @@ Give a rule a `role` and everything the run is keyed by follows it:
 - `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7@review`
   forgets just that one.
 
+### The briefs that ship
+
+`prompt` is resolved in `<repo>/.issue-herd/` first and then in issue-herd's own `prompts/`, so a
+rule can name one of these without copying it, and a project overrides one by putting a file of the
+same name in `.issue-herd/prompts/`:
+
+| `prompt` | for | says |
+|---|---|---|
+| `prompts/default.md` | the implementer (the default) | work the issue end to end, open a PR, write `result.json` |
+| `prompts/review-lead.md` | a tech-lead review | accuracy, structure, maintainability, performance; ends in `OK TO MERGE TO MAIN` or not |
+| `prompts/review-usability.md` | a usability and docs review | walk the getting-started path a newcomer walks; ends in `USABILITY: OK` or the findings |
+| `prompts/review-security.md` | a security assessment | attacker-controlled input → effect, one pass, one verdict |
+| `prompts/smoke.md` | `issue-herd smoke` | prove the pipeline works, change nothing |
+
+Every one of them is a plain markdown file with `{{placeholders}}`, and the reviewing three all end
+with "do not push, do not merge" — the verdict is a comment on the issue, and merging stays a
+person's job.
+
 ### A second opinion: a reviewer on another provider
 
 A reviewer is only a second set of eyes if it is not the same eyes. `agentKind`, `model` and
@@ -456,7 +474,7 @@ A reviewer is only a second set of eyes if it is not the same eyes. `agentKind`,
       "model": "opus" },
     { "name": "review", "role": "review", "match": "label:ai and state:\"In Review\"",
       "agentKind": "codex", "model": "gpt-5-codex", "effort": "high",
-      "passes": 3, "prompt": "prompts/review.md" }
+      "passes": 3, "prompt": "prompts/review-lead.md" }
   ]
 }
 ```
@@ -513,6 +531,8 @@ files, never anyone's commits.
 
 `basedOn` needs `"worktree": "self"` — only the mode where issue-herd creates the worktree can
 decide where it starts, so the other modes refuse it at config load rather than quietly ignoring it.
+A `basedOn` naming a role no rule runs is refused there too: silently, it would be a reviewer on
+the default branch and a config that says otherwise.
 
 If the other role has no run on this issue yet, or never settled a branch, you get a log line and
 an ordinary worktree. A reviewer on the default branch is a poor review; a failed run is no review
@@ -524,7 +544,7 @@ By default a role takes an issue once and is finished with it. `"passes": 3` giv
 turns — review the work, confirm the fix, then give the thumbs up:
 
 ```jsonc
-{ "name": "review", "role": "review", "passes": 3, "match": "label:ai", "prompt": "prompts/review.md" }
+{ "name": "review", "role": "review", "passes": 3, "match": "label:ai", "prompt": "prompts/review-lead.md" }
 ```
 
 A later turn is granted on exactly one condition: **the issue moved on after the last turn
@@ -548,6 +568,41 @@ Two limits worth knowing. Turns are counted in `state.json`, so a watcher that l
 treats the role as finished — it fails closed, and `issue-herd reset` is how you hand a turn back
 by hand. And a run still waiting for its PR to merge (`awaiting_merge`) is not eligible for another
 turn, because that watch would be lost.
+
+### Three roles on GitHub: what this repository runs
+
+issue-herd works its own issues, so `.issue-herd/config.json` in this repository is a worked
+example you can read in full. GitHub has no workflow states — `state` is `open` or `closed` — so
+the handoff between the roles is a **label the implementer adds when its PR is up**:
+
+```jsonc
+{
+  "roles": ["impl", "review", "usability"],
+  "rules": [
+    { "name": "implement", "role": "impl",
+      "match": "label:ai and not label:ready-for-review",
+      "model": "claude-fable-5-1" },
+    { "name": "tech-lead", "role": "review", "basedOn": "impl",
+      "match": "label:ai and label:ready-for-review",
+      "agentKind": "codex", "model": "gpt-6-astra", "effort": "high",
+      "prompt": "prompts/review-lead.md" },
+    { "name": "usability", "role": "usability", "basedOn": "impl",
+      "match": "label:ai and label:ready-for-review",
+      "model": "opus", "effort": "high",
+      "prompt": "prompts/review-usability.md" }
+  ]
+}
+```
+
+One issue, three claims: `herdr:impl` while it is being built, then `herdr:review` and
+`herdr:usability` in parallel over the same commits (`basedOn: "impl"` gives both reviewers the
+implementer's branch, so they run the tests rather than take its word for them). The implementer is
+told to add the label in `.issue-herd/instructions.md`, which is the file every brief on this repo
+ends with — the reviewers are told to leave labels alone. Three different models, because a review
+by the model that wrote the code is a re-read, not a review.
+
+Nothing here is GitHub-specific except the handoff: on Linear the same shape uses
+`"match": "label:ai and state:\"In Review\""` and `onDone.state`, and no label is needed.
 
 ## How a run works
 
