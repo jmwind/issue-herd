@@ -1,96 +1,34 @@
-# issue-herd logo — three proposals
+# The mark
 
-Three marks for the same idea: **a software factory that runs on your own machine.** Each one is a
-single geometric shape, one accent colour, no gradients, no gears, no robot. Pick one (or tell me
-which parts of which two to combine) and it goes into the main `README.md` and anywhere else the
-project shows up.
+<img src="png/lockup.png#gh-light-mode-only" width="300"><img src="png/lockup-dark.png#gh-dark-mode-only" width="300">
 
-Nothing here is wired into the project yet — this directory is the proposal.
-
-## The three
-
-![the three marks](png/contact-sheet-light.png)
-
-### 1. The brand — `brand-mark.svg` (recommended)
-
-![the brand](png/brand-lockup.png)
-
-An **`H` branded with an arrow.** Two posts and a bar; the bar is an arrow that runs left to right
+An **`H` branded with an arrow**. Two posts, and the crossbar is an arrow that runs left to right
 and lands on the far post.
 
-- It is the "herd" `H` and a factory mark at the same time — the stamp a line puts on every unit
-  that passes QC, and the iron a rancher puts on every animal. Both meanings are the same picture,
-  which is what makes it *this* project's mark and not a generic one.
-- It says the thing the tool does in one stroke: work goes in one side and comes out the other.
-- Strongest at 16px of the three — two verticals and a horizontal survive any favicon, any terminal
-  tab, any avatar crop.
-- Most room to grow: the arrow bar can shorten into an `H` monogram alone for tight spots, and the
-  same construction stamps onto stickers and a CLI splash in one colour.
+It is three things in one picture: the herd `H`, the stamp a line puts on every unit that clears
+QC, and the iron a rancher puts on an animal. It also states the product in one stroke — work goes
+in one side and comes out the other. Picked over two alternatives in
+[#29](https://github.com/jmwind/issue-herd/issues/29), where the runners-up and the reasoning are
+on the record.
 
-### 2. The line — `line-mark.svg`
-
-![the line](png/line-lockup.png)
-
-**Three units on a rail**, the last one finished. The most literal reading of "software factory":
-a line, work moving along it, one piece done.
-
-- Maps exactly onto the tool's model — `maxConcurrent` agents, each in its own worktree, moving in
-  parallel down one line, and the finished one hands you a PR.
-- The warmest of the three; three shapes in a row reads as a small herd as well as a batch.
-- Deliberately a *scene*, not a letter. That is its risk: it carries no `H`, so the wordmark has to
-  do the naming, and at 16px the three units start to merge into a dashed bar.
-
-### 3. The pen — `pen-mark.svg`
-
-![the pen](png/pen-lockup.png)
-
-**An enclosure with a gate open on the right**, and one unit already through it.
-
-- This is the worktree: an issue gets its own fenced-off pen, an agent works in it alone, and what
-  leaves through the gate is a pull request. Of the three, it describes the *isolation* that makes
-  the tool safe to run on your own repo.
-- Softest and friendliest shape; the single dot gives it an obvious "done" state, which animates
-  well (the dot travels out of the gate) if we ever want a loading indicator.
-- Its risk: at a glance it can read as a lowercase `c`. The wide, low box and the narrow gate are
-  tuned to fight that, but it is the least distinctive silhouette of the three.
-
-## Why these and not the usual thing
-
-The "software factory" phrase went mainstream in 2026 (Factory.ai's *Factory 2.0*, Warp Factories,
-the agentic-software-factory consultancies), and the visual language of that whole space has
-converged hard. What everyone is already doing:
-
-- **Gears and cogs** — the default factory metaphor; visually noisy and completely unowned.
-- **Robot heads and friendly droid faces** — the agent cliché.
-- **A factory silhouette with smokestacks** — literal and grim; also says "we make pollution".
-- **Conveyor + cardboard box** — logistics, not software.
-- **Hex grids, circuit traces, isometric cubes, infinity loops** — generic "tech".
-- **A purple-to-blue gradient blob** — the house style of roughly every dev tool shipped since 2021.
-- **Angular modular geometry with an industrial-tech wordmark** — Factory.ai's territory
-  specifically; the closest neighbour we have, and the one to stay furthest from.
-
-All three proposals avoid every item on that list. They stay on the side of the metaphor nobody is
-using: the **stockyard** — pens, gates, brands, units moving through in order. That side is ours by
-name (`herd`, `herdr`), it is still a factory (throughput, isolation, a stamp on every unit), and it
-gives us a warm, hand-drawn-feeling family instead of another cold blue cog.
-
-Two more constraints shaped all three:
-
-- **One shape, one accent.** Each mark is a single stroke path plus one ember-coloured element.
-  Nothing here needs a gradient, and every mark works in pure black or pure white.
-- **Legible at 16px.** They were drawn on a 96-unit grid with a 9–12 unit stroke and checked at
-  128 / 32 / 24 / 16px before anything else. A logo for a CLI mostly lives in a terminal tab, a
-  favicon and a GitHub avatar.
+It stays off everything the software-factory space has converged on — gears, droid faces,
+smokestacks, hex grids, gradient blobs, angular industrial wordmarks. The side of the metaphor we
+take is the **stockyard**: pens, gates, brands, units moving through in order. We already own that
+side by name.
 
 ## Files
 
 | File | What it is |
 | --- | --- |
-| `<name>-mark.svg` | the mark alone, 96×96 grid, for favicons and avatars |
-| `<name>-lockup.svg` | mark + `issue-herd` wordmark, for the README header |
-| `png/<name>-mark.png` | 512×512 transparent PNG |
-| `png/<name>-lockup.png` | 992×256 transparent PNG |
-| `png/contact-sheet-{light,dark}.png` | all three, at four sizes, on both backgrounds |
+| `mark.svg` | the mark alone, on a 96-unit grid — favicons, avatars, anywhere square |
+| `lockup.svg` | mark + `issue-herd` wordmark |
+| `png/mark.png`, `png/mark-dark.png` | 512×512, transparent |
+| `png/lockup.png`, `png/lockup-dark.png` | 1328×384, transparent |
+
+Use the `-dark` PNGs on dark backgrounds. The SVGs do it themselves: they carry a
+`prefers-color-scheme` rule, with the light-mode colour left on the element as a presentation
+attribute so a renderer that strips `<style>` still gets a visible mark rather than an invisible
+one.
 
 ## Colour
 
@@ -99,15 +37,18 @@ Two more constraints shaped all three:
 | ink | `#141210` | `#F6F2ED` |
 | ember | `#C2521A` | `#C2521A` |
 
-Ember is a hot-iron orange, not a tech blue — it is the one thing in the mark that is *doing*
-something. The SVGs carry a `prefers-color-scheme` rule that swaps ink for the light tone on dark
-backgrounds, with the light-mode colour left on the element as a presentation attribute so any
-renderer that strips `<style>` still gets a correct, visible mark.
+Ember is a hot-iron orange, not a tech blue, and it is on the one element in the mark that is
+*doing* something. The mark also works flat, in one colour, either way round.
 
-## Before the winner ships
+## Drawing rules
 
-- The wordmark in the lockups is set in live text (Inter, falling back to the system UI stack) so
-  it renders differently depending on what the viewer has installed. Convert it to outlines once a
-  direction is chosen.
-- Add a `favicon.svg` / `apple-touch-icon.png` cut from the chosen mark if the project ever gets a
-  page.
+- 96-unit grid, 12-unit stroke, round caps and joins. Keep the two posts at `x=24` and `x=72`.
+- Never re-colour the posts and the arrow the same when both are visible; the arrow is what moves.
+- Below 16px, drop the arrowhead before you drop anything else.
+
+## Still open
+
+The wordmark in `lockup.svg` is live text (Inter, falling back to the system UI stack), so it
+renders differently depending on what the viewer has installed. The PNGs are a fixed render and are
+what the README uses. Before this goes anywhere public — a site, a package page, printed anything —
+set the wordmark in a licensed face and convert it to outlines.

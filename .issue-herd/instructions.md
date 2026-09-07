@@ -4,8 +4,11 @@ issue-herd works its own GitHub issues with this file. Keep it short and concret
 
 ## Read first
 
-- `README.md`: the commands, the config reference, and "Issue trackers" / "Signing in" if the
-  issue touches a tracker or auth.
+- `README.md` for what the tool is and the commands; `docs/configuration.md` for the config
+  reference and the rule language; `docs/trackers.md` if the issue touches a tracker or auth;
+  `docs/roles.md` for anything about roles, reviewers or `passes`.
+- Keep them in step: a change to behaviour that the docs describe updates the doc in the same PR,
+  and `assets/logo/README.md` is the authority on the mark.
 - `src/tracker.mjs` before changing anything under `src/trackers/`: it is the contract every
   tracker must meet.
 

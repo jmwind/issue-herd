@@ -1,30 +1,59 @@
-# issue-herd
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/png/lockup-dark.png">
+    <img src="assets/logo/png/lockup.png" alt="issue-herd" width="330">
+  </picture>
+</p>
 
-Watches an issue tracker (**Linear** or **GitHub Issues**) and, when an issue matches one of your
-rules, opens a **herdr workspace**, starts a **coding agent** in it (Claude Code by default;
-codex or anything else herdr can start, per rule), hands it a written brief, and reports back to
-the issue: picked up → waiting for you → PR open. Runs on your own
-machine, inside herdr, with no public URL and no third-party orchestrator. Zero dependencies beyond
-Node 22 and the `herdr` CLI.
+<p align="center">
+  <b>Label an issue. Get a pull request.</b><br>
+  A software factory that runs on your own machine, out of your own repo, with your own agents.
+</p>
 
-**It is project-local.** You run `issue-herd` from inside the repository it should work on. The
-tracker, the rules and the repo-specific instructions for the agent all live in that repository, so
-they are reviewed and versioned with the code. Your token lives with you, not in the repo:
+---
+
+issue-herd watches **Linear** or **GitHub Issues**. When an issue matches one of your rules it cuts
+a git worktree, opens a **herdr** workspace, starts a **coding agent** in it (Claude Code by
+default; codex, gemini, cursor — whatever herdr can start, per rule), hands it a written brief made
+from the issue and your repo's own instructions, and then reports back on the issue: picked up →
+waiting for you → PR open → merged.
+
+No public URL. No third-party orchestrator. No webhook you have to expose. It is a Node script and
+the `herdr` CLI on your laptop, and it has **zero npm dependencies**.
 
 ```
-your-repo/
-├── .issue-herd/
-│   ├── .gitignore           ignores state/ and config.local.json    (committed)
-│   ├── config.json          rules and defaults                      (committed)
-│   ├── config.local.json    per-machine overrides of config.json    (gitignored)
-│   ├── instructions.md      how to work in this repo, appended to every brief (committed)
-│   ├── prompts/default.md   optional override of the built-in brief template
-│   └── state/               state.json, runs/<KEY>/, logs/          (gitignored)
-├── .env.local               LINEAR_API_KEY=… or GITHUB_TOKEN=…, if you prefer a file (gitignored)
-└── .env.example             documents that variable                 (committed)
-
-~/.config/issue-herd/credentials.json   what `issue-herd login` saved, per user, mode 600
+[2026-09-07 14:32:41] picking up GH-31 "Retry the upload on 429" (rule ai)
+[2026-09-07 14:32:48] GH-31: claude started as agent "gh-31"
+[2026-09-07 14:32:49] GH-31: briefed
+[2026-09-07 14:35:10] GH-31: blocked — waiting for approval or input in w7
+[2026-09-07 14:36:02] GH-31: working again
+[2026-09-07 14:38:02] GH-31: done (pr_open) https://github.com/you/app/pull/44
+14:38:32 poll #49 · 47 open · 0 matched · 0 picked · running 1: DEV-12 w3 working · 1 awaiting merge · next in 30s
 ```
+
+One line per thing that happened, and one live line at the bottom rewritten after every poll.
+
+## Why you'd want it
+
+- **It is your repo's factory, not a service.** The tracker, the rules and the agent's briefing all
+  live in `.issue-herd/` inside the repository, committed and reviewed like code. Your token stays
+  on your machine. Nothing about your codebase leaves your laptop that you did not already send to
+  your agent.
+- **It never double-works an issue.** Three independent guards — a real claim label written to the
+  tracker, the pickup comment, and "somebody else is assigned" — checked with a fresh fetch right
+  before claiming. Restart it, delete its state, run it on a second machine: it still will not take
+  an issue twice.
+- **You can walk in on any agent.** Every run is a herdr workspace in the sidebar with the issue key
+  on it. Step in, read the scrollback, take over, type. Nothing is hidden in a container you cannot
+  reach.
+- **A reviewer that is not the same eyes.** Roles let an implementer and a reviewer hold the same
+  issue at once, on different providers and different models, with the reviewer's worktree cut from
+  the implementer's actual branch.
+- **It knows when it is done.** After the PR opens the run keeps watching it. When it merges you get
+  told, and it tears down only what you asked it to.
+- **It fails visibly.** An agent stuck on a permission dialog or stopped with a question gets one
+  comment on the issue and one notification, naming the workspace to open. It does not sit there
+  silently burning an afternoon.
 
 ## Install
 
@@ -32,132 +61,127 @@ your-repo/
 npm install -g github:jmwind/issue-herd
 ```
 
-That puts `issue-herd` on your PATH. `issue-herd --version` shows what you have.
-
-## Update
-
-```bash
-issue-herd update
-```
-
-Same as rerunning the install; it prints the old and new version. (`npm update -g` does not
-reliably refresh packages installed from a git URL, so use this.)
-
-You will not have to remember: the watching commands (`issue-herd`, `once`, `dry-run`, `match`,
-`status`, `reset`) check GitHub for a newer version and print one reminder line if there is one,
-and the running watcher re-checks once a day and also sends a herdr notification. The check is a 4-second fetch of `package.json` on `main`, silent when offline. Set
-`ISSUE_HERD_NO_UPDATE_CHECK=1` to turn it off.
-
-## Release a change (maintainers)
-
-Edit, commit as usual, then:
-
-```bash
-npm run release
-```
-
-**Rename the GitHub repository to `issue-herd` before the first release under this name.** The
-update check and `issue-herd update` both point at `jmwind/issue-herd`; until that repository
-exists they get a 404, which `newerVersion` cannot tell from "no newer version", so every install
-would silently believe it is up to date forever.
-
-That runs the tests, bumps the patch version in `package.json`, commits it, tags `vX.Y.Z`, and
-pushes commits and tags. Everyone picks it up with `issue-herd update`. Use
-`npm run release:minor` for a feature. To hack on the tool without installing:
-
-```bash
-git clone git@github.com:jmwind/issue-herd.git && cd issue-herd && npm link
-```
-
-Requires Node 22+, the `herdr` CLI with its server running, `claude` on PATH and logged in, and
-`gh` logged in for PRs (with GitHub Issues as the tracker, that login is also the token). No npm
-dependencies.
+You need **Node 22+**, the `herdr` CLI with its server running,
+an agent on your PATH and logged in (`claude`, `codex`, …), and `gh` logged in so agents can open
+pull requests. Update with `issue-herd update`; the watcher tells you when there is a new version.
 
 ## Set up a repository
 
 ```bash
 cd ~/Code/your-repo
-issue-herd init
+issue-herd init          # writes .issue-herd/, gitignores the right things
+issue-herd login         # once per machine, for every repo (uses `gh auth token` if you have it)
+issue-herd smoke         # end-to-end test against herdr with a fake issue, no tracker calls
+issue-herd dry-run       # what your rules would pick up right now, touching nothing
 ```
 
-`init` asks which tracker the repo uses (or take `--tracker linear` / `--tracker github`) and
-writes `.issue-herd/config.json` and `.issue-herd/instructions.md` from the examples, a
-`.issue-herd/.gitignore` that keeps `state/` and `config.local.json` out of git (your repo's own
-`.gitignore` is not touched), and documents the token variable in `.env.example`. It never
-overwrites a file that exists, so re-running it in a repo set up by an older version adds only the
-missing `.gitignore`. Then:
+Then edit the two files `init` wrote, and commit them:
 
-1. `issue-herd login`. GitHub: if `gh` is logged in that token is used, otherwise a browser
-   sign-in. Linear: a browser sign-in when the tool has a Linear OAuth client id (see
-   [Signing in](#signing-in)), otherwise it opens the personal-API-keys page and asks you to paste
-   the key. Either way the token is saved in `~/.config/issue-herd/credentials.json`, once per
-   machine, for every repo. Prefer a file? `LINEAR_API_KEY` / `GITHUB_TOKEN` in the repo's
-   `.env.local` (or the process environment) wins over the saved token.
-2. Create the trigger label your rules use (e.g. `ai`). The claim label (`herdr` by default) is
-   created for you the first time it is needed, on either tracker.
-3. Edit `.issue-herd/config.json` (the rules) and `.issue-herd/instructions.md` (what the agent
-   must know about this repo: checks to run, things never to run, branch and PR conventions, when
-   to stop and ask). Commit both.
-4. Smoke-test the herdr plumbing without touching the tracker (opens a workspace, starts Claude, has it
-   write the result file, finalizes): `issue-herd smoke`. Close the workspace it leaves open when
-   you have looked at it.
-5. Optional: preview what the config's rules would pick up, with no side effects: `issue-herd dry-run`.
-   To try an expression before putting it in the config: `issue-herd match "label:ai and team:ENG"`.
+- **`.issue-herd/config.json`** — the rules. What to pick up, how many at a time, which agent.
+- **`.issue-herd/instructions.md`** — how to work in *this* repo. The checks to run before a PR,
+  the things never to do, your branch and PR conventions, when to stop and ask a human. Every
+  agent gets it appended to its brief. This file is most of the difference between a factory that
+  produces work and one that produces cleanup.
 
-Unit tests for the tool itself: `npm test` in this repo.
+Create the label your rules trigger on (`ai`, say). The claim label is created for you.
 
-## Commands
-
-| command | what it does |
-|---|---|
-| `issue-herd` | **the watcher.** Reads `.issue-herd/config.json`, evaluates its rules against the tracker every `pollSeconds`, picks up matches, supervises them. Edits to `config.json` or `instructions.md` are picked up on the next poll, no restart needed; a file that fails to load is reported once and the previous config stays in force until it is fixed. Run this one in herdr. |
-| `issue-herd once` | one poll with the config's rules, then exit (stays up while it supervises anything it picked up) |
-| `issue-herd dry-run` | the config's rules, print what would be picked up, change nothing |
-| `issue-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing; for testing a rule before adding it |
-| `issue-herd status` | tracked runs and their outcome |
-| `issue-herd reset <KEY>` | forget a run so the issue can be picked up again |
-| `issue-herd login [linear\|github] [--paste]` | sign in (browser when possible) and save the token for this machine; `--paste` skips straight to pasting a token |
-| `issue-herd logout [linear\|github]` | forget the saved token |
-| `issue-herd smoke` | end-to-end herdr test with a fake issue, no tracker calls |
-| `issue-herd init [--tracker linear\|github]` | scaffold `.issue-herd/` in the current repo |
-
-## Run it in herdr
-
-From the repo directory:
+Now run the watcher, inside herdr, from the repo:
 
 ```bash
 herdr tab create --label issue-herd --cwd "$PWD" --no-focus
-# read .result.root_pane.pane_id from the JSON, then
 herdr pane run <pane-id> "issue-herd"
 ```
 
-One watcher per repository. Run several in separate panes if you have several repos. When the
-watcher starts inside herdr it renames its own workspace to `<name>Watch` (`name` from the config,
-default: the repo folder name) so it is easy to spot in the sidebar.
+One watcher per repository. Leave the pane alone — herdr keeps it alive when you detach.
 
-Leave that pane alone; the herdr server keeps it alive when you detach. Every issue it picks up
-becomes its own workspace in the sidebar, labelled with the issue key, with Claude's status
-(working / blocked / done) shown by herdr. Step into any of them and talk to the agent.
+## Example factories
 
-### What the pane shows
+Four configurations, from a one-line factory to a two-shift line. Copy one into
+`.issue-herd/config.json` — it is strict JSON, no comments — and every rule inherits `defaults`.
+Every key is explained in the [configuration reference](docs/configuration.md).
 
-A startup banner (version, repo, rules, guards, the tracker account and where its token came from,
-herdr connection), then one **live line** that is rewritten after every poll:
+### One agent, one label
 
+The whole thing. Label an issue `ai`, get a pull request.
+
+```json
+{
+  "tracker": "github",
+  "rules": [
+    { "name": "ai", "match": "label:ai and not state:started" }
+  ]
+}
 ```
-14:32:10 poll #48 · 47 open · 1 matched · 0 picked · running 2: DEV-12 w3 working · DEV-15 w4 blocked · next in 30s
+
+### Two shifts: a builder, and a reviewer who is not the same model
+
+A second opinion is only a second opinion if it is not the same eyes.
+
+`roles` lets both agents hold the same issue at once, each with its own claim, branch and worktree.
+`basedOn` cuts the reviewer's worktree from the *implementer's* branch, so it is reading the actual
+change and can run the tests. `passes` gives it three turns — review, confirm the fix, sign off —
+and each later turn is granted only when the issue has really moved on, so a reviewer can never be
+woken by its own comment. A reviewer also needs its own brief: the built-in one tells an agent to
+implement the issue, which is not the job. `prompts/review-lead.md` ships with the tool, alongside
+usability and security briefs — a rule can name one without copying it.
+
+```json
+{
+  "tracker": "linear",
+  "maxConcurrent": 4,
+  "roles": ["impl", "review"],
+  "rules": [
+    { "name": "build", "role": "impl", "match": "label:ai and not state:started",
+      "model": "opus" },
+
+    { "name": "review", "role": "review", "match": "label:ai and state:\"In Review\"",
+      "agentKind": "codex", "model": "gpt-5-codex", "effort": "high",
+      "basedOn": "impl", "passes": 3, "prompt": "prompts/review-lead.md" }
+  ]
+}
 ```
 
-Anything that *happens* gets its own timestamped line above it and goes to
-`.issue-herd/state/logs/issue-herd.log`: an issue picked up (with workspace and working tree), an
-issue that matched but was skipped and why (once per issue), an agent blocking on a dialog or
-going idle without a result, unblocking, finishing with its status and PR, a failed poll. When
-stdout is not a terminal (pm2, a log file) the live line is printed every tenth poll instead.
+### A separate desk for docs
 
-`issue-herd status` from another pane prints the same picture as a table, with each running
-agent's live herdr state.
+Rules are evaluated in order and the first match wins, so the specific one goes first. A docs issue
+gets a cheaper model, its own briefing file, and no notification when it lands; everything else
+falls through to the general rule.
 
-## The rule language
+```json
+{
+  "tracker": "github",
+  "rules": [
+    { "name": "docs", "match": "label:ai and label:documentation",
+      "model": "haiku", "instructionsFile": "instructions-docs.md",
+      "onDone": { "comment": true, "notify": false } },
+
+    { "name": "ai", "match": "label:ai", "model": "opus" }
+  ]
+}
+```
+
+### The night shift, on one machine only
+
+`.issue-herd/config.local.json` is gitignored, has the same shape, and is layered over
+`config.json`: top-level keys replace, `defaults` merge key by key, rules merge by `name`. This is
+where "my laptop runs it differently" goes without touching what the team committed.
+
+Here that machine runs six at a time, takes only urgent and high priority, leaves docs issues to
+somebody else, and stamps its own claim label on what it takes so the issue records which machine
+did the work.
+
+```json
+{
+  "maxConcurrent": 6,
+  "defaults": { "claimLabel": "herdr-jml-mbp" },
+  "rules": [
+    { "name": "docs", "enabled": false },
+    { "name": "ai", "match": "label:ai and priority<=2" }
+  ]
+}
+```
+
+## Rules
 
 ```
 label:ai and team:ENG and not state:started
@@ -165,558 +189,46 @@ label:ai and team:ENG and not state:started
 assignee:me state:todo updated<1d
 ```
 
-| field | matches | examples |
-|---|---|---|
-| `label` | any label on the issue | `label:ai` `label:"needs review"` `label!=blocked` |
-| `project` | project name | `project:Webapp` `project:"Alpha *"` |
-| `team` | team key or name | `team:ENG` `team:Engineering` |
-| `assignee` | `me`, `none`, name, display name, email, `@login` | `assignee:none` `assignee:me` |
-| `creator` | same as assignee | `creator:me` `creator:@alex` |
-| `state` / `status` | workflow state name **or type** (`triage backlog unstarted started completed canceled`) | `state:Todo` `not state:started` |
-| `priority` | `none urgent high medium low` or 0–4; `<` `<=` `>` `>=` treat "none" as lowest | `priority:urgent` `priority<=2` |
-| `estimate` | points | `estimate<=3` |
-| `title` | substring, or glob with `*` | `title:crash` `title:*zoom*` |
-| `key` / `id` | identifier | `key:ENG-123` `key:ENG-*` |
-| `cycle` | `current`, `none`, or number | `cycle:current` |
-| `age` / `updated` | time since created / updated: `30m 2h 3d 1w` | `age>1d` `updated<2h` |
-| `any` | everything | `any:true` |
+`label` `project` `team` `assignee` `creator` `state` `priority` `estimate` `title` `key` `cycle`
+`age` `updated` `any`, compared with `:` `=` `!=` `<` `<=` `>` `>=` (`*` wildcards, case
+insensitive), combined with `and` `or` `not` and parentheses. Two terms side by side mean `and`.
 
-Operators: `:` or `=` (equals, case-insensitive, `*` wildcard), `!=`, `<`, `<=`, `>`, `>=`.
-Combine with `and`, `or`, `not`, parentheses; two terms side by side mean `and`. `and` binds
-tighter than `or`.
+Try one before you commit it:
 
-The same fields work on every tracker; what they map to on GitHub is in
-[Issue trackers](#issue-trackers) (`team` is the repository, `project` the milestone, `state` is
-`open` or `closed`, `priority` comes from labels such as `P1` or `priority: high`).
-
-## Config reference
-
-```jsonc
-{
-  "name": "myapp",            // what this watcher is called. The herdr workspace it runs in is renamed
-                              // "<name>Watch" (here: myappWatch) at startup so it is easy to find in the
-                              // sidebar. Default: the repo folder name
-  "tracker": "linear",        // "linear" (default) or "github"; or an object for options, e.g.
-                              // { "type": "github", "repo": "owner/name", "prefix": "GH" }. See Issue trackers below
-  "pollSeconds": 30,          // poll interval
-  "lookbackDays": 30,         // only consider issues updated in this window
-  "maxConcurrent": 3,         // global cap on running agents
-  "roles": null,              // which roles this project runs, e.g. ["impl", "review"]. null means "whatever
-                              // the rules ask for"; a list disables the rules whose role is not in it. See Roles.
-  "defaults": {               // every rule inherits these
-    "worktree": "self",       // who creates the git worktree the run works in.
-                              // "self":  issue-herd does, with one `git worktree add` on the branch below.
-                              //          The directory and the branch are settled before the agent starts,
-                              //          so nothing downstream has to discover or correct them.
-                              // "herdr": herdr worktree create (herdr shows it as a worktree)
-                              // "none":  no worktree. The run works in the checkout you started the
-                              //          watcher in, on whatever branch it is already on, and nothing is
-                              //          ever renamed. If your Claude Code settings default to worktree
-                              //          mode, Claude still makes one with a name of its own choosing.
-    "worktreeDir": ".issue-herd/worktrees",  // where "self" puts them, relative to the repo. Must stay
-                              // inside the repo, because config.json is committed and this is a path we
-                              // create directories in. `init` gitignores it.
-    "branch": "{{issueBranchName}}{{roleSuffix}}", // what the run's branch is called. The tracker's own branch
-                              // name is the default: Linear's auto-links a PR back to the issue, GitHub's is
-                              // what its "create a branch" button would name (7-fix-the-thing). Templates may
-                              // use {{issueBranchName}}, {{slug}}, {{key}} (dev-3298), {{KEY}} (DEV-3298),
-                              // {{role}} and {{roleSuffix}} ("-review", empty with no role — see Roles),
-                              // e.g. "claude/{{slug}}" or "herd/{{slug}}". The worktree is created on this
-                              // branch, so it is right from the start. null accepts whatever git picks.
-                              // Ignored when "worktree" is "none" — that run works on the branch the repo
-                              // is already on, and renaming it would move your checkout. Whatever happens,
-                              // the brief, the pickup comment and result.json all quote the branch `git`
-                              // actually reports, never a name issue-herd hoped for.
-    "permissionMode": "auto",         // claude --permission-mode. auto = unattended (the point of a watcher);
-                                      // acceptEdits still asks before every command; see `claude --help`
-    "agentKind": "claude",    // which agent runs: passed to `herdr agent start --kind`
-    "model": null,            // e.g. "opus", "gpt-5-codex"
-    "effort": null,           // e.g. "high" — reasoning effort, where the agent has one
-    "agentArgs": [],          // extra flags, passed to the agent verbatim, after everything above
-                              // ("claudeArgs" is the old name and still works). See A second opinion.
-    "maxConcurrent": 2,       // per-rule cap
-    "prompt": "prompts/default.md",   // brief template: .issue-herd/prompts/default.md if present, else the built-in
-    "instructionsFile": "instructions.md",  // repo brief appended to the prompt; "instructions" (inline string) also works
-    "claimLabel": "herdr",            // label added on pickup and checked before pickup; null disables
-    "role": null,             // which claim this rule holds: null (the whole issue), or "impl" / "review" /
-                              // "split" / any name of your own. The label becomes "herdr:review", and rules
-                              // with different roles never see each other's claims. See Roles.
-    "passes": 1,              // how many turns this rule gets on one issue. 1 = take it once and be done.
-                              // More gives it another turn each time the issue moves on after it finished —
-                              // review, then confirm the fix, then the thumbs up. See Roles.
-    "basedOn": null,          // a role name: start this rule's worktree from *that* role's branch, so a
-                              // reviewer holds the code it is reviewing. Needs "worktree": "self".
-                              // null = the default branch. See Roles.
-    "skipIfAssignedToOthers": true,   // leave issues held by other people alone
-    "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
-    "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
-    "onBlocked": { "comment": true, "notify": true },   // agent hit a permission/question dialog
-    "onIdle":    { "comment": true, "notify": true },   // agent stopped without writing result.json
-    "onMerged":  { "comment": false, "notify": true, "exitAgent": false,
-                   "closeWorkspace": false, "removeWorktree": false }  // the PR from this run was merged
-  },
-  "rules": [                  // evaluated in order; first match wins; every rule inherits defaults
-    { "name": "ai", "match": "label:ai and team:ENG and not state:started", "enabled": true },
-    { "name": "docs", "match": "label:ai and label:docs", "instructionsFile": "instructions-docs.md" }
-  ]
-}
+```bash
+issue-herd match "label:ai and team:ENG"
 ```
 
-The repository is always the one you run `issue-herd` in (its git top level); rules do not name
-a repo.
-
-### Per-machine overrides: `config.local.json`
-
-Anything that should differ between the machines running issue-herd on the same repo goes in
-`.issue-herd/config.local.json`. It is gitignored, has the same shape as `config.json`, and is
-layered over it: top-level keys replace, `defaults` merges key by key (its `on*` objects one level
-deeper), and `rules` merge by `name` (a name that is not in `config.json` is added). The watcher
-logs which keys are overridden at startup, and edits to it are picked up live like `config.json`.
-
-```jsonc
-{
-  "defaults": { "claimLabel": "herdr-jml-mbp" },     // so the label on the issue says where it ran
-  "rules": [ { "name": "docs", "enabled": false } ]  // do not run this rule on this machine
-}
-```
-
-A claim label that does not exist yet is created on first use — a workspace label on Linear, a
-repository label on GitHub — so a per-machine claim label like `herdr-mbp` never has to be made by
-hand. With a different claim label per machine, the pickup comment marker is what stops a second
-machine from taking an issue this one already claimed, so keep `onPickup.comment` on. `claimLabel`
-and `role` compose: a `review` rule on `herdr-mbp` claims with `herdr-mbp:review`.
-
-`state` values in `onPickup`/`onDone` are matched against the team's workflow by name, then by
-type, so `"started"` works for any team. Set a key to `null`/`false` to skip that step.
-
-## Issue trackers
-
-`"tracker"` in `config.json` says which one. Everything else (rules, guards, the brief, the
-comments) is the same for all of them.
-
-**Linear** (`"tracker": "linear"`, the default). Issues are known by their key (`DEV-123`), the
-branch is Linear's own branch name, `state` is the team workflow, comments and state changes go to
-the issue. The claim label must exist in Linear.
-
-**GitHub Issues** (`"tracker": "github"`). The repository is the `origin` remote of the repo you run
-in; name it explicitly with `{ "type": "github", "repo": "owner/name" }`. Issues are known as `GH-7`
-(change the prefix with `"prefix"`), referenced as `#7` in PR text so `Fixes #7` closes them, and
-the default branch is `7-fix-the-thing`. Mapping:
-
-- `team` is the repository (`team:issue-herd`) and `project` is the milestone.
-- `state` is `open` or `closed`. There are no workflow states, so `init` sets `onPickup.state` and
-  `onDone.state` to `null`. Any other state name is **refused**, with an error naming what GitHub
-  has: it will not invent a label or close your issue on a guess.
-- `priority` comes from labels named `P0`–`P3` or `urgent` / `high` / `medium` / `low`
-  (`priority: high` works too). The most urgent label on the issue wins. With no such label the
-  priority is "none", so a `priority<=2` rule matches nothing in a repository that does not use them.
-- `estimate` and `cycle` are always empty, so any rule using them matches nothing.
-- `assignee` and `creator` match `@login`. An issue assigned to several people is left alone unless
-  every assignee is you.
-- The claim label is created if missing. Pull requests are never treated as issues.
-
-For GitHub Enterprise, set `ISSUE_HERD_GITHUB_HOST=ghe.corp.com` in your shell. That is deliberately
-a machine setting rather than a config key: `config.json` is committed, and this value decides where
-your token is sent, so a repository you clone may *name* the host it expects but not introduce one.
-For the same reason a repository's `.env` cannot set any `ISSUE_HERD_*` variable, and `prompt` and
-`instructionsFile` must point inside `.issue-herd/`.
-
-**Adding a tracker** is one file. Write `src/trackers/<name>.mjs` against the contract documented
-at the top of [`src/tracker.mjs`](src/tracker.mjs) — a class with `me`, `openIssues`,
-`issueByKey`, `comment`, `addLabel`, `removeLabel`, `assign`, `setState` and a static `login` —
-returning the normalized issue shape, then add it to `src/trackers/index.mjs`.
-[`github.mjs`](src/trackers/github.mjs) is the model: one read query and a few writes, no
-dependencies. `test/trackers.test.mjs` checks every registered tracker against the
-contract; `checkIssue()` tells a new tracker exactly which field it got wrong.
-
-## Signing in
-
-`issue-herd login [linear|github]` obtains a token, proves it works with a `me` call, and saves it
-in `~/.config/issue-herd/credentials.json` (mode 600). Runs before `init` too, when the tracker is
-named. `issue-herd logout` forgets it. At startup the banner says which account is in use and where
-the token came from. Lookup order:
-
-1. the environment: `LINEAR_API_KEY`, or `GITHUB_TOKEN` / `GH_TOKEN`, read from the process, then
-   `<repo>/.env.local`, then `<repo>/.env`
-2. the saved credential
-3. GitHub only: `gh auth token`, so a machine with `gh` logged in needs no login at all
-
-`login` never copies a token another tool owns: with `gh` logged in it saves nothing and re-reads
-`gh auth token` on every run, so a token `gh` rotates keeps working.
-
-How `login` gets the token, per tracker:
-
-- **GitHub**: a device-flow browser sign-in when the tool has a GitHub OAuth app client id;
-  otherwise the token `gh` is logged in with, or `gh auth login` (browser) if `gh` is present but
-  logged out; otherwise it opens the new-token page (scope `repo`) and asks you to paste the token.
-- **Linear**: a browser sign-in (authorization code + PKCE, loopback redirect on
-  `http://localhost:8497/callback`, token refreshed automatically before it expires) when the tool
-  has a Linear OAuth client id; otherwise it opens Settings → Security & access → Personal API keys
-  and asks you to paste the key. `--paste` forces the paste route on either tracker.
-
-The browser flows need an OAuth application registered with the provider, which ships as a client
-id in the code (no secret: PKCE for Linear, device flow for GitHub). Maintainers: register one,
-then set `LINEAR_CLIENT_ID` in `src/trackers/linear.mjs` (Linear → Settings → API → OAuth
-applications, callback `http://localhost:8497/callback`, public client) and `GITHUB_CLIENT_ID` in
-`src/trackers/github.mjs` (GitHub → Settings → Developer settings → OAuth Apps, enable device flow).
-Until then the same flows can be tried with the `ISSUE_HERD_LINEAR_CLIENT_ID` and
-`ISSUE_HERD_GITHUB_CLIENT_ID` environment variables, or per repository with a `clientId` in the
-tracker object. `ISSUE_HERD_OAUTH_PORT` moves the loopback port, `ISSUE_HERD_CREDENTIALS` the
-credentials file, and `ISSUE_HERD_GITHUB_HOST` names a GitHub Enterprise host. All of these are read
-from your shell only, never from a repository's `.env`.
-
-## How it avoids double work
-
-Three independent guards, checked before every pickup:
-
-1. **Claim label on the issue** (`claimLabel`, default `herdr`). Added the moment an issue is
-   picked up, re-checked with a fresh fetch right before claiming. Survives restarts, a deleted
-   `state.json`, and a second machine running issue-herd. It stays on the issue after the run as
-   the record that an agent worked it; remove it to let an agent take the issue again. With a
-   `role` on the rule the label is `herdr:review`, and only that role's claim is checked.
-2. **Pickup comment marker.** The "issue-herd picked this up" comment is also detected, so an
-   issue claimed by an older version without the label is still skipped. A role's comment says
-   `picked this up as \`review\``, and a role only looks for its own.
-3. **Assigned to someone else** (`skipIfAssignedToOthers`, default true). If a human other than
-   you holds the issue, it is theirs. On a tracker with several assignees per issue, one other
-   person is enough: an issue shared between you and a colleague is still theirs. `onPickup.assignToMe` makes the agent's issues yours, so the
-   rule of thumb is: unassigned or assigned to you means available.
-
-Plus the local `state.json`, which is what stops the same watcher re-picking during a run, and
-whatever your rule says (`not state:started` excludes anything already In Progress).
-
-A rule with `"passes"` above 1 is the one deliberate exception: it may take an issue again, but
-only after the issue has moved on since it last finished, and only up to the number of turns it was
-given. See [More than one turn](#more-than-one-turn-passes).
-
-## Roles: several agents on one issue
-
-The claim is a real distributed lock, but on its own it is binary: an issue is taken or it is not.
-A **role** splits it into independent locks so an implementer, a reviewer and a splitter can hold
-the same issue at the same time without fighting over one label.
-
-Give a rule a `role` and everything the run is keyed by follows it:
-
-| | no role (the default) | `"role": "review"` |
-|---|---|---|
-| claim label | `herdr` | `herdr:review` |
-| pickup comment | `🐑 **issue-herd** picked this up on …` | `🐑 **issue-herd** picked this up as \`review\` on …` |
-| run key (`status`, `reset`, `runs/<KEY>/`) | `GH-7` | `GH-7@review` |
-| herdr sidebar | `GH-7 Fix the thing` | `GH-7 review Fix the thing` |
-| herdr agent | `gh-7` | `gh-7-review` |
-| worktree directory | `gh-7-fix-the-thing` | `gh-7-review-fix-the-thing` |
-| branch (default template) | `7-fix-the-thing` | `7-fix-the-thing-review` |
-
-```jsonc
-{
-  "roles": ["impl", "review"],   // which roles this project runs at all
-  "rules": [
-    { "name": "build",  "role": "impl",   "match": "label:ai and not state:started" },
-    { "name": "review", "role": "review", "match": "label:ai and state:started",
-      "prompt": "prompts/review-lead.md" }  // a reviewer needs its own brief, not the default one
-  ]
-}
-```
-
-- **Rules only see their own role.** A `review` rule checks `herdr:review` and the `review` pickup
-  comment, never `herdr:impl`, so an issue being implemented is still available for review. Within
-  one role the first matching rule still wins, exactly as before; across roles, one poll can start
-  one run per role.
-- **A rule with no role claims the whole issue.** That is the old behaviour, unchanged: its label
-  is `herdr`, and *any* pickup comment blocks it. Leave `role` out and nothing about issue-herd
-  changes.
-- **`"roles"` is the project's switch.** A list disables the rules whose role is not in it, so
-  turning reviewer agents off is one line rather than deleting the rules. Omit it and every rule's
-  role is active. A rule with no role is never filtered by it.
-- **Every role needs its own branch**, because git cannot check one branch out into two worktrees.
-  The default template `{{issueBranchName}}{{roleSuffix}}` handles it (`{{roleSuffix}}` is empty
-  with no role, so nothing changes for existing configs), and so does anything built from
-  `{{slug}}`, which is derived from the run key. Two roles pointed at a branch template that names
-  neither is refused at config load, with the fix in the message.
-- **The role reaches the agent.** The brief says which claim the run holds and that other agents
-  may hold others on the same issue. Point each role at its own `prompt` — the built-in one tells
-  the agent to implement the issue and open a PR, which is not what a reviewer should do.
-- **Each role picks its own agent.** `agentKind`, `model` and `effort` are per rule — see
-  [A second opinion](#a-second-opinion-a-reviewer-on-another-provider).
-- **A reviewer can hold the code it reviews.** `"basedOn": "impl"` starts this role's worktree from
-  that role's branch — see [Reviewing the actual code](#reviewing-the-actual-code-basedon).
-- `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7@review`
-  forgets just that one.
-
-### The briefs that ship
-
-`prompt` is resolved in `<repo>/.issue-herd/` first and then in issue-herd's own `prompts/`, so a
-rule can name one of these without copying it, and a project overrides one by putting a file of the
-same name in `.issue-herd/prompts/`:
-
-| `prompt` | for | says |
-|---|---|---|
-| `prompts/default.md` | the implementer (the default) | work the issue end to end, open a PR, write `result.json` |
-| `prompts/review-lead.md` | a tech-lead review | accuracy, structure, maintainability, performance; ends in `OK TO MERGE TO MAIN` or not |
-| `prompts/review-usability.md` | a usability and docs review | walk the getting-started path a newcomer walks; ends in `USABILITY: OK` or the findings |
-| `prompts/review-security.md` | a security assessment | attacker-controlled input → effect, one pass, one verdict |
-| `prompts/smoke.md` | `issue-herd smoke` | prove the pipeline works, change nothing |
-
-Every one of them is a plain markdown file with `{{placeholders}}`, and the reviewing three all end
-with "do not push, do not merge" — the verdict is a comment on the issue, and merging stays a
-person's job.
-
-### A second opinion: a reviewer on another provider
-
-A reviewer is only a second set of eyes if it is not the same eyes. `agentKind`, `model` and
-`effort` are per rule, so the implementer and the reviewer can be different agents entirely:
-
-```jsonc
-{
-  "roles": ["impl", "review"],
-  "rules": [
-    { "name": "build",  "role": "impl",   "match": "label:ai and not state:started",
-      "model": "opus" },
-    { "name": "review", "role": "review", "match": "label:ai and state:\"In Review\"",
-      "agentKind": "codex", "model": "gpt-5-codex", "effort": "high",
-      "passes": 3, "prompt": "prompts/review-lead.md" }
-  ]
-}
-```
-
-`agentKind` goes straight to `herdr agent start --kind`, and herdr is the authority on which
-agents it can start — `herdr agent start --help` lists them (claude, codex, gemini, cursor, grok,
-copilot, and others). What issue-herd adds is the translation, because everything after `--` is
-the agent's *own* command line and the four things a rule asks for are spelled differently by each:
-
-| | Claude Code | codex |
-|---|---|---|
-| model | `--model opus` | `--model gpt-5-codex` |
-| effort | `--effort high` | `-c model_reasoning_effort="high"` |
-| unattended | `--permission-mode auto` | `--approve-for-me` (which *is* the workspace-write sandbox) |
-| session name | `--name GH-7@review` | (none — herdr's agent name is the name) |
-| leaves with | `/exit` | `/quit` |
-
-An agent with no translation still runs: it gets `--model` and whatever the rule puts in
-`agentArgs`, which is enough for most of them and means issue-herd does not have to know every
-agent's flags before you can use one.
-
-Two things worth knowing:
-
-- **Sign in to each provider yourself**, once per machine (`claude`, `codex login`, …).
-  `issue-herd login` is for the *tracker*; it never touches an agent's credentials.
-- **Answer each agent's first-run dialogs yourself, once per repository.** codex asks whether it
-  trusts a directory the first time it opens one (and about hooks, if you have any). A run that
-  starts on that dialog is reported as blocked and waits — nothing is lost — but the cure is to run
-  the agent in the repository once by hand, the same way you sign in.
-- **`permissionMode` never turns a sandbox off.** It is Claude Code's word, and each agent decides
-  what "unattended" means for itself — but none of them may decide it means "no boundary at all".
-  codex's `auto` is the widest *sandboxed* setting, not
-  `--dangerously-bypass-approvals-and-sandbox`. If you want that, type it into `agentArgs`, which
-  is appended last and overrides everything above it.
-
-### Reviewing the actual code: `basedOn`
-
-A worktree is cut from the default branch, which is fine for the rule that is about to write the
-change and useless for a rule that is about to read it: the reviewer would hold `main`, and
-"run the tests the implementer said passed" is not something it could do.
-
-```jsonc
-{ "name": "review", "role": "review", "basedOn": "impl", "match": "…" }
-```
-
-`basedOn` names another **role**, and the branch is read from that role's run on the same issue —
-what git reported after that worktree was made, never what a template asked for. The reviewer gets
-its own branch (`7-fix-the-thing-review`) starting at the implementer's commits, so the change is
-checked out, the tests are runnable, and `git diff main...HEAD` is the diff under review. Two
-worktrees, two branches, no fighting over a checkout.
-
-On a **later turn** the worktree already exists — and the reason there is a later turn is that the
-implementer pushed something. So it is fast-forwarded to whatever that branch is now (`git fetch`,
-then `reset --hard`), or the second review would read the first turn's code and conclude its own
-findings had been ignored. That reset only ever runs in a worktree issue-herd made for this role,
-and only ever moves it onto a *different* branch, so what it discards is a reviewer's scratch
-files, never anyone's commits.
-
-`basedOn` needs `"worktree": "self"` — only the mode where issue-herd creates the worktree can
-decide where it starts, so the other modes refuse it at config load rather than quietly ignoring it.
-A `basedOn` naming a role no rule runs is refused there too: silently, it would be a reviewer on
-the default branch and a config that says otherwise.
-
-If the other role has no run on this issue yet, or never settled a branch, you get a log line and
-an ordinary worktree. A reviewer on the default branch is a poor review; a failed run is no review
-at all. The brief says which it got.
-
-### More than one turn: `passes`
-
-By default a role takes an issue once and is finished with it. `"passes": 3` gives it up to three
-turns — review the work, confirm the fix, then give the thumbs up:
-
-```jsonc
-{ "name": "review", "role": "review", "passes": 3, "match": "label:ai", "prompt": "prompts/review-lead.md" }
-```
-
-A later turn is granted on exactly one condition: **the issue moved on after the last turn
-finished.** Someone pushed a fix, a person replied, the state changed. Nothing happening means no
-turn, so a reviewer with turns left costs nothing while it waits.
-
-The obvious way for that to become a loop is for the role to answer itself — its own closing
-comment bumps the issue, which looks like the issue moving on. So when a rule has turns left,
-issue-herd re-reads the issue's own clock *after* it has finished commenting and measures the next
-turn against that. A role can never be woken by its own report.
-
-The rest of a later turn is deliberately the same run, not a new one: same run key, same claim
-label (it never came off, so the guards are not re-read — you cannot lose a lock you hold), same
-worktree, same branch, and the same herdr session if it is still up. What changes is the brief,
-which names the turn, points at what the previous turn wrote, and says that answering the change
-is the job rather than starting over. The previous `result.json` is moved to `result.pass1.json`
-before the new turn starts, so the supervisor cannot mistake the old answer for the new one, and
-each turn is archived under its own name in `runs/<KEY>/`.
-
-Two limits worth knowing. Turns are counted in `state.json`, so a watcher that loses its state
-treats the role as finished — it fails closed, and `issue-herd reset` is how you hand a turn back
-by hand. And a run still waiting for its PR to merge (`awaiting_merge`) is not eligible for another
-turn, because that watch would be lost.
-
-### Three roles on GitHub: what this repository runs
-
-issue-herd works its own issues, so `.issue-herd/config.json` in this repository is a worked
-example you can read in full. GitHub has no workflow states — `state` is `open` or `closed` — so
-the handoff between the roles is a **label the implementer adds when its PR is up**:
-
-```jsonc
-{
-  "roles": ["impl", "review", "usability"],
-  "rules": [
-    { "name": "implement", "role": "impl",
-      "match": "label:ai and not label:ready-for-review",
-      "model": "claude-fable-5-1" },
-    { "name": "tech-lead", "role": "review", "basedOn": "impl",
-      "match": "label:ai and label:ready-for-review",
-      "agentKind": "codex", "model": "gpt-6-astra", "effort": "high",
-      "prompt": "prompts/review-lead.md" },
-    { "name": "usability", "role": "usability", "basedOn": "impl",
-      "match": "label:ai and label:ready-for-review",
-      "model": "opus", "effort": "high",
-      "prompt": "prompts/review-usability.md" }
-  ]
-}
-```
-
-One issue, three claims: `herdr:impl` while it is being built, then `herdr:review` and
-`herdr:usability` in parallel over the same commits (`basedOn: "impl"` gives both reviewers the
-implementer's branch, so they run the tests rather than take its word for them). The implementer is
-told to add the label in `.issue-herd/instructions.md`, which is the file every brief on this repo
-ends with — the reviewers are told to leave labels alone. Three different models, because a review
-by the model that wrote the code is a re-read, not a review.
-
-Nothing here is GitHub-specific except the handoff: on Linear the same shape uses
-`"match": "label:ai and state:\"In Review\""` and `onDone.state`, and no label is needed.
-
-## How a run works
-
-1. Poll the tracker for open issues; evaluate each rule; the first matching rule wins — once per
-   role, so an issue can start a run per role — then the guards above are applied. Urgent first,
-   then oldest first.
-2. `git worktree add -b <branch> .issue-herd/worktrees/<slug>` — issue-herd makes the worktree, on
-   the branch the rule asked for. An existing directory for that issue is reused rather than
-   duplicated, and an existing branch is attached to rather than clobbered.
-3. `herdr worktree open --path <worktree>` gives it a workspace, so the sidebar shows the run's real
-   branch and groups it under the repo. If you already had that checkout open, the run gets its own
-   workspace and your shell is left alone.
-4. `herdr agent start <key> --kind claude --pane <pane> -- --name KEY --permission-mode …` — started
-   in a pane that is already in the worktree, so no `--worktree` flag and nothing to discover
-   afterwards. issue-herd then asks git what branch the worktree is on and records the answer, which
-   is the confirmation step rather than a correction: the brief, the pickup comment and the PR all
-   quote what git reports, never a name issue-herd hoped for.
-5. Render the brief template into `<working tree>/.issue-herd/state/runs/<KEY>/brief.md` with the
-   issue, comments, and your `instructions.md`, then `herdr agent prompt <key> "read the brief at …
-   and follow it"`. The brief and `result.json` live inside Claude's own working tree (gitignored)
-   because a path in the main checkout triggers permission dialogs from a worktree; a copy is
-   archived under the watcher's `.issue-herd/state/runs/<KEY>/` when the run finishes.
-   If Claude comes up on a dialog of its own — the trust prompt in a directory it has not seen —
-   herdr will not type into it. That is not a failed run: the prompt is kept, you get the ✋ comment
-   and notification, and the supervisor sends the brief the moment you answer the dialog.
-6. Comment on the issue, assign it to you, move it to In Progress.
-7. A supervisor waits on `herdr agent wait`. When Claude writes `runs/<KEY>/result.json`
-   (`pr_open | needs_human | nothing_to_do | failed`, PR URL, summary, testing notes) the watcher
-   comments the result on the issue, moves it to In Review on `pr_open`, and sends a herdr
-   notification. If Claude gets **blocked** on a permission dialog or **stops** to ask a question,
-   you get one comment and one notification telling you which workspace to open.
-8. Workspaces are left open so you can inspect, test, and steer.
-9. On `pr_open`, the run is not over: issue-herd keeps watching the pull request (once a minute,
-   whatever `pollSeconds` says). When GitHub says it is **merged**, you get a notification saying so
-   and naming the workspace and worktree the run is still holding, and the run is recorded as
-   `merged`. Nothing is torn down unless you asked for it in `onMerged` — see below. A PR **closed
-   without merging** just stops being watched.
-
-If you restart the watcher, it re-attaches to agents that are still alive, finalizes any run whose
-result file appeared while it was down, and goes on watching the pull requests it had not seen
-merged yet. A pickup for an issue whose session is still running — after `issue-herd reset <KEY>`,
-or a retry of a start that failed late — reuses that session instead of building a second workspace
-beside it, so nothing is left adrift and you keep the pane you have been typing into.
-
-### When the PR is merged
-
-By default a merge is **reported, not acted on**. The review that mattered happened before the
-merge, but the agent's session is the record of how the work was done, and throwing that away is
-not something to do to somebody who did not ask for it. So the watcher tells you the run is
-finished and names what it is still holding; closing it is yours.
-
-Turn on the parts you want, in `defaults` or per rule (and `config.local.json` if you want it on
-one machine only):
-
-| key | default | what it does when the PR is merged |
-| --- | --- | --- |
-| `exitAgent` | `false` | sends the agent `/exit` and waits up to 20s for it to go — Claude Code then writes its own history and stops its own MCP servers, rather than having its pane pulled away |
-| `closeWorkspace` | `false` | `herdr workspace close` |
-| `removeWorktree` | `false` | `git worktree remove` — never forced, so a worktree with uncommitted or untracked files is kept and the log says so |
-| `notify` | `true` | one herdr notification: the PR merged, and which workspace and worktree the run still has |
-| `comment` | `false` | the same as a comment on the issue. Off because GitHub already writes the merge into the issue's timeline; worth turning on for Linear, which does not |
-
-`"onMerged": null` switches the whole thing off, including the watching, and a run then finishes at
-`pr_open` as it did before any of this existed.
-
-The full cleanup, for a rule whose runs you never want to look at again:
-
-```jsonc
-"onMerged": { "exitAgent": true, "closeWorkspace": true, "removeWorktree": true }
-```
-
-What that costs you is the agent's terminal scrollback. `result.json` and `brief.md` are archived
-into the watcher's own `.issue-herd/state/runs/<KEY>/` before anything is removed, and the diff is
-in the PR, but the transcript lives with the session: Claude Code keeps it under
-`~/.claude/projects/<the worktree path>/`, so once the worktree is gone there is nowhere left to
-`claude --resume` from.
-
-The pull request is read straight from GitHub, whichever tracker the issue came from (a Linear
-issue's PR is on GitHub too). It uses the GitHub tracker's token when that is your tracker, and
-otherwise whatever this machine has for GitHub — `GITHUB_TOKEN`, `issue-herd login github`, or
-`gh auth token`. Without one, only public repositories answer. A `prUrl` pointing anywhere but the
-GitHub host this machine trusts is refused rather than fetched: `result.json` is written by an agent
-that has read the issue's text, so it does not get to say where your token goes.
-
-## Manual testing and screenshots
-
-The agent has no in-app Browser pane here. The brief tells it to verify with unit tests and to
-say when browser verification is still needed. For your own manual pass, open the PR branch or
-its worktree in the Claude Code desktop app, or start the worktree's dev servers from the herdr
-workspace and open the port in your browser.
-
-## Troubleshooting
-
-- `issue-herd: herdr server is not running` — start `herdr` once; the server stays up.
-- `agent start … pane_not_ready` — the workspace shell had not reached its prompt; the watcher
-  retries three times. A slow shell init (`nvm` in `.zshrc`) is the usual cause.
-- Claude never goes `working` after the prompt — open the workspace; it is probably sitting on
-  the trust-this-folder dialog for a new worktree. Answer it once per repo.
-- A pickup that failed (`issue-herd status` shows `failed`) is retried by itself: the claim label
-  is handed back, and the next time the issue changes on the tracker (an edit, a state change, a
-  label) it is a candidate again. Fix what the log complained about and touch the issue.
-- Re-run an issue that finished or stopped: remove the `herdr` claim label on the issue (with roles,
-  the one for the role you want back — `herdr:review`), delete the pickup comment if you want a
-  clean thread, then `issue-herd reset ENG-123` (or `reset GH-7`, which forgets every role's run on
-  the issue; `reset GH-7@review` forgets one). It will be picked up on the next poll if the rule
-  still matches.
-- `no Linear credentials` / `no GitHub credentials` — run `issue-herd login`, or put the token in
-  `.env.local`. A `401` means the token it found (the banner says where) is dead: `login` again.
-- `cannot tell which GitHub repository this is` — the `origin` remote is not on github.com; set
-  `"tracker": { "type": "github", "repo": "owner/name" }`.
-- `no .issue-herd/config.json` — you are not inside a repository that has been set up; `cd` into
-  it (any subdirectory works, the git top level is used) or run `issue-herd init`.
-- `ISSUE_HERD_DEBUG=1` logs every herdr command.
+The same fields work on every tracker — the full table, and what each one maps to on GitHub, is in
+the [configuration reference](docs/configuration.md#the-rule-language).
+
+## Commands
+
+| command | what it does |
+|---|---|
+| `issue-herd` | **the watcher.** Evaluates your rules every `pollSeconds`, picks up matches, supervises them. Config edits are picked up live, no restart. |
+| `issue-herd once` | one poll, then exit (stays up while it supervises what it took) |
+| `issue-herd dry-run` | print what would be picked up, change nothing |
+| `issue-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing |
+| `issue-herd status` | tracked runs, their outcome, and each live agent's state |
+| `issue-herd reset <KEY>` | forget a run so the issue can be picked up again |
+| `issue-herd login [linear\|github] [--paste]` | sign in and save the token for this machine |
+| `issue-herd logout [linear\|github]` | forget the saved token |
+| `issue-herd smoke` | end-to-end herdr test with a fake issue, no tracker calls |
+| `issue-herd init [--tracker linear\|github]` | scaffold `.issue-herd/` in the current repo |
+| `issue-herd update` | reinstall from GitHub; prints the old and new version |
+
+## Docs
+
+| | |
+|---|---|
+| [Configuration](docs/configuration.md) | `config.json` reference, the rule language, per-machine overrides |
+| [Issue trackers](docs/trackers.md) | Linear and GitHub Issues, what the fields map to, signing in, adding a tracker |
+| [Roles](docs/roles.md) | several agents on one issue, a reviewer on another provider, `basedOn`, `passes` |
+| [How it works](docs/how-it-works.md) | the guards, a run start to finish, what happens when the PR merges, troubleshooting |
+| [Maintainers](docs/maintainers.md) | cutting a release, hacking on the tool |
+| [The mark](assets/logo/README.md) | the logo, and the rules for using it |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
