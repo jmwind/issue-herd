@@ -12,6 +12,8 @@
 //   issue-herd logout [tracker] forget the saved token
 //   issue-herd smoke           end-to-end test against herdr with a fake issue (no tracker calls)
 //   issue-herd init [--tracker linear|github]   scaffold .issue-herd/ in this repo
+//   issue-herd console         the factory floor: every factory on this machine, in a browser (phone first)
+//   issue-herd console set-passcode   set the passcode the console asks for; unlocks serving over Tailscale
 //   issue-herd update          reinstall the latest version from GitHub
 //   issue-herd --version
 //
@@ -42,6 +44,11 @@ import { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } from '
 import { agentArgv, describeAgent, exitCommandFor, TRANSLATED_KINDS } from '../src/agents.mjs';
 import { parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
 import { GitHubTracker } from '../src/trackers/github.mjs';
+import { askSecret, loadCredentials } from '../src/auth.mjs';
+import { stampFactory } from '../src/console/registry.mjs';
+import { Gate, hashPasscode } from '../src/console/passcode.mjs';
+import { FactoryConsole } from '../src/console/console.mjs';
+import { createHandler, listen, tailscaleAddresses } from '../src/console/server.mjs';
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = findRepoRoot(process.cwd());
@@ -1046,6 +1053,15 @@ class IssueHerd {
     }
   }
 
+  /**
+   * Tell the console this factory is alive: one small entry per repository in a per-user file,
+   * stamped every poll. `issue-herd console` lists the entries and marks one stale when its last
+   * poll is older than a few of its intervals. Best effort; never fails a poll.
+   */
+  register() {
+    stampFactory({ repo: REPO, name: this.cfg.name, tracker: this.cfg.Tracker.id, version: PKG.version, pollSeconds: this.cfg.pollSeconds, workspaceId: process.env.HERDR_WORKSPACE_ID || null, logPath: path.join(LOG_DIR, 'issue-herd.log') });
+  }
+
   /** Rename the herdr workspace this watcher runs in to "<name>Watch" so it is easy to find in the sidebar. */
   async labelOwnWorkspace() {
     const id = process.env.HERDR_WORKSPACE_ID;
@@ -1098,6 +1114,7 @@ class IssueHerd {
     log(`  ${trackerBanner(this.tracker)}: ${who} (token from ${this.tracker.source || '?'}) · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
     await this.labelOwnWorkspace();
     await this.resume();
+    this.register();
     let nextUpdateCheck = Date.now() + 24 * 3600e3; // startup already checked
     let polls = 0;
     for (;;) {
@@ -1114,6 +1131,7 @@ class IssueHerd {
         summary = `${hms()} poll #${polls} FAILED (${e.message.slice(0, 60)}) · retry in ${this.cfg.pollSeconds}s`;
       }
       live(summary);
+      this.register();
       if (Date.now() >= nextUpdateCheck) { nextUpdateCheck = Date.now() + 24 * 3600e3; await updateReminder({ notify: true }); }
       await sleep(this.cfg.pollSeconds * 1000);
     }
@@ -1253,14 +1271,55 @@ function update() {
   console.log(`now ${now}`);
 }
 
+/**
+ * `issue-herd console [--port N]` serves the factory floor; `issue-herd console set-passcode` sets
+ * the passcode it asks for. Without a passcode the console binds to loopback only and asks nothing:
+ * a local console. With one it also binds to this machine's Tailscale address, so a phone on the
+ * tailnet can open it, and everything is behind the gate.
+ */
+async function consoleCommand(args) {
+  const file = credentialsPath();
+  if (args[0] === 'set-passcode') {
+    const a = await askSecret('New console passcode (at least 4 characters): ');
+    const b = await askSecret('Again: ');
+    if (a !== b) throw new Error('the two entries differ; nothing changed');
+    saveCredential('console', { passcode: hashPasscode(a) }, file);
+    console.log(`✓ console passcode saved in ${file.replace(os.homedir(), '~')} · the console now serves on Tailscale too: ${tailscaleAddresses().join(', ') || 'no Tailscale address found on this machine right now'}`);
+    return;
+  }
+  if (args[0] === 'clear-passcode') {
+    saveCredential('console', {}, file);
+    console.log('✓ console passcode cleared · the console serves on loopback only');
+    return;
+  }
+  if (args[0] && args[0] !== '--port') throw new Error('usage: issue-herd console [--port N] | set-passcode | clear-passcode');
+  const portArg = args.indexOf('--port') >= 0 ? args[args.indexOf('--port') + 1] : null;
+  const port = Number(portArg || process.env.ISSUE_HERD_CONSOLE_PORT || 8498);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`not a port: ${portArg}`);
+  const gate = new Gate({ hash: loadCredentials(file).console?.passcode || null });
+  const herdr = new Herdr({ log: (m) => process.env.ISSUE_HERD_DEBUG && log('  $', m) });
+  const app = new FactoryConsole({ herdr, version: PKG.version, log: (m) => log(m) });
+  const { handler, broadcast } = createHandler({ gate, console: app, log: (m) => log(m) });
+  app.subscribe(() => broadcast());
+  const bound = await listen({ handler, port, gated: gate.enabled });
+  app.start();
+  log(`issue-herd ${PKG.version} console · ${gate.enabled ? 'passcode set, serving on loopback and Tailscale' : 'no passcode set (run `issue-herd console set-passcode`), serving on loopback only'}`);
+  for (const u of bound.urls) log(`  ${u}`);
+  log(`  herdr: ${await herdr.serverRunning() ? 'connected' : 'NOT RUNNING — agent state will show as gone until it is'}`);
+  process.on('uncaughtException', (e) => log(`unexpected error (kept running): ${e.stack || e.message}`));
+  process.on('unhandledRejection', (e) => log(`unexpected error (kept running): ${e?.stack || e?.message || e}`));
+  await new Promise(() => {});
+}
+
 async function main(argv) {
   if (argv[0] === '--version' || argv[0] === '-V' || argv[0] === 'version') { console.log(PKG.version); return; }
   if (argv[0] === 'update' || argv[0] === 'upgrade') return update();
   if ((argv[0] || '') === 'init') return init(argv.slice(1));
-  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 26).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
+  if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 28).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
   loadEnv();
   const cmd = argv[0] || 'run';
   if (cmd === 'login' || cmd === 'logout') return auth(cmd, argv.slice(1));
+  if (cmd === 'console') return consoleCommand(argv.slice(1));
   if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no ${path.relative(process.cwd(), CONFIG_PATH) || CONFIG_PATH} — cd into the repo you want to work on and run \`issue-herd init\``);
   const cfg = loadConfig();
   if (cmd !== 'smoke') await updateReminder();

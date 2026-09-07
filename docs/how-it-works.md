@@ -176,6 +176,50 @@ otherwise whatever this machine has for GitHub — `GITHUB_TOKEN`, `issue-herd l
 GitHub host this machine trusts is refused rather than fetched: `result.json` is written by an agent
 that has read the issue's text, so it does not get to say where your token goes.
 
+## The console: `issue-herd console`
+
+The watcher pane tells one factory's story in text. The console shows every factory on the machine
+in a browser, phone first, and is built from one question: *what changes what you do next?*
+
+```bash
+issue-herd console                 # http://127.0.0.1:8498/
+issue-herd console set-passcode    # gate it, and serve it on this machine's Tailscale address too
+```
+
+Three screens, in Factorio's idiom because a factory is what this is:
+
+- **Overview.** A factory picker in the title bar (one machine runs several), then **Alerts** — one
+  card per thing only a person can clear: an agent blocked on a dialog (with "read scrollback"),
+  an agent that stopped to ask, a run that ended `needs_human`, a pull request waiting for your
+  merge, a finished run still holding its workspace — then **Assembling**, one row per open issue
+  with a status light, a module slot per role, a short state phrase and the time on task, then
+  **Output today**. The belt under the title bar carries the factory's real output (commits, PRs,
+  merges, lines changed). The footer sums how long you were waited on.
+- **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
+  asking, done) plus a "you" row, lines added and removed with a size grade and its reason,
+  each role's report, and the exit button.
+- **Factory picker.** Every factory with its tracker, last poll, running and alert counts, a
+  watcher not seen for three polls marked stale, and the chosen factory's rules in three lines.
+
+**Where it reads from.** Each watcher stamps `~/.config/issue-herd/factories.json` every poll
+(name, tracker, version, last poll); the console lists those entries, plus any `<name>Watch`
+workspace herdr shows, and reads each factory's `config.json`, `state.json` and log directly. Agent
+state is one `herdr api snapshot` per tick (every 2s). Lines changed come from `git diff` in the
+run's worktree. Nothing is written except the registry, and no tracker is called.
+
+**Exit.** The button sends the agent its own exit command (`/exit` for Claude Code, `/quit` for
+codex) and lets it shut down the way it wants. The workspace and the worktree stay; `onMerged`
+is still where clean-up is configured.
+
+**The gate.** With no passcode the console binds to loopback only and asks nothing. With one
+(`set-passcode`; stored as a salted scrypt hash in `credentials.json`, never in a repository) it
+also binds to this machine's Tailscale address, never `0.0.0.0`, and nothing about any factory is
+served before the passcode: a correct entry sets an `HttpOnly`, `SameSite=Strict` cookie for a day;
+five wrong entries from one address lock the gate for five minutes and are logged; actions are
+POSTs checked for a same-origin `Origin`. Tailscale encrypts the wire, so the console speaks plain
+HTTP. `--port N` or `ISSUE_HERD_CONSOLE_PORT` changes the port; `console clear-passcode` goes
+back to loopback only.
+
 ## Manual testing and screenshots
 
 The agent has no in-app Browser pane here. The brief tells it to verify with unit tests and to

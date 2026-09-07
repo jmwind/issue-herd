@@ -211,6 +211,7 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 | `issue-herd dry-run` | print what would be picked up, change nothing |
 | `issue-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing |
 | `issue-herd status` | tracked runs, their outcome, and each live agent's state |
+| `issue-herd console` | **the factory floor**: every factory on this machine in a browser, phone first — alerts that need you, what is assembling, today's output, one tap to the issue, the PR, or an exit button. `console set-passcode` gates it and serves it over Tailscale |
 | `issue-herd reset <KEY>` | forget a run so the issue can be picked up again |
 | `issue-herd login [linear\|github] [--paste]` | sign in and save the token for this machine |
 | `issue-herd logout [linear\|github]` | forget the saved token |
@@ -225,7 +226,7 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 | [Configuration](docs/configuration.md) | `config.json` reference, the rule language, per-machine overrides |
 | [Issue trackers](docs/trackers.md) | Linear and GitHub Issues, what the fields map to, signing in, adding a tracker |
 | [Roles](docs/roles.md) | several agents on one issue, a reviewer on another provider, `basedOn`, `passes` |
-| [How it works](docs/how-it-works.md) | the guards, a run start to finish, what happens when the PR merges, troubleshooting |
+| [How it works](docs/how-it-works.md) | the guards, a run start to finish, what happens when the PR merges, the console, troubleshooting |
 | [Maintainers](docs/maintainers.md) | cutting a release, hacking on the tool |
 | [The mark](assets/logo/README.md) | the logo, and the rules for using it |
 
