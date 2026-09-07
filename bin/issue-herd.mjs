@@ -167,10 +167,15 @@ const DEFAULTS = {
     onDone: { comment: true, state: 'In Review', notify: true, closeWorkspace: false },
     onBlocked: { comment: true, notify: true },
     onIdle: { comment: true, notify: true },
-    // A run ends at the merge, not at the PR. Once GitHub says the pull request is merged the agent
-    // is asked to exit, its herdr workspace closes and its worktree goes back. On by default: the
-    // point of the issue this implements is that nobody should have to ask for it in a brief.
-    onMerged: { comment: true, notify: true, exitAgent: true, closeWorkspace: true, removeWorktree: true },
+    // A merged PR is what says a run is over, so the watcher keeps following the pull request and
+    // tells you when it lands. What it does NOT do is tidy up behind you: exiting the agent throws
+    // away the session you might still want to read, and none of the three teardown steps is worth
+    // doing to somebody who did not ask. Turn on the ones you want, per rule or per machine:
+    //   "onMerged": { "exitAgent": true, "closeWorkspace": true, "removeWorktree": true }
+    // The notification names the workspace and the worktree either way, so shutting a finished run
+    // down by hand is one glance rather than a hunt. `comment` is off because GitHub already writes
+    // the merge into the issue's own timeline; on Linear it is worth turning on.
+    onMerged: { comment: false, notify: true, exitAgent: false, closeWorkspace: false, removeWorktree: false },
   },
   rules: [],
 };
@@ -718,14 +723,20 @@ class IssueHerd {
       log(`${key}: ${run.prUrl} is merged`);
       const did = await this.shutdown(key, run, rule);
       run.status = 'merged'; run.finishedAt = new Date().toISOString(); saveState(this.state);
-      await this.report(key, rule, rule.onMerged, `🎉 ${run.prUrl} is merged, so **issue-herd** shut ${key} down.\n\n${did.map((d) => `- ${d}`).join('\n')}`, 'done');
+      // The notification only carries the first line, and with nothing switched on the thing you
+      // need from it is what is still standing — so that goes first and the URL follows.
+      const lines = did.length
+        ? [`🎉 ${key} is finished — ${run.prUrl} is merged, so the run was shut down.`, '', ...did.map((d) => `- ${d}`)]
+        : [`🎉 ${key} is finished — its PR is merged. ${this.leftStanding(run, rule)}`, '', run.prUrl];
+      await this.report(key, rule, rule.onMerged, lines.join('\n'), 'done');
     }
   }
 
   /**
-   * Shut a merged run down, in the only order that works: the agent exits first (it is a process
-   * with its own idea of how to stop), then its workspace closes, and only then does the worktree
-   * go — a directory nothing is standing in any more.
+   * Shut a merged run down — only as far as `onMerged` was asked to, which by default is not at all.
+   * When every step is switched on the order is the only one that works: the agent exits first (it
+   * is a process with its own idea of how to stop), then its workspace closes, and only then does
+   * the worktree go, a directory nothing is standing in any more.
    *
    * Every step reports rather than throws. A merge has already happened; refusing to do the rest of
    * the cleanup because herdr was restarted, or because the worktree has scratch files in it, would
@@ -751,6 +762,19 @@ class IssueHerd {
       did.push(r.removed ? `Worktree \`${where}\` removed.` : `Worktree \`${where}\` kept: ${r.reason}.`);
     }
     return did;
+  }
+
+  /**
+   * What a finished run still has open. This is the first line of the merge report, so it is also
+   * the whole herdr notification (120 characters of it) — hence the worktree's directory name
+   * rather than its path: it is what the herdr sidebar shows you anyway.
+   */
+  leftStanding(run, rule) {
+    const bits = [];
+    if (run.workspaceId) bits.push(`workspace \`${run.workspaceId}\``);
+    const at = run.worktree !== 'none' && rule ? run.worktreePath || run.workDir : null;
+    if (at && path.resolve(at) !== path.resolve(rule.repo)) bits.push(`worktree \`${path.basename(at)}\``);
+    return bits.length ? `Its ${bits.join(' and ')} ${bits.length > 1 ? 'are' : 'is'} still open.` : 'Nothing was left open.';
   }
 
   /**

@@ -33,11 +33,11 @@
       "notify": true
     },
     "onMerged": {
-      "comment": true,
+      "comment": false,
       "notify": true,
-      "exitAgent": true,
-      "closeWorkspace": true,
-      "removeWorktree": true
+      "exitAgent": false,
+      "closeWorkspace": false,
+      "removeWorktree": false
     }
   },
   "rules": [
