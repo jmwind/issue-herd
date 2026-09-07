@@ -1,8 +1,9 @@
 # issue-herd
 
 Watches an issue tracker (**Linear** or **GitHub Issues**) and, when an issue matches one of your
-rules, opens a **herdr workspace**, starts **Claude Code** in it (worktree mode), hands it a written
-brief, and reports back to the issue: picked up → waiting for you → PR open. Runs on your own
+rules, opens a **herdr workspace**, starts a **coding agent** in it (Claude Code by default;
+codex or anything else herdr can start, per rule), hands it a written brief, and reports back to
+the issue: picked up → waiting for you → PR open. Runs on your own
 machine, inside herdr, with no public URL and no third-party orchestrator. Zero dependencies beyond
 Node 22 and the `herdr` CLI.
 
@@ -228,10 +229,11 @@ The same fields work on every tracker; what they map to on GitHub is in
                               // actually reports, never a name issue-herd hoped for.
     "permissionMode": "auto",         // claude --permission-mode. auto = unattended (the point of a watcher);
                                       // acceptEdits still asks before every command; see `claude --help`
-    "agentKind": "claude",    // passed to `herdr agent start --kind`; herdr decides what it can start
-    "model": null,            // becomes `--model <name>` on the agent's command line, e.g. "opus".
-                              // Per rule, so a reviewer role can run a different model from the implementer
-    "claudeArgs": [],         // extra flags for claude, e.g. ["--fallback-model", "sonnet"]
+    "agentKind": "claude",    // which agent runs: passed to `herdr agent start --kind`
+    "model": null,            // e.g. "opus", "gpt-5-codex"
+    "effort": null,           // e.g. "high" — reasoning effort, where the agent has one
+    "agentArgs": [],          // extra flags, passed to the agent verbatim, after everything above
+                              // ("claudeArgs" is the old name and still works). See A second opinion.
     "maxConcurrent": 2,       // per-rule cap
     "prompt": "prompts/default.md",   // brief template: .issue-herd/prompts/default.md if present, else the built-in
     "instructionsFile": "instructions.md",  // repo brief appended to the prompt; "instructions" (inline string) also works
@@ -431,11 +433,55 @@ Give a rule a `role` and everything the run is keyed by follows it:
 - **The role reaches the agent.** The brief says which claim the run holds and that other agents
   may hold others on the same issue. Point each role at its own `prompt` — the built-in one tells
   the agent to implement the issue and open a PR, which is not what a reviewer should do.
-- **Each role picks its own model.** `model` (and `agentKind`, which is what herdr is asked to
-  start) are per rule, so the implementer can run one model and the reviewer another without
-  either knowing about the other.
+- **Each role picks its own agent.** `agentKind`, `model` and `effort` are per rule — see
+  [A second opinion](#a-second-opinion-a-reviewer-on-another-provider).
 - `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7.review`
   forgets just that one.
+
+### A second opinion: a reviewer on another provider
+
+A reviewer is only a second set of eyes if it is not the same eyes. `agentKind`, `model` and
+`effort` are per rule, so the implementer and the reviewer can be different agents entirely:
+
+```jsonc
+{
+  "roles": ["impl", "review"],
+  "rules": [
+    { "name": "build",  "role": "impl",   "match": "label:ai and not state:started",
+      "model": "opus" },
+    { "name": "review", "role": "review", "match": "label:ai and state:\"In Review\"",
+      "agentKind": "codex", "model": "gpt-5-codex", "effort": "high",
+      "passes": 3, "prompt": "prompts/review.md" }
+  ]
+}
+```
+
+`agentKind` goes straight to `herdr agent start --kind`, and herdr is the authority on which
+agents it can start — `herdr agent start --help` lists them (claude, codex, gemini, cursor, grok,
+copilot, and others). What issue-herd adds is the translation, because everything after `--` is
+the agent's *own* command line and the four things a rule asks for are spelled differently by each:
+
+| | Claude Code | codex |
+|---|---|---|
+| model | `--model opus` | `--model gpt-5-codex` |
+| effort | `--effort high` | `-c model_reasoning_effort="high"` |
+| unattended | `--permission-mode auto` | `--sandbox workspace-write --approve-for-me` |
+| session name | `--name GH-7.review` | (none — herdr's agent name is the name) |
+| leaves with | `/exit` | `/quit` |
+
+An agent with no translation still runs: it gets `--model` and whatever the rule puts in
+`agentArgs`, which is enough for most of them and means issue-herd does not have to know every
+agent's flags before you can use one.
+
+Two things worth knowing:
+
+- **Sign in to each provider yourself**, once per machine (`claude`, `codex login`, …).
+  `issue-herd login` is for the *tracker*; it never touches an agent's credentials.
+- **`permissionMode` never turns a sandbox off.** It is Claude Code's word, and each agent decides
+  what "unattended" means for itself — but none of them may decide it means "no boundary at all".
+  codex's `auto` is the widest *sandboxed* setting, not
+  `--dangerously-bypass-approvals-and-sandbox`. If you want that, type it into `agentArgs`, which
+  is appended last and overrides everything above it.
 
 ### More than one turn: `passes`
 

@@ -129,3 +129,21 @@ test('a rule that may chime in more than once says so in the brief', (t) => {
   assert.match(text, /You will get another turn if the issue moves on/);
   assert.match(text, /Role: `review`/);
 });
+
+test('a reviewer on another provider is started in that provider\'s own dialect', (t) => {
+  // The second-set-of-eyes case: the reviewer role runs codex while the implementer runs Claude.
+  // What matters is the argv after `--`, because that is the agent's own command line and getting
+  // it wrong kills the pane at the prompt rather than failing anywhere visible.
+  const dir = repo(t, { role: 'review', agentKind: 'codex', model: 'gpt-5-codex', effort: 'high' });
+  const herdr = fakeHerdr(t, { mode: 'blocked-first', cwd: dir });
+  const r = smoke(dir, herdr);
+  assert.equal(r.status, 0, r.out);
+  const start = herdr.calls().split('\n').find((l) => l.startsWith('agent start'));
+  assert.ok(start, `no agent start in:\n${herdr.calls()}`);
+  assert.match(start, /--kind codex/);
+  assert.match(start, /-- --model gpt-5-codex -c model_reasoning_effort="high" --sandbox workspace-write --approve-for-me/);
+  // none of Claude Code's flags reach it
+  assert.doesNotMatch(start, /--permission-mode/);
+  assert.doesNotMatch(start, /--name SMOKE/);
+  assert.doesNotMatch(start, /--effort/);
+});

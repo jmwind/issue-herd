@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // issue-herd — watch an issue tracker (Linear or GitHub Issues); when an issue matches a rule, open
-// a git worktree and a herdr workspace, start Claude Code in it, brief it, and report back.
+// a git worktree and a herdr workspace, start a coding agent in it, brief it, and report back.
 //
 //   issue-herd                 run the watcher (foreground; run it inside a herdr pane)
 //   issue-herd once            one poll, then exit
@@ -39,6 +39,7 @@ import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken } from '../
 import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
 import { makeWorktree, removeWorktree } from '../src/worktree.mjs';
+import { agentArgv, describeAgent, exitCommandFor, TRANSLATED_KINDS } from '../src/agents.mjs';
 import { parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
 import { GitHubTracker } from '../src/trackers/github.mjs';
 
@@ -159,14 +160,16 @@ const DEFAULTS = {
     // agent is prompted. null accepts whatever the tool named it.
     branch: '{{issueBranchName}}{{roleSuffix}}',
     permissionMode: 'auto',        // claude --permission-mode: auto (unattended), acceptEdits (asks before commands), plan, …
-    // Which coding agent runs, and on which model. `agentKind` goes straight to
-    // `herdr agent start --kind`, so whatever herdr can start a rule can ask for, and herdr is the
-    // one that rejects a name it does not know. `model` becomes `--model <name>` on the agent's own
-    // command line. Both are per rule, so a reviewer role can run a different model from the
-    // implementer without either of them knowing about the other.
+    // Which coding agent runs, on which model, at what effort. All three are per rule, which is
+    // the point: a reviewer role is only a second opinion if it is not the same model that wrote
+    // the code. `agentKind` goes straight to `herdr agent start --kind` — herdr is the authority on
+    // which agents it can start — and src/agents.mjs turns the other three into that agent's own
+    // flags (Claude Code takes `--effort high`, codex takes `-c model_reasoning_effort="high"`).
     agentKind: 'claude',
     model: null,
-    claudeArgs: [],
+    effort: null,
+    agentArgs: [],                  // extra flags, passed to the agent verbatim, after everything above
+    claudeArgs: [],                 // the old name for agentArgs, still honoured
     maxConcurrent: 2,
     prompt: 'prompts/default.md',   // repo override in .issue-herd/prompts/, else the package's
     instructions: '',               // inline text appended to the brief …
@@ -471,10 +474,11 @@ class IssueHerd {
 
       // 2. start claude (an adopted session is already up)
       if (!existing) {
-        const agentArgs = ['--name', key];
-        if (rule.permissionMode) agentArgs.push('--permission-mode', rule.permissionMode);
-        if (rule.model) agentArgs.push('--model', String(rule.model));
-        agentArgs.push(...(rule.claudeArgs || []));
+        const agentArgs = agentArgv({
+          kind: rule.agentKind, name: key, permissionMode: rule.permissionMode,
+          model: rule.model, effort: rule.effort,
+          extra: [...(rule.agentArgs || []), ...(rule.claudeArgs || [])],
+        });
         await sleep(1500); // let the shell reach its prompt
         await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs, kind: rule.agentKind || 'claude' });
         log(`${key}: claude started as agent "${run.agentName}"`);
@@ -832,7 +836,7 @@ class IssueHerd {
     const policy = rule.onMerged || {};
     const did = [];
     if (policy.exitAgent && run.agentName) {
-      const how = await this.herdr.stopAgent(run.agentName);
+      const how = await this.herdr.stopAgent(run.agentName, { exitCommand: exitCommandFor(rule.agentKind) });
       log(`${key}: agent ${run.agentName} ${how}`);
       did.push(`Agent \`${run.agentName}\` ${how}.`);
     }
@@ -969,7 +973,8 @@ class IssueHerd {
   logRules() {
     for (const r of this.cfg.rules) {
       const off = r.enabled === false ? ` (disabled${r.disabledReason ? `: ${r.disabledReason}` : ''})` : '';
-      log(`  rule ${r.name}${r.role ? ` [${r.role}]` : ''}${off}: ${r.match}  →  ${r.repo}`);
+      const runs = describeAgent(r);
+      log(`  rule ${r.name}${r.role ? ` [${r.role}]` : ''}${off}: ${r.match}  →  ${r.repo}${runs === 'claude' ? '' : `  (${runs})`}`);
     }
     const roles = [...new Set(this.cfg.rules.filter((r) => r.enabled !== false && r.role).map((r) => r.role))];
     log(`  guards: claim label ${this.cfg.defaults.claimLabel || 'off'}${roles.length ? ` scoped to role(s) ${roles.join(', ')}` : ''}, skip issues assigned to others: ${this.cfg.defaults.skipIfAssignedToOthers ? 'on' : 'off'}; caps: ${this.cfg.maxConcurrent} total`);
