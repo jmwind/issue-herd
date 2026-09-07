@@ -9,7 +9,7 @@ import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runSta
 import { Gate, hashPasscode, verifyPasscode } from '../src/console/passcode.mjs';
 import { stampFactory, loadRegistry, isStale, forgetFactory } from '../src/console/registry.mjs';
 import { complexity } from '../src/console/git.mjs';
-import { createHandler, listen, tailscaleAddresses } from '../src/console/server.mjs';
+import { createHandler, listen, tailscaleAddresses, REPO_URL } from '../src/console/server.mjs';
 import { FactoryConsole } from '../src/console/console.mjs';
 
 const T = (h, m, s = 0) => new Date(2026, 8, 7, h, m, s).getTime();
@@ -304,7 +304,8 @@ async function serve(t, { hash = null } = {}) {
 
 test('http: an ungated console serves the app and the state, and refuses cross-origin actions', async (t) => {
   const { base, calls } = await serve(t);
-  const page = await fetch(base + '/'); assert.equal(page.status, 200); assert.match(await page.text(), /Factory Floor/);
+  const page = await fetch(base + '/'); assert.equal(page.status, 200); const body = await page.text(); assert.match(body, /Factory Floor/);
+  assert.match(body, new RegExp('<a class="home" href="' + REPO_URL + '" target="_blank" rel="noopener"[^>]*><svg[^>]*class="mark"'), 'the mark in the title bar opens the repository in a new tab');
   const state = await fetch(base + '/api/state'); assert.equal((await state.json()).hostname, 'box');
   const noOrigin = await fetch(base + '/api/exit', { method: 'POST', body: '{}' }); assert.equal(noOrigin.status, 403);
   const other = await fetch(base + '/api/exit', { method: 'POST', headers: { origin: 'http://evil.example' }, body: '{}' }); assert.equal(other.status, 403);
@@ -325,7 +326,8 @@ test('http: an ungated console serves the app and the state, and refuses cross-o
 test('http: a gated console shows the lock page, refuses the API, unlocks with the passcode, and locks out guesses', async (t) => {
   const { base } = await serve(t, { hash: hashPasscode('1357') });
   const host = new URL(base).host, origin = 'http://' + host;
-  const page = await fetch(base + '/'); assert.match(await page.text(), /Locked/);
+  const page = await fetch(base + '/'); const lock = await page.text(); assert.match(lock, /Locked/);
+  assert.match(lock, new RegExp('<a class="home" href="' + REPO_URL + '" target="_blank"'), 'the lock page links the mark too');
   assert.equal((await fetch(base + '/api/state')).status, 401);
   const wrong = await fetch(base + '/unlock', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code: '0000' }) });
   assert.equal(wrong.status, 401); assert.equal((await wrong.json()).attemptsLeft, 4);

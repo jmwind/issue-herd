@@ -194,14 +194,15 @@ issue-herd console set-passcode    # gate it, and serve it on this machine's Tai
 
 Three screens, in Factorio's idiom because a factory is what this is:
 
-- **Overview.** A factory picker in the title bar (one machine runs several), then the factory
-  itself at a glance — its tracker and repository, every rule with the role it plays, the agent
-  and model behind it and the issues it matches, and whether the watcher is alive — with the
-  legend for the lights under it. Then **Alerts** (one card per task that needs a person, with
-  what to do about it), **Assembling** (one row per open issue, with the roles on it and how long
-  it has waited on you), and **Output today** (one plain line per finished task; the roles are on
-  the detail screen). Every task shows lines added and removed with a size grade, and the state of
-  its issue and its pull request. The belt across the top carries the factory's four numbers.
+- **Overview.** A factory picker in the title bar (one machine runs several; the mark beside it
+  opens issue-herd on GitHub in a new tab), then the factory itself at a glance — its tracker and
+  repository, every rule with the role it plays, the agent and model behind it and the issues it
+  matches, and whether the watcher is alive — with the legend for the lights under it. Then
+  **Alerts** (one card per task that needs a person, with what to do about it), **Assembling**
+  (one row per open issue, with the roles on it and how long it has waited on you), and **Output
+  today** (one plain line per finished task; the roles are on the detail screen). Every task shows
+  lines added and removed with a size grade, and the state of its issue and its pull request. The
+  belt across the top carries the factory's four numbers.
 - **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
   waiting on you, done) plus a "you" row, lines added and removed with a size grade and its reason,
   each role's report, a merged scrollback (the last 100 lines of every agent on the task, one
