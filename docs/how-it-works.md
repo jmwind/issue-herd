@@ -198,8 +198,7 @@ Three screens, in Factorio's idiom because a factory is what this is:
   (one card per task that needs a person, with what to do about it), **Assembling** (one row per
   open issue, with how long it has waited on you), and **Output today**. Every task shows the
   roles that worked on it, lines added and removed with a size grade, and the state of its issue
-  and its pull request. The belt across the top
-  carries the factory's four numbers.
+  and its pull request. The belt across the top carries the factory's four numbers.
 - **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
   waiting on you, done) plus a "you" row, lines added and removed with a size grade and its reason,
   each role's report, a merged scrollback (the last 100 lines of every agent on the task, one
@@ -207,6 +206,14 @@ Three screens, in Factorio's idiom because a factory is what this is:
   give the screen it is showing right now, so the block is shorter), and one close button.
 - **Factory picker.** Every factory with its tracker, last poll, running and alert counts, a
   watcher not seen for three polls marked stale, and the chosen factory's rules in three lines.
+
+**What raises an alert.** A person actually being the one waited for: a dialog, a question, a
+decision, a failure, or a pull request no role is still working on. An agent still sitting on its
+workspace after the task is over gets a card too. While any role is still running on a task, the
+implementer's open PR is *waiting for review* — a fact on its chip, not an alert, and not your
+wait time — and a reviewer that has finished is done: its report is a line on the task (*found
+nothing blocking*, *has findings*), never a decision of its own. The merge alert shows those
+verdicts under its line, and its clock starts when the last reviewer finished.
 
 **Where it reads from.** Each watcher stamps `~/.config/issue-herd/factories.json` every poll
 (name, tracker, version, last poll); the console lists those entries, plus any `<name>Watch`

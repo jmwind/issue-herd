@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, factoryView } from '../src/console/model.mjs';
+import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView } from '../src/console/model.mjs';
 import { Gate, hashPasscode, verifyPasscode } from '../src/console/passcode.mjs';
 import { stampFactory, loadRegistry, isStale, forgetFactory } from '../src/console/registry.mjs';
 import { complexity } from '../src/console/git.mjs';
@@ -132,6 +132,46 @@ test('a merged task shows as finished even when one of its role runs failed', ()
   // a finished, unmerged task is described by its outcome, not by a failed sibling
   const done = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { ...runs, 'GH-5@impl': { ...runs['GH-5@impl'], status: 'done', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/6' } } } }, now: T(12, 0) }).issues[0];
   assert.equal(done.bucket, 'done'); assert.equal(done.light, 'grey'); assert.equal(done.phrase, 'impl PR open');
+});
+
+test('a PR waiting on reviewers is nobody\'s wait, and a reviewer\'s report is not a decision', () => {
+  // GH-45 as the screenshot in issue #49 had it: impl's PR is up and the watcher waits for the
+  // merge, review has reported, usability is still reading.
+  const runs = {
+    'GH-45@impl': { rule: 'implement', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-45', title: 'Allow auto-merge', startedAt: iso(20, 0), finishedAt: iso(20, 40), agentName: 'gh-45-impl', workspaceId: 'w1', prUrl: 'https://github.com/o/r/pull/47', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/47' } },
+    'GH-45@review': { rule: 'tech-lead', role: 'review', status: 'done', issueKey: 'GH-45', title: 'Allow auto-merge', startedAt: iso(20, 41), finishedAt: iso(20, 42), agentName: 'gh-45-review', workspaceId: 'w2', result: { status: 'needs_human', summary: 'NOT OK TO MERGE TO MAIN' } },
+    'GH-45@usability': { rule: 'usability', role: 'usability', status: 'running', issueKey: 'GH-45', title: 'Allow auto-merge', startedAt: iso(20, 41), agentName: 'gh-45-usability', workspaceId: 'w3' },
+  };
+  const config = { ...CONFIG, roles: ['impl', 'review', 'usability'] };
+  const idle = { agents: [{ name: 'gh-45-impl', agent_status: 'idle', workspace_id: 'w1' }, { name: 'gh-45-review', agent_status: 'idle', workspace_id: 'w2' }, { name: 'gh-45-usability', agent_status: 'working', workspace_id: 'w3' }] };
+  const v = factoryView({ id: 'x', repo: '/r', config, state: { runs }, index: indexSnapshot(idle), now: T(20, 45) });
+  const t = v.issues[0];
+  assert.deepEqual(v.alerts, [], 'nothing needs a person while usability is still working');
+  assert.deepEqual(t.slots.map((s) => [s.light, s.phrase]), [['grey', 'waiting for review'], ['grey', 'has findings'], ['green', 'working']]);
+  assert.equal(t.phrase, 'usability working'); assert.equal(t.light, 'green');
+  assert.equal(t.humanWaitMs, 0, 'the merge clock has not started');
+  // impl running tools while it waits (a monitor on its PR) is the same waiting state, lit
+  const busy = factoryView({ id: 'x', repo: '/r', config, state: { runs }, index: indexSnapshot({ agents: [...idle.agents.slice(1), { name: 'gh-45-impl', agent_status: 'working', workspace_id: 'w1' }] }), now: T(20, 45) });
+  assert.deepEqual(busy.alerts, []); assert.equal(busy.issues[0].slots[0].light, 'green'); assert.equal(busy.issues[0].slots[0].phrase, 'waiting for review');
+  // a dialog in impl's pane is still a person's, whoever else is running
+  const blocked = factoryView({ id: 'x', repo: '/r', config, state: { runs }, index: indexSnapshot({ agents: [...idle.agents.slice(1), { name: 'gh-45-impl', agent_status: 'blocked', workspace_id: 'w1' }] }), now: T(20, 45) });
+  assert.deepEqual(blocked.alerts.map((a) => a.kind), ['blocked']);
+  // usability finishes: now the PR is the person's, one alert for the task, the clock from that moment
+  const later = { ...runs, 'GH-45@usability': { ...runs['GH-45@usability'], status: 'done', finishedAt: iso(20, 50), result: { status: 'nothing_to_do', summary: 'USABILITY: OK' } } };
+  const done = factoryView({ id: 'x', repo: '/r', config, state: { runs: later }, index: indexSnapshot(idle), now: T(21, 0) });
+  assert.deepEqual(done.alerts.map((a) => [a.kind, a.role]), [['merge', 'impl']], 'reviewers who finished are done, not alerts, and no one is "holding" a workspace on a task in flight');
+  assert.equal(done.alerts[0].text, 'Pull request open; review has findings, usability found nothing blocking. Waiting for your merge.');
+  assert.equal(done.alerts[0].verdicts, 'review has findings, usability found nothing blocking', 'shown under the alert line, where a phone can see it');
+  assert.deepEqual(done.issues[0].runs.map((r) => r.ownsPr), [true, false, false]);
+  assert.equal(done.alerts[0].sinceMs, 10 * 60e3, 'waited on since usability finished, not since the PR opened');
+  assert.equal(done.issues[0].humanWaitMs, 10 * 60e3);
+  assert.equal(done.issues[0].phrase, 'impl awaiting your merge');
+  // once the task is over, an agent still sitting on a workspace is worth a line again
+  const merged = factoryView({ id: 'x', repo: '/r', config, state: { runs: { ...later, 'GH-45@impl': { ...later['GH-45@impl'], status: 'merged', finishedAt: iso(21, 5) } } }, index: indexSnapshot(idle), now: T(21, 10) });
+  assert.deepEqual(merged.alerts.map((a) => [a.kind, a.role]), [['holding', 'review'], ['holding', 'impl']], 'longest first; usability\'s agent is still working in this snapshot, so it holds nothing');
+  // a lone run that stops for a decision, with no PR anyone else owns, is still a decision
+  assert.equal(runState({ status: 'done', result: { status: 'needs_human' } }, null, { reviewer: false }).needsYou, 'needs_human');
+  assert.ok(ownsPr(runs['GH-45@impl'])); assert.ok(!ownsPr(runs['GH-45@review']));
 });
 
 test('factoryView without roles still lists each run as one slot', () => {
