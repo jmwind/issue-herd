@@ -74,6 +74,14 @@ panes, warm orange headings, Titillium Web (the game's own face), green confirm 
 buttons, orange for the selected item, and alerts as the first section because that is where the
 game puts them too. Single dark theme by design.
 
+**Motion.** The console should feel like a factory producing, not a status page: a transport
+belt under every title bar carries the factory's real output (commits, test runs, PRs, merges,
+line counts) with an inserter swinging at its end; a gear turns next to the clock while the
+watcher polls; every working machine shows a crafting progress bar; status lights pulse; and on a
+desktop, smoke rises behind the page from one chimney per watcher. All of it is CSS keyframes and
+one small canvas, switched off under `prefers-reduced-motion`, and every item on the belt is data
+the console already holds, so the motion is honest.
+
 Desktop gets the same app with room to spare: the three screens become three columns. Keyboard
 shortcuts come with it, not before.
 
