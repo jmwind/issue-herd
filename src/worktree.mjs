@@ -12,6 +12,12 @@
 // those existed only because something else owned this step. None of them survive it moving here,
 // and the next coding tool we support inherits none of that, because starting a process in a
 // directory is something every tool can do.
+//
+// Choosing the branch is only half of it: a worktree also has to be cut from the right *commit*.
+// git's own start point is this checkout's HEAD, and in a repository whose merges happen on the
+// remote — every pull request this tool opens — nothing ever moves that. That is what baseTip(),
+// defaultBranch() and pullBase() are for: fetch, then start from the tip, and keep the checkout the
+// watcher lives in from quietly falling behind the branch it is supposed to be on.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,6 +33,86 @@ export function worktreeRoot(repo, dir) {
     throw new Error(`"worktreeDir" must stay inside the repository: ${JSON.stringify(dir)}`);
   }
   return root;
+}
+
+/**
+ * The branch a run's work is cut from when no role says otherwise: what `origin/HEAD` points at,
+ * else a local `main` or `master`, else the branch this checkout is standing on. Null when even
+ * that is nothing (a detached or empty checkout) — then a worktree starts where it always did.
+ *
+ * Asked, rather than configured, because the answer is a property of the repository and getting it
+ * wrong is silent: a run cut from the wrong branch looks exactly like a run cut from the right one.
+ */
+export function defaultBranch({ git, repo }) {
+  const head = git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], repo);
+  if (head) return head.replace(/^origin\//, '');
+  for (const name of ['main', 'master']) {
+    if (git(['show-ref', '--verify', '--quiet', `refs/heads/${name}`], repo) !== null) return name;
+  }
+  const on = git(['rev-parse', '--abbrev-ref', 'HEAD'], repo);
+  return on && on !== 'HEAD' ? on : null;
+}
+
+/**
+ * Where `base` really is: `{ ref, at }`, a display name and the commit behind it.
+ *
+ * Everything that starts or moves a worktree comes through here, because "where is main?" has a
+ * wrong answer that is easy to reach. Merges land on the remote; the watcher's own checkout only
+ * learns about them when something fetches, and nothing did. So: ask origin first, then take
+ * whichever of the local branch and origin's copy contains the other. No remote, or no network, is
+ * not a failure — the local ref is then the best we have, and a genuine divergence keeps the local
+ * branch, because commits that are only here are still somebody's and this is not the place to
+ * decide about them.
+ */
+export function baseTip({ git, at, base }) {
+  if (!base) return null;
+  git(['fetch', '--quiet', 'origin', base], at);
+  const read = (ref, name) => {
+    const sha = git(['rev-parse', '--verify', '--quiet', ref], at);
+    return sha ? { ref: name, at: sha } : null;
+  };
+  const local = read(`refs/heads/${base}`, base);
+  const remote = read(`refs/remotes/origin/${base}`, `origin/${base}`);
+  if (!local) return remote;
+  if (!remote || local.at === remote.at) return local;
+  return git(['merge-base', '--is-ancestor', local.at, remote.at], at) !== null ? remote : local;
+}
+
+/**
+ * Fast-forward the checkout the watcher itself runs in onto `base`.
+ *
+ * Worktrees are cut from the tip whatever this checkout says, so this is not what keeps a run's
+ * code current — it is what keeps *the checkout* current: `worktree: "none"` runs work in it
+ * directly, `worktree: "herdr"` cuts from its HEAD, the config the watcher reloads is read out of
+ * it, and it is the directory its owner opens. Left alone in a factory where every merge lands on
+ * the remote, it silently falls months behind.
+ *
+ * Nothing here can lose work. It moves only a clean checkout, only when it is standing on `base`,
+ * only forwards, and never with a merge: a dirty tree, another branch, or commits of its own are
+ * all reported and left exactly as they are. Never throws, for the same reason catchUp() does not.
+ */
+export function pullBase({ git, repo, base }) {
+  if (!base) return { pulled: false, reason: 'no base branch to pull' };
+  const on = git(['rev-parse', '--abbrev-ref', 'HEAD'], repo);
+  if (on !== base) return { pulled: false, reason: `the checkout is on ${on || 'no branch'}, not ${base}` };
+  // Untracked files are not a reason to refuse — a fast-forward that would overwrite one is
+  // refused by git itself, and the answer we want then is git's.
+  if (git(['status', '--porcelain', '-uno'], repo)) return { pulled: false, reason: 'the checkout has uncommitted changes' };
+  const before = git(['rev-parse', 'HEAD'], repo);
+  const tip = baseTip({ git, at: repo, base });
+  if (!tip) return { pulled: false, reason: `no branch or origin branch called ${base}` };
+  if (tip.at === before) {
+    // baseTip keeps the local branch when the two have diverged — and here the local branch *is*
+    // this checkout, so it comes back as its own tip. "Already up to date" would then be hiding the
+    // one state anybody needs to hear about: work here that no merge will ever bring back.
+    const origin = git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], repo);
+    const diverged = origin && origin !== before && git(['merge-base', '--is-ancestor', origin, before], repo) === null;
+    return { pulled: false, reason: diverged ? `${base} here and origin/${base} have each moved on` : 'already up to date', at: before };
+  }
+  // `--ff-only` is the enforcement, not a check we make and then trust: git refuses anything that
+  // is not a fast-forward, and its refusal is the answer we want.
+  if (git(['merge', '--ff-only', tip.at], repo) === null) return { pulled: false, reason: 'git would not fast-forward it' };
+  return { pulled: true, from: before, at: tip.at, ref: tip.ref };
 }
 
 /**
@@ -53,18 +139,27 @@ export function makeWorktree({ git, repo, dir = '.issue-herd/worktrees', slug, b
 
   fs.mkdirSync(root, { recursive: true });
   const onExistingBranch = branch && git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], repo) !== null;
-  // `base` is where a new branch starts. A reviewer's worktree is worth nothing cut from the
-  // default branch: it has to hold the code it is reviewing, or "run the tests the implementer
-  // said passed" is not a thing it can do. An existing branch is attached to as it stands —
-  // catchUp() is what moves it on, because that is a decision about someone's commits.
-  const start = base && !onExistingBranch ? [base] : [];
+  // `base` is where a new branch starts, and it starts from the tip of it — baseTip() asks origin
+  // first. A reviewer's worktree is worth nothing cut from the default branch: it has to hold the
+  // code it is reviewing, or "run the tests the implementer said passed" is not a thing it can do.
+  // An implementer's is worth little cut from a default branch that is three merges behind, which
+  // is what `git worktree add` with no start point gives you — whatever this checkout happens to be
+  // standing on, and nothing pulls that. An existing branch is attached to as it stands — catchUp()
+  // is what moves it on, because that is a decision about someone's commits.
+  const from = branch && !onExistingBranch ? baseTip({ git, at: repo, base }) : null;
+  if (base && branch && !onExistingBranch && !from) {
+    throw new Error(`there is nothing called ${base}, here or on origin, to start ${branch} from`);
+  }
+  // The start point is a commit, never a name: cutting the branch from `origin/main` by name would
+  // leave git calling main its upstream, and a run's branch answers to nobody but itself.
+  const start = from ? [from.at] : [];
   const args = !branch ? ['worktree', 'add', at]
     : onExistingBranch ? ['worktree', 'add', at, branch]
       : ['worktree', 'add', '-b', branch, at, ...start];
   if (git(args, repo) === null) {
-    throw new Error(`git worktree add failed for ${at}${branch ? ` on ${branch}` : ''}${start.length ? ` from ${base}` : ''} — is the branch checked out somewhere else?`);
+    throw new Error(`git worktree add failed for ${at}${branch ? ` on ${branch}` : ''}${from ? ` from ${from.ref}` : ''} — is the branch checked out somewhere else?`);
   }
-  return { path: at, branch, base: start.length ? base : null, created: true };
+  return { path: at, branch, base: from ? from.ref : null, created: true };
 }
 
 /**
@@ -81,17 +176,11 @@ export function makeWorktree({ git, repo, dir = '.issue-herd/worktrees', slug, b
 export function catchUp({ git, repo, at, base }) {
   if (!at || !base) return { moved: false, reason: 'nothing to catch up to' };
   const before = git(['rev-parse', 'HEAD'], at);
-  // A base another machine owns exists here only as a remote branch, so try to bring it up to date
-  // first. No remote, or no network, is not a failure: the local ref is then the best we have.
-  git(['fetch', '--quiet', 'origin', base], at);
-  const target = ['refs/heads/' + base, 'refs/remotes/origin/' + base]
-    .find((ref) => git(['show-ref', '--verify', '--quiet', ref], at) !== null);
-  if (!target) return { moved: false, reason: `no branch or origin branch called ${base}` };
-  const to = git(['rev-parse', target], at);
-  if (!to) return { moved: false, reason: `could not read ${target}` };
-  if (to === before) return { moved: false, reason: 'already up to date', at: to };
-  if (git(['reset', '--hard', to], at) === null) return { moved: false, reason: 'git would not move it' };
-  return { moved: true, from: before, at: to, ref: target };
+  const tip = baseTip({ git, at, base });
+  if (!tip) return { moved: false, reason: `no branch or origin branch called ${base}` };
+  if (tip.at === before) return { moved: false, reason: 'already up to date', at: tip.at };
+  if (git(['reset', '--hard', tip.at], at) === null) return { moved: false, reason: 'git would not move it' };
+  return { moved: true, from: before, at: tip.at, ref: tip.ref };
 }
 
 /**

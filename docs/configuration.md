@@ -104,6 +104,12 @@ The same fields work on every tracker; what they map to on GitHub is in
   "maxConcurrent": 3,         // global cap on running agents
   "roles": null,              // which roles this project runs, e.g. ["impl", "review"]. null means "whatever
                               // the rules ask for"; a list disables the rules whose role is not in it. See Roles.
+  "baseBranch": null,         // the branch runs are cut from, and the one this checkout is kept on. null asks
+                              // the repository: origin/HEAD, else a local main or master. See How it works,
+                              // "Keeping up with main"
+  "pullBase": true,           // fast-forward the checkout you started the watcher in onto that branch, at
+                              // pickup and when one of its PRs is merged. Only forwards, only when the checkout
+                              // is clean and standing on it; anything else is reported and left alone
   "defaults": {               // every rule inherits these
     "worktree": "self",       // who creates the git worktree the run works in.
                               // "self":  issue-herd does, with one `git worktree add` on the branch below.

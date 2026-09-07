@@ -147,3 +147,35 @@ test('a reviewer on another provider is started in that provider\'s own dialect'
   assert.doesNotMatch(start, /--name SMOKE/);
   assert.doesNotMatch(start, /--effort/);
 });
+
+/**
+ * The same, as a clone with a real `origin` behind it — which is where a factory's merges land, and
+ * the reason a checkout nobody pulls falls behind the code its runs are supposed to start from.
+ */
+function clonedRepo(t) {
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-origin-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-clone-'));
+  t.after(() => { for (const d of [origin, dir]) fs.rmSync(d, { recursive: true, force: true }); });
+  execFileSync('git', ['init', '-q', '-b', 'main', origin]);
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'first'], { cwd: origin });
+  execFileSync('git', ['clone', '-q', origin, dir]);
+  fs.mkdirSync(path.join(dir, '.issue-herd'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.issue-herd', 'config.json'), JSON.stringify({ tracker: 'linear', rules: [{ name: 'r', match: 'any:true' }] }));
+  return { at: fs.realpathSync(dir), origin };
+}
+
+test('the checkout a run works in is pulled up to the base branch first', (t) => {
+  // `smoke` runs in "none" mode: the run works in this checkout, on the branch it is standing on.
+  // Every merge in the factory lands on origin, and nothing here ever hears about it — so by the
+  // third pull request the agent is reading code that was replaced days ago.
+  const { at, origin } = clonedRepo(t);
+  fs.writeFileSync(path.join(origin, 'merged.txt'), 'a pull request that landed\n');
+  execFileSync('git', ['add', 'merged.txt'], { cwd: origin });
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'merge a pull request'], { cwd: origin });
+
+  const herdr = fakeHerdr(t, { mode: 'normal', cwd: at });
+  const r = smoke(at, herdr);
+  assert.match(r.out, /fast-forwarded onto origin\/main/);
+  assert.equal(fs.readFileSync(path.join(at, 'merged.txt'), 'utf8'), 'a pull request that landed\n');
+  assert.equal(r.status, 0);
+});

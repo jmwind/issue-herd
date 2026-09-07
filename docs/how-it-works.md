@@ -70,9 +70,10 @@ given. See [More than one turn](roles.md#more-than-one-turn-passes).
 1. Poll the tracker for open issues; evaluate each rule; the first matching rule wins — once per
    role, so an issue can start a run per role — then the guards above are applied. Urgent first,
    then oldest first.
-2. `git worktree add -b <branch> .issue-herd/worktrees/<slug>` — issue-herd makes the worktree, on
-   the branch the rule asked for. An existing directory for that issue is reused rather than
-   duplicated, and an existing branch is attached to rather than clobbered.
+2. `git worktree add -b <branch> .issue-herd/worktrees/<slug> <tip of the base branch>` — issue-herd
+   makes the worktree, on the branch the rule asked for and cut from the tip of what it is based on
+   (see [Keeping up with `main`](#keeping-up-with-main)). An existing directory for that issue is
+   reused rather than duplicated, and an existing branch is attached to rather than clobbered.
 3. `herdr worktree open --path <worktree>` gives it a workspace, so the sidebar shows the run's real
    branch and groups it under the repo. If you already had that checkout open, the run gets its own
    workspace and your shell is left alone.
@@ -107,6 +108,33 @@ result file appeared while it was down, and goes on watching the pull requests i
 merged yet. A pickup for an issue whose session is still running — after `issue-herd reset <KEY>`,
 or a retry of a start that failed late — reuses that session instead of building a second workspace
 beside it, so nothing is left adrift and you keep the pane you have been typing into.
+
+## Keeping up with `main`
+
+Merges happen on the remote. Nothing in a git repository pulls itself, so the checkout you started
+the watcher in hears about them only when something fetches — and `git worktree add` with no start
+point cuts the new branch from *that* checkout's HEAD. Left alone, the first merge puts every run
+after it on old code, and their pull requests come back full of conflicts nobody wrote.
+
+So two things happen, at every pickup and again whenever the watcher sees one of its pull requests
+merged:
+
+- **A run's branch is cut from the tip of its base**, not from wherever the checkout is standing:
+  `git fetch origin <base>`, then start from whichever of `<base>` and `origin/<base>` contains the
+  other. The base is the default branch — `baseBranch`, or what `origin/HEAD` says — or another
+  role's branch where the rule says [`basedOn`](roles.md#reviewing-the-actual-code-basedon); a later
+  turn on a worktree that already exists is fast-forwarded the same way. The branch is cut from a
+  commit rather than from a name, so nothing ends up quietly tracking `main`.
+- **The checkout itself is fast-forwarded** onto that branch, because `"worktree": "none"` runs work
+  in it, `"herdr"` worktrees are cut from its HEAD, and the config the watcher reloads before every
+  poll is read out of it. This one can be refused, and refusing is the point: a dirty tree, a branch
+  of your own, commits that were never pushed, or a `"none"` run whose agent is working in the
+  directory right now are each left exactly as they are, and said so in the log. It is only ever a
+  fast-forward — never a merge, never a rebase, never a reset. `"pullBase": false` turns it off
+  entirely.
+
+Neither needs a remote or a network: a fetch that fails is not an error, and the local branch is
+then the best answer there is.
 
 ## When the PR is merged
 
