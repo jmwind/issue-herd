@@ -150,9 +150,12 @@ button{font:inherit;color:inherit}
 .alert .open .stats{display:flex;margin-top:6px}
 .row .s .stats{flex-basis:100%}
 .checks{display:flex;flex-direction:column;gap:3px;font-size:14px}
-/* picker sheet */
-.dimmer{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9}
-.sheet{position:fixed;left:50%;transform:translateX(-50%);width:100%;max-width:720px;bottom:0;max-height:85vh;overflow:auto;padding:0 0 max(10px,env(safe-area-inset-bottom));background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge),0 -12px 30px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:8px;z-index:10}
+/* picker: a dropdown hung from the title bar, directly under the picker button. The bar is sticky,
+   so it is the sheet's containing block: top:100% is its bottom edge and the 100% in max-height is
+   its height, which keeps the whole list on screen (minus the desktop frame) and scrolls the rest. */
+.dimmer{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:4}
+.titlebar.open{z-index:10}
+.sheet{position:absolute;top:100%;left:0;right:0;max-height:calc(100vh - 100% - 24px);max-height:calc(100dvh - 100% - 24px);overflow:auto;padding:0 0 10px;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge),0 12px 30px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:8px}
 .sheet .titlebar{position:static;padding:8px 10px}
 .sheet .pane{padding:0 10px}
 .opt{display:grid;grid-template-columns:auto 1fr auto;grid-template-rows:auto auto;gap:1px 10px;align-items:center;padding:8px;background:var(--frame-2);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge);cursor:pointer;border:0;text-align:left;width:100%}

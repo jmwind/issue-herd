@@ -36,9 +36,10 @@
   function factoryOf(issueKey, id) { return factories().filter(function (f) { return f.id === id; })[0]; }
 
   // ------------------------------------------------------------ pieces
-  function titlebar(inner) {
+  // `below` hangs off the bar: the factory picker drops from it, directly under the picker button.
+  function titlebar(inner, below) {
     var ok = view && view.herdr.connected;
-    return '<div class="titlebar">' + MARK + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + (ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering') + '">' + GEAR + esc(document.body.dataset.hostname) + '</span></div>';
+    return '<div class="titlebar' + (below ? ' open' : '') + '">' + MARK + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + (ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering') + '">' + GEAR + esc(document.body.dataset.hostname) + '</span>' + (below || '') + '</div>';
   }
   function belt() {
     var fs = shown(), today = 0, assembling = 0, wait = 0, alerts = 0;
@@ -103,7 +104,7 @@
   function overview() {
     var fs = shown(), many = fs.length > 1, f = current();
     var pickerLabel = f ? f.name : (factories().length ? 'All factories' : 'No factories');
-    var head = titlebar('<button class="picker" id="pick"><span class="n">' + esc(pickerLabel) + '</span><span class="chev">▼</span></button>');
+    var head = titlebar('<button class="picker" id="pick" aria-expanded="' + (sheet ? 'true' : 'false') + '"><span class="n">' + esc(pickerLabel) + '</span><span class="chev">' + (sheet ? '▲' : '▼') + '</span></button>', sheet ? pickerSheet() : '');
     var alerts = [], inflight = [], merged = [], done = [];
     fs.forEach(function (x) {
       var byTask = {};
@@ -123,7 +124,7 @@
     body += section(showAll ? 'Output' : 'Output today', list.length, list.length ? '<div class="inset pane">' + list.map(function (p) { return row(p[0], p[1], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing finished' + (showAll ? '' : ' today') + '.</div></div>', { more: more });
     var wait = fs.reduce(function (s, x) { return s + x.humanWaitMs; }, 0);
     body += '<div class="foot"><span>' + esc(fs.reduce(function (s, x) { return s + x.counts.running; }, 0)) + ' running · you were waited on for <b>' + dur(wait) + '</b> in total</span><span>' + (f && f.watcher.lastPoll ? 'polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago' : '') + '</span></div>';
-    return head + belt() + '<div class="body">' + body + '</div>' + (sheet ? pickerSheet() : '');
+    return head + belt() + '<div class="body">' + body + '</div>' + (sheet ? '<div class="dimmer" id="dim"></div>' : '');
   }
 
   function pickerSheet() {
@@ -139,7 +140,7 @@
       f.rules.map(function (r) { return '<div><b>' + esc(r.role || r.name) + '</b><span><em>' + esc(r.agent + (r.model ? ' ' + r.model : '')) + '</em>' + (r.effort ? ' · ' + esc(r.effort) : '') + (r.basedOn ? ' · basedOn ' + esc(r.basedOn) : '') + ' · ' + esc(r.match) + '</span></div>'; }).join('') +
       '</div><div class="acts" style="margin-top:8px"><span class="pill">' + (f.watcher.version ? 'issue-herd ' + esc(f.watcher.version) : 'version unknown') + '</span>' + (f.watcher.workspaceId ? '<span class="pill">workspace ' + esc(f.watcher.workspaceId) + '</span>' : '') + '</div></div>';
     var lock = document.body.dataset.gated === 'true' ? '<div class="pane"><button class="btn" id="lockbtn">Lock the console</button></div>' : '';
-    return '<div class="dimmer" id="dim"></div><div class="sheet" role="dialog" aria-label="Factories"><div class="titlebar"><h1>Factories on ' + esc(document.body.dataset.hostname) + '</h1><span class="drag"></span><button class="tbtn red" id="closesheet" aria-label="close">✕</button></div><div class="pane">' + opts + '</div>' + team + lock + '</div>';
+    return '<div class="sheet" role="dialog" aria-label="Factories"><div class="titlebar"><h1>Factories on ' + esc(document.body.dataset.hostname) + '</h1><span class="drag"></span><button class="tbtn red" id="closesheet" aria-label="close">✕</button></div><div class="pane">' + opts + '</div>' + team + lock + '</div>';
   }
 
   function detail(fid, key) {
@@ -189,7 +190,7 @@
   root.addEventListener('click', function (e) {
     var t = e.target.closest('button,a');
     if (!t) return;
-    if (t.id === 'pick') { sheet = true; render(); }
+    if (t.id === 'pick') { sheet = !sheet; render(); }
     else if (t.id === 'closesheet' || t.id === 'dim') { sheet = false; render(); }
     else if (t.id === 'more') { showAll = !showAll; render(); }
     else if (t.dataset.expand) { expanded[t.dataset.expand] = true; render(); }
