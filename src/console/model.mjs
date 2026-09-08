@@ -173,6 +173,8 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     const size = sizes[key] || null;
     // A PR is a person's to merge from the moment the last role on the task has finished with it.
     const waitingSince = st.needsYou === 'merge' ? Math.max(finished || now, ...siblings.map((o) => Date.parse(o.finishedAt || '') || 0)) : null;
+    // The PR's wait as an interval: open (`to` null: until now) while a person is the one being
+    // waited for, so the view stays the same from tick to tick and only the clock moves.
     // A merge that happened keeps its wait. The watcher stamps `mergedAt` and then overwrites
     // `finishedAt` with the moment it noticed, so the agent's own finish is the log's `done`
     // event; the wait ran from the last role's finish to the merge, and there was none if a role
@@ -180,7 +182,7 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     // means the wait is unknown, and unknown counts as none.
     const mergedAt = run.status === 'merged' ? Date.parse(run.mergedAt || '') || null : null;
     const doneAt = segs.find((s) => s.kind === 'done')?.from || null;
-    let mergeWait = waitingSince ? { from: waitingSince, to: now } : null;
+    let mergeWait = waitingSince ? { from: waitingSince, to: null } : null;
     if (mergedAt && doneAt) {
       const roleEnds = siblings.filter((o) => (Date.parse(o.startedAt || '') || 0) < mergedAt).map((o) => Date.parse(o.finishedAt || '') || Infinity);
       const from = Math.max(doneAt, ...roleEnds);
@@ -195,7 +197,7 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
       light: st.light, phrase: st.phrase, needsYou: st.needsYou,
       result: run.result ? { status: run.result.status, prUrl: run.result.prUrl || null, summary: run.result.summary || '', notes: run.result.notes || '', live: !!run.resultIsLive } : null,
       prUrl: run.prUrl || run.result?.prUrl || null, error: run.error || null,
-      segments: segs, humanWaitMs: humanWaitMs(run, segs, now, { waiting: st.needsYou === 'merge', since: mergeWait?.from, until: mergeWait?.to }), size, waitingSince, mergeWait,
+      segments: segs, humanWaitMs: humanWaitMs(run, segs, now, { waiting: st.needsYou === 'merge', since: mergeWait?.from, until: mergeWait?.to || undefined }), size, waitingSince, mergeWait,
     };
   });
 
@@ -322,7 +324,7 @@ export function production(issues, from, now = Date.now()) {
         if (s.kind === 'working') workingMs += clip(s.from, s.to);
         else if (s.kind === 'blocked' || s.kind === 'question') humanMs += clip(s.from, s.to);
       }
-      if (r.mergeWait) humanMs += clip(r.mergeWait.from, r.mergeWait.to);
+      if (r.mergeWait) humanMs += clip(r.mergeWait.from, r.mergeWait.to || now);
     }
   }
   return { finished, merged, workingMs, humanMs };

@@ -222,6 +222,7 @@ test('production: what came out today, this week and this month, and time on its
   const open = { 'GH-4@impl': { rule: 'implement', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-4', title: 'm', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-4-impl', prUrl: 'https://github.com/o/r/pull/4' } };
   const before = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: open }, events: parseLog(MLOG), now: T(13, 0) });
   assert.deepEqual(before.production.today, { finished: 0, merged: 0, workingMs: 60 * 60e3, humanMs: 120 * 60e3 });
+  assert.deepEqual(before.issues[0].runs[0].mergeWait, { from: T(11, 0), to: null }, 'an open wait has no end, so the view is the same from tick to tick');
   const merged = { 'GH-4@impl': { ...open['GH-4@impl'], status: 'merged', mergedAt: iso(13, 0), finishedAt: iso(13, 0, 30) } };
   const after = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: merged }, events: parseLog(MLOG), now: T(14, 0) });
   assert.deepEqual(after.production.today, { finished: 1, merged: 1, workingMs: 60 * 60e3, humanMs: 120 * 60e3 }, 'the two hours waited are still there after the merge');
@@ -310,6 +311,34 @@ test('markDone: the one action — every agent still up on the task gets its exi
   assert.match(stuck.error, /review \(gh-1-review\) still running; not marked done/);
   assert.deepEqual(stuck.outcomes.map((o) => o.outcome), ['exited', 'is still running'], 'what happened to each agent is still reported');
   assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {}, 'a partial shutdown is not a done note');
+  app.stop();
+});
+
+test('tick: a clock-only advance does not emit another state; a real change does', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  process.env.ISSUE_HERD_CONSOLE_NOTES = path.join(dir, 'console.json');
+  t.after(() => { delete process.env.ISSUE_HERD_CONSOLE_NOTES; });
+  const repo = path.join(dir, 'app'); fs.mkdirSync(path.join(repo, '.issue-herd', 'state'), { recursive: true });
+  // an unknown tracker keeps the console off the network: no credentials, no issue or PR lookups
+  fs.writeFileSync(path.join(repo, '.issue-herd', 'config.json'), JSON.stringify({ name: 'app', tracker: 'nope', rules: [{ name: 'ai', role: 'impl', match: 'any:true' }] }));
+  const run = { rule: 'ai', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-1', title: 't', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-1-impl' };
+  const state = path.join(repo, '.issue-herd', 'state', 'state.json');
+  fs.writeFileSync(state, JSON.stringify({ runs: { 'GH-1@impl': run } }));
+  const registry = path.join(dir, 'factories.json');
+  stampFactory({ repo, name: 'app', tracker: 'nope', version: '1.0.0', pollSeconds: 30 }, registry, new Date());
+  const app = new FactoryConsole({ herdr: { run: async () => null }, registryFile: registry, hostname: 'box' });
+  let emitted = 0; app.subscribe(() => emitted++);
+  const first = await app.tick();
+  assert.equal(first.factories.length, 1);
+  assert.deepEqual(first.factories[0].alerts.map((a) => a.kind), ['merge'], 'a PR waiting on a person: the wait is open and its clock runs');
+  assert.equal(emitted, 1);
+  await new Promise((r) => setTimeout(r, 30));
+  await app.tick();
+  assert.equal(emitted, 1, 'only the clock moved: the same state is not pushed again');
+  fs.writeFileSync(state, JSON.stringify({ runs: { 'GH-1@impl': { ...run, status: 'merged', mergedAt: new Date().toISOString(), finishedAt: new Date().toISOString() } } }));
+  await app.tick();
+  assert.equal(emitted, 2, 'the merge is a change, and is pushed');
   app.stop();
 });
 
