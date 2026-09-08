@@ -78,6 +78,9 @@ test('the cap ends the conversation whatever state it is in, and asks for a pers
   const r = planNudge({ nudge, from: 'review', targetRun: run(), sent: 6, max: 6 });
   assert.equal(r.outcome, 'refused');
   assert.match(r.reason, /nudged each other 6 times on this issue \(`maxNudges` is 6\), so a person needs to step in/);
+  // only the spent budget is "capped": nudging that was never on is a refusal nobody is woken for
+  assert.equal(r.capped, true);
+  assert.equal(planNudge({ nudge, from: 'review', targetRun: run(), sent: 0, max: 0 }).capped, undefined);
   // the cap is checked first: a busy target over the cap is refused, not queued
   assert.equal(planNudge({ nudge, from: 'review', targetRun: run({ status: 'running' }), sent: 6, max: 6 }).outcome, 'refused');
   // and one under it still goes through

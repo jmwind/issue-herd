@@ -72,15 +72,19 @@ const BUSY = new Set(['starting', 'running']);
  *            so the nudge waits and becomes its next turn the moment it finishes.
  *   refused  not relayed, and `reason` says why in words that can go on the issue: nudging is off,
  *            the cap is reached, there is no such run, or the run is not one that can be woken.
+ *            `capped: true` marks the one refusal that means the agents ran out of road — the
+ *            budget is spent — as opposed to nudging never having been on, which nobody needs
+ *            to be woken up for.
  *
  * `sent` is how many nudges have been relayed on this issue so far; `max` is the cap. The cap is
  * checked before anything else, because the reason it exists is to be the thing that ends a loop
- * whatever state the loop is in. `busy` is the watcher's word that the target is still being
- * supervised — its status may already say done while its finish is still being written up.
+ * whatever state the loop is in. `busy` is the watcher's word that the target is spoken for even
+ * though its status says otherwise: still being supervised while its finish is written up, or
+ * already promised a turn by another nudge that has not started yet.
  */
 export function planNudge({ nudge, from, targetRun, sent, max, busy = false }) {
   if (max === 0) return { outcome: 'refused', reason: 'nudging is off (`maxNudges` is 0)' };
-  if (sent >= max) return { outcome: 'refused', reason: `the agents have already nudged each other ${sent} time${sent === 1 ? '' : 's'} on this issue (\`maxNudges\` is ${max}), so a person needs to step in` };
+  if (sent >= max) return { outcome: 'refused', capped: true, reason: `the agents have already nudged each other ${sent} time${sent === 1 ? '' : 's'} on this issue (\`maxNudges\` is ${max}), so a person needs to step in` };
   if (from && nudge.role === from) return { outcome: 'refused', reason: 'a role cannot nudge itself' };
   if (!targetRun) return { outcome: 'refused', reason: `no \`${nudge.role}\` run is on this issue yet` };
   if (BUSY.has(targetRun.status) || (busy && NUDGEABLE.has(targetRun.status))) return { outcome: 'queue', reason: `\`${nudge.role}\` is in the middle of a turn; it gets this as its next one` };

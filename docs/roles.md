@@ -230,8 +230,11 @@ Three things keep it from running away:
   so, and you get a 🙋 comment and notification (`onBlocked`): a person is needed. Raise it in `config.local.json` to let
   them carry on, or `issue-herd reset <issue>` to hand the budget back. `0` turns nudging off, and
   the briefs then say nothing about it.
-- **A busy role is not interrupted.** A nudge for a run in the middle of a turn is held and becomes
-  its next turn the moment it finishes — interrupting it would race its own result.
+- **A busy role is not interrupted.** A nudge for a run in the middle of a turn — or already
+  promised one by another nudge a moment earlier — is held and becomes its next turn the moment
+  that one finishes, together with anything else held meanwhile: two reviewers answering at once
+  give the implementer one turn and then another, never two on top of each other. A held nudge
+  survives a restart; recovery delivers it, even to a run whose agent died.
 - **A person still wins.** Every nudged turn re-reads the issue: one assigned to somebody else in
   the meantime is left alone, exactly as any turn would be. And the briefs tell the agents to write
   `needs_human` rather than nudge again when they are going round in circles or the issue asks for

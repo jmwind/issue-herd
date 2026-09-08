@@ -242,7 +242,7 @@ const EVENTS = ['onPickup', 'onDone', 'onBlocked', 'onIdle', 'onMerged'];
 /** How often the watcher may ask GitHub about the same pull request, whatever `pollSeconds` says. */
 const PR_POLL_MS = 60_000;
 
-function loadConfig() {
+export function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no config at ${CONFIG_PATH}`);
   const readConfigFile = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { throw new Error(`${path.relative(REPO, p)} is not valid JSON: ${e.message}`); } };
   const local = fs.existsSync(LOCAL_CONFIG_PATH) ? readConfigFile(LOCAL_CONFIG_PATH) : null;
@@ -406,7 +406,7 @@ function briefVars({ issue, rule, run, tracker, nudging = null }) {
 
 // ---------------------------------------------------------------- core
 
-class IssueHerd {
+export class IssueHerd {
   constructor({ cfg, tracker, herdr, dry = false }) {
     this.cfg = cfg;
     this.tracker = tracker; // null in smoke mode
@@ -414,6 +414,8 @@ class IssueHerd {
     this.dry = dry;
     this.state = loadState();
     this.supervising = new Set();
+    // Run keys promised a nudged turn that has not started yet — see planNudges.
+    this.reserved = new Set();
   }
 
   runningCount(ruleName) {
@@ -473,6 +475,9 @@ class IssueHerd {
     // with it the session that may still be up; another role's run is a different key entirely.
     const key = runKeyFor(issue.identifier, rule.role);
     const previous = this.state.runs[key]; // a run we are retrying; its session may still be up
+    // Whatever woke this turn, the nudges held for the run while it was busy are answered by it
+    // too: they are asks about this issue, and the next turn is the next turn.
+    if (previous?.queuedNudges?.length) nudges = [...nudges, ...previous.queuedNudges];
     const slug = `${slugify(key, 48)}-${slugify(issue.title, 32)}`.replace(/-+$/, '');
     const archiveDir = path.join(RUNS_DIR, key); // in the watcher's checkout: issue.json now, result.json copied on finish
     fs.mkdirSync(archiveDir, { recursive: true });
@@ -490,8 +495,6 @@ class IssueHerd {
       // watch on it must not be lost to a result that forgot to repeat the URL.
       nudges: nudges.length ? nudges : undefined,
       prUrl: previous?.prUrl || undefined,
-      // Nudges held for the previous turn that this turn is not answering are still owed.
-      queuedNudges: previous?.queuedNudges?.length ? previous.queuedNudges : undefined,
     };
     this.state.runs[key] = run; saveState(this.state);
     const turn = nudges.length ? `, turn ${pass}, nudged by ${nudgedByLabel(nudges)}` : pass > 1 ? `, pass ${pass} of ${passLimit(rule)}` : '';
@@ -1011,18 +1014,22 @@ class IssueHerd {
     for (const nudge of nudges) {
       const targetKey = runKeyFor(issueKey, nudge.role);
       const targetRun = this.state.runs[targetKey] || null;
-      // A target whose supervisor is still on it — its status says done, its finish comment is
-      // still going up — is busy: a turn started under a supervisor that is about to leave would
-      // be a turn nobody watches.
-      const { outcome, reason } = planNudge({ nudge, from, targetRun, sent: nudgesSent(entries), max: this.cfg.maxNudges, busy: this.supervising.has(targetKey) });
+      // A target is busy when its status says so, and also when its status says done but it is
+      // spoken for: its supervisor is still writing up its finish, or another nudge — the other
+      // reviewer's, planned a moment ago — has already promised it a turn that has not started.
+      // Either way a second turn started now would land on top of the first and replace it, so
+      // the ask is held and coalesced into the turn after. The promise is made here, at planning
+      // time, because the comments between planning and starting take seconds.
+      const busy = this.supervising.has(targetKey) || this.reserved.has(targetKey);
+      const { outcome, reason, capped } = planNudge({ nudge, from, targetRun, sent: nudgesSent(entries), max: this.cfg.maxNudges, busy });
       entries.push({ from, to: nudge.role, at: new Date().toISOString(), outcome, message: nudge.message.slice(0, 200) });
       const icon = outcome === 'refused' ? '🙋' : '👉';
       lines.push(`${icon} **Nudge → \`${nudge.role}\`** — ${reason}.\n> ${nudge.message.replace(/\r?\n/g, '\n> ')}`);
       log(`${key}: nudge → ${targetKey}: ${outcome} (${reason.replace(/`/g, '')})`);
       const held = { from: from || rule.name, message: nudge.message, at: new Date().toISOString() };
-      if (outcome === 'turn') plan.turns.push({ targetKey, nudge: held });
+      if (outcome === 'turn') { this.reserved.add(targetKey); plan.turns.push({ targetKey, nudge: held }); }
       else if (outcome === 'queue') plan.queued.push({ targetKey, nudge: held });
-      else if (/maxNudges/.test(reason) && !plan.capped) plan.capped = { to: nudge.role, nudge: held, reason };
+      else if (capped && !plan.capped) plan.capped = { to: nudge.role, nudge: held, reason };
     }
     saveState(this.state);
     return plan;
@@ -1059,7 +1066,20 @@ class IssueHerd {
    */
   async startNudgedTurn(targetKey, nudges, askedBy) {
     const target = this.state.runs[targetKey];
-    if (!target) return false;
+    if (!target) { this.reserved.delete(targetKey); return false; }
+    // Last look before the turn starts: another handoff may have started one since this was
+    // planned (a start sets the status before it does anything else). Then this ask joins the
+    // queue and rides the turn after, rather than landing on top of a turn in progress.
+    if (target.status === 'running' || target.status === 'starting') {
+      (target.queuedNudges ??= []).push(...nudges); saveState(this.state);
+      log(`${targetKey}: nudged by ${askedBy} while a turn is in progress; held for its next turn`);
+      return false;
+    }
+    try { return await this.startNudgedTurnNow(targetKey, target, nudges, askedBy); }
+    finally { this.reserved.delete(targetKey); }
+  }
+
+  async startNudgedTurnNow(targetKey, target, nudges, askedBy) {
     const rule = this.cfg.rules.find((r) => r.name === target.rule);
     const issueKey = target.issueKey || issueKeyOf(targetKey);
     let why = null;
@@ -1094,8 +1114,10 @@ class IssueHerd {
     const held = run?.queuedNudges;
     if (!held?.length) return;
     // A turn in progress keeps them: they are delivered when it finishes, never over the top of it.
-    if (run.status === 'running' || run.status === 'starting') return;
+    // So does a turn promised but not started — it will pick them up as it starts (see pickUp).
+    if (run.status === 'running' || run.status === 'starting' || this.reserved.has(key)) return;
     run.queuedNudges = []; saveState(this.state);
+    this.reserved.add(key);
     await this.startNudgedTurn(key, held, held.map((n) => n.from).join(', '));
   }
 
@@ -1248,6 +1270,9 @@ class IssueHerd {
         }
         run.finishedAt = new Date().toISOString(); saveState(this.state);
         log(`${key}: was ${was} before restart, agent is gone → ${run.status}`);
+        // A nudge held for the turn that died is still owed, and with the default one pass no
+        // poll will ever revive this run to answer it. A fresh session in the same worktree does.
+        if (run.status === 'stopped') await this.deliverQueuedNudges(key);
         continue;
       }
       run.status = 'running'; saveState(this.state);
@@ -1647,4 +1672,9 @@ async function smoke({ cfg, herdr, argv }) {
   process.exit(run.status === 'done' ? 0 : 1);
 }
 
-main(process.argv.slice(2)).catch((e) => { console.error(`issue-herd: ${e.message}`); process.exit(1); });
+// Run only as the program, not when a test imports the module for the class above. Everything
+// path-shaped is still resolved from process.cwd() at import, so an importer must be standing in
+// the repository it means to work on before it imports.
+// (`npm install -g` runs it through a symlink, so it is the real path that has to match.)
+const isMain = (() => { try { return fs.realpathSync(process.argv[1] || '') === fileURLToPath(import.meta.url); } catch { return false; } })();
+if (isMain) main(process.argv.slice(2)).catch((e) => { console.error(`issue-herd: ${e.message}`); process.exit(1); });
