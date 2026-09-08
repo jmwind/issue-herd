@@ -103,20 +103,24 @@ const SETTLES = new Set(['blocked', 'question', 'gone']);
 
 /**
  * The state herdr reports for a live run, held back until it has lasted `settleMs`. `seen` is the
- * caller's memory between ticks — what each live run last read as and since when — and is updated
- * here; without one there is nothing to compare against and the instant state stands. The
- * watcher's log is memory too: a dialog or question it already logged has been going on at least
- * that long, so a console that starts up next to a long-blocked agent does not wait again.
+ * caller's memory between ticks — what each live run last read as (an alert state or not) and
+ * since when — and is updated here; without one there is nothing to compare against and the
+ * instant state stands. The watcher's log is memory too, but only for the console's first look
+ * at a run: a dialog or question the watcher already logged has been going on at least that
+ * long, so a console that starts up next to a long-blocked agent does not wait again. After
+ * that the console's own observations are the truth: a recovery it saw ends the episode even
+ * if the watcher, on its slower poll, never logged it, and the next episode waits the full window.
  */
 function settle(key, st, run, segs, { seen, settleMs, now }) {
   if (!seen) return st;
-  const live = run.status === 'running' || run.status === 'starting';
-  const kind = live && SETTLES.has(st.needsYou) ? st.needsYou : null;
-  if (!kind) { delete seen[key]; return st; }
-  if (seen[key]?.needsYou !== kind) seen[key] = { needsYou: kind, since: now };
+  if (run.status !== 'running' && run.status !== 'starting') { delete seen[key]; return st; }
+  const kind = SETTLES.has(st.needsYou) ? st.needsYou : null;
+  const first = !seen[key];
+  if (first || seen[key].needsYou !== kind) seen[key] = { needsYou: kind, since: now };
+  if (!kind) return st;
   const last = segs.at(-1);
-  const since = Math.min(seen[key].since, last?.kind === kind ? last.from : Infinity);
-  if (now - since >= settleMs) return st;
+  if (first && last?.kind === kind) seen[key].since = Math.min(now, last.from);
+  if (now - seen[key].since >= settleMs) return st;
   return { light: 'green', phrase: run.status === 'starting' ? 'starting' : 'working', needsYou: null, settling: kind };
 }
 
