@@ -45,6 +45,7 @@ import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
 import { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } from '../src/worktree.mjs';
 import { agentArgv, describeAgent, exitCommandFor, TRANSLATED_KINDS } from '../src/agents.mjs';
 import { parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
+import { DEFAULT_MAX_NUDGES, normalizeMaxNudges, nudgeInstructions, nudgeQuote, nudgedByLabel, nudgesIn, nudgesLeft, nudgesSent, planNudge } from '../src/nudge.mjs';
 import { GitHubTracker } from '../src/trackers/github.mjs';
 import { askSecret, loadCredentials } from '../src/auth.mjs';
 import { stampFactory } from '../src/console/registry.mjs';
@@ -167,6 +168,10 @@ const DEFAULTS = {
   // branch: anything else is reported and left alone. Turn it off if the directory you started the
   // watcher in is yours to move.
   pullBase: true,
+  // How many times, per issue, one role may nudge another — a reviewer handing its findings to the
+  // implementer, the implementer handing the fix back — before the watcher stops relaying and asks
+  // a person in. 0 turns it off. See src/nudge.mjs.
+  maxNudges: DEFAULT_MAX_NUDGES,
   defaults: {
     // Who creates the git worktree a run works in. "self" is issue-herd, with one `git worktree
     // add` on the branch below, so the directory and the branch are both settled before the agent
@@ -245,6 +250,7 @@ function loadConfig() {
   const cfg = { ...DEFAULTS, ...raw, defaults: { ...DEFAULTS.defaults, ...(raw.defaults || {}) } };
   cfg.localOverrides = overridePaths(local);
   cfg.name = String(cfg.name || path.basename(REPO)).trim() || 'issue-herd';
+  cfg.maxNudges = normalizeMaxNudges(cfg.maxNudges, path.relative(REPO, CONFIG_PATH));
   cfg.trackerSpec = trackerSpec(cfg.tracker);
   cfg.Tracker = trackerClass(cfg.trackerSpec);
   cfg.rules = (raw.rules || []).map((r, i) => {
@@ -296,7 +302,8 @@ function readInstructions(file) {
 
 // ---------------------------------------------------------------- state
 
-function loadState() { return readJson(STATE_PATH, { runs: {} }); }
+/** `runs` by run key; `nudges` by issue key, one entry per nudge a role asked for on that issue. */
+function loadState() { const s = readJson(STATE_PATH, { runs: {} }); s.runs ??= {}; s.nudges ??= {}; return s; }
 function saveState(s) { writeJson(STATE_PATH, s); }
 
 // ---------------------------------------------------------------- brief
@@ -313,6 +320,19 @@ function renderBrief(templatePath, vars) {
  */
 function passLine(run, rule) {
   const pass = run.pass || 1;
+  // A nudged turn was asked for by another role, not earned by the issue moving on, so it is not
+  // measured against `passes`: the turn is numbered, the asker is named, and the ask is quoted.
+  if (run.nudges?.length) {
+    return `- Turn: **${pass}** on this issue for this rule, because \`${nudgedByLabel(run.nudges)}\` nudged you. Your own
+  last turn is in \`${run.previousResultPath || 'the run directory'}\`, and what you said is already a comment on the
+  issue; so is the report the nudge came with. This is what it asks of you:
+
+${nudgeQuote(run.nudges)}
+
+  Answering *that* is this turn's job — do not start the work again from the beginning. When you are
+  done, write the result file again (the old one was set aside), and nudge back if you need them to
+  look once more.`;
+  }
   const head = `- Turn: **${pass} of ${passLimit(rule)}** on this issue for this rule.`;
   if (pass === 1) {
     return `${head} You will get another turn if the issue moves on
@@ -325,7 +345,7 @@ function passLine(run, rule) {
   job — do not start the work again from the beginning.`;
 }
 
-function briefVars({ issue, rule, run, tracker }) {
+function briefVars({ issue, rule, run, tracker, nudging = null }) {
   const comments = issue.comments?.length
     ? issue.comments.map((c) => `- **${c.author}** (${c.createdAt.slice(0, 10)}): ${c.body.replace(/\r?\n/g, '\n  ')}`).join('\n')
     : '_none_';
@@ -362,8 +382,12 @@ function briefVars({ issue, rule, run, tracker }) {
     pass: String(run.pass || 1),
     passes: String(passLimit(rule)),
     // Only a rule that gets more than one turn says anything about turns, and only a later turn
-    // points at what the earlier one left behind.
-    _passLine: passLimit(rule) > 1 ? passLine(run, rule) : '',
+    // points at what the earlier one left behind. A nudged turn always says so: it is a turn the
+    // rule was not promised, and the nudge is why it exists.
+    _passLine: passLimit(rule) > 1 || run.nudges?.length ? passLine(run, rule) : '',
+    // How to nudge another role, for a run that has one to nudge. Empty for a roleless run, a
+    // project with one role, or nudging switched off — a brief must not teach a move it cannot make.
+    nudgeLines: nudging ? nudgeInstructions({ role: rule.role, ...nudging }) : '',
     // A whole line, so a roleless brief says nothing about roles at all rather than "role: none".
     _roleLine: rule.role
       ? `- Role: \`${rule.role}\` — this run holds the \`${rule.role}\` claim on the issue. Other agents may hold
@@ -437,7 +461,12 @@ class IssueHerd {
     return parts;
   }
 
-  async pickUp(issue, rule, { pass = 1, holdsClaim = false } = {}) {
+  /**
+   * Start a run, or another turn of one. `pass` numbers the turn; `holdsClaim` says the claim label
+   * is already ours (a later turn) so only the person guard is re-read; `nudges` is what woke a
+   * turn another role asked for — [{ from, message }] — and goes into the brief.
+   */
+  async pickUp(issue, rule, { pass = 1, holdsClaim = false, nudges = [] } = {}) {
     // The run key carries the role, so two roles on one issue are two runs: two state entries, two
     // agent names, two worktrees, two run directories. `issue.identifier` is still what the tracker
     // is asked about — never the run key. A retry of *this* role finds its own previous run, and
@@ -456,9 +485,17 @@ class IssueHerd {
       wantBranch: desiredBranch({ template: rule.branch, issue, slug, worktree: rule.worktree, role: rule.role }),
       branch: null,
       worktree: rule.worktree, agentName: agentNameFor(key), notified: {},
+      // The nudges this turn answers, if it is one another role asked for. And the pull request the
+      // previous turn opened: a turn spent answering a reviewer ends with the same PR, and the
+      // watch on it must not be lost to a result that forgot to repeat the URL.
+      nudges: nudges.length ? nudges : undefined,
+      prUrl: previous?.prUrl || undefined,
+      // Nudges held for the previous turn that this turn is not answering are still owed.
+      queuedNudges: previous?.queuedNudges?.length ? previous.queuedNudges : undefined,
     };
     this.state.runs[key] = run; saveState(this.state);
-    log(`picking up ${key} "${issue.title}" (rule ${rule.name}${rule.role ? `, role ${rule.role}` : ''}${pass > 1 ? `, pass ${pass} of ${passLimit(rule)}` : ''})`);
+    const turn = nudges.length ? `, turn ${pass}, nudged by ${nudgedByLabel(nudges)}` : pass > 1 ? `, pass ${pass} of ${passLimit(rule)}` : '';
+    log(`picking up ${key} "${issue.title}" (rule ${rule.name}${rule.role ? `, role ${rule.role}` : ''}${turn})`);
 
     // Claim on Linear first, so a second watcher (or this one after a crash) sees it before any work starts.
     // Nothing has been built yet, so if the claim cannot be made the run is forgotten rather than left
@@ -507,6 +544,20 @@ class IssueHerd {
         run.adopted = true;
         run.worktreePath = ws.cwd;
         log(`${key}: agent "${run.agentName}" is already running (${existing.agent_status}) in ${ws.cwd}; reusing that session`);
+        // A reviewer's session that is still up is the common case for a later turn, and the whole
+        // reason there is a later turn is that the implementer pushed something since. Its worktree
+        // has to move too, or it re-reads the code it already reviewed. Only a worktree issue-herd
+        // made for this role, and only while the agent is not typing in it.
+        if (rule.worktree === 'self' && rule.basedOn && ws.cwd) {
+          run.basedOn = this.baseBranchFor(issue, rule, key);
+          const ours = previous?.worktreePath && path.resolve(previous.worktreePath) === path.resolve(ws.cwd);
+          if (run.basedOn && ours && existing.agent_status !== 'working') {
+            const r = catchUp({ git, repo: rule.repo, at: ws.cwd, base: run.basedOn });
+            log(`${key}: ${r.moved ? `caught up to ${run.basedOn} (${String(r.from).slice(0, 7)} → ${String(r.at).slice(0, 7)})` : `not moved onto ${run.basedOn}: ${r.reason}`}`);
+          } else if (run.basedOn) {
+            log(`${key}: not catching ${ws.cwd} up to ${run.basedOn}: ${ours ? 'the agent is working in it' : 'it is not a worktree issue-herd made for this role'}`);
+          }
+        }
       } else if (rule.worktree === 'herdr') {
         ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `herd/${slug}`, label });
         run.worktreePath = ws.path;
@@ -580,7 +631,7 @@ class IssueHerd {
         try { fs.renameSync(run.resultPath, run.previousResultPath); }
         catch (e) { log(`${key}: could not set the previous result aside (${e.message}); removing it instead`); fs.rmSync(run.resultPath, { force: true }); run.previousResultPath = null; }
       }
-      const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label }));
+      const brief = renderBrief(rule.prompt, briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, nudging: this.nudging(issue.identifier) }));
       run.briefPath = path.join(run.dir, 'brief.md');
       fs.writeFileSync(run.briefPath, brief);
       saveState(this.state);
@@ -604,9 +655,14 @@ class IssueHerd {
         // pickupMarker() writes the role into the first words, because this comment is also the
         // guard: a reader sees who holds which role, and alreadyTaken() greps for its own.
         const held = [`herdr workspace \`${run.workspaceId}\``, `agent \`${run.agentName}\``, `rule \`${rule.name}\``];
-        if (passLimit(rule) > 1) held.unshift(`pass ${pass} of ${passLimit(rule)}`);
+        if (nudges.length) held.unshift(`turn ${pass}, nudged by ${nudges.map((n) => `\`${n.from}\``).join(' and ')}`);
+        else if (passLimit(rule) > 1) held.unshift(`pass ${pass} of ${passLimit(rule)}`);
         if (run.branch) held.push(`branch \`${run.branch}\``);
-        const how = run.adopted ? pickupMarker(rule.role).replace('picked this up', 'took this back over') : pickupMarker(rule.role);
+        // A nudged turn is expected to find its session up, so "took this back over" — the words
+        // for a session an earlier attempt left adrift — would be the wrong story. The marker stays
+        // a prefix either way, because alreadyTaken() greps for it.
+        const how = nudges.length ? `${pickupMarker(rule.role)} again`
+          : run.adopted ? pickupMarker(rule.role).replace('picked this up', 'took this back over') : pickupMarker(rule.role);
         try { await this.tracker.comment(issue.id, `🐑 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`); }
         catch (e) { log(`${key}: pickup comment failed: ${e.message}`); }
       }
@@ -796,9 +852,15 @@ class IssueHerd {
 
   /** Follow a run until it produces result.json or the agent disappears. Safe to call again after restart. */
   supervise(key) {
-    if (this.supervising.has(key)) return;
+    // A turn started while this key's supervisor is still finishing — the queued nudge a run hands
+    // over as its own finish ends — must not be lost to "already supervised": the loop that is
+    // leaving was watching the previous turn. Note it, and start again once that loop is gone.
+    if (this.supervising.has(key)) { (this.resupervise ??= new Set()).add(key); return; }
     this.supervising.add(key);
-    this.superviseLoop(key).catch((e) => log(`${key}: supervisor crashed: ${e.stack || e.message}`)).finally(() => this.supervising.delete(key));
+    this.superviseLoop(key).catch((e) => log(`${key}: supervisor crashed: ${e.stack || e.message}`)).finally(() => {
+      this.supervising.delete(key);
+      if (this.resupervise?.delete(key) && this.state.runs[key]?.status === 'running') this.supervise(key);
+    });
   }
 
   async superviseLoop(key) {
@@ -824,6 +886,9 @@ class IssueHerd {
         // would otherwise read our own "the agent died" comment as the issue moving on and start
         // the next turn immediately, burning every turn on a session that keeps dying.
         await this.stampAnswered(key, run, rule);
+        // A nudge held for this turn still stands, and a fresh session in the same worktree can
+        // answer it — that is what a nudged turn of a stopped run does.
+        await this.deliverQueuedNudges(key);
         return;
       }
       if (st === 'timeout') continue;
@@ -890,12 +955,21 @@ class IssueHerd {
     // A merged PR is what says the run is over; until then the workspace and the worktree stay up
     // for whoever reviews it. A prUrl that is not a pull request URL is not followed — the agent
     // wrote it, and the watcher will not sit waiting for a merge that can never be seen.
-    const watch = status === 'pr_open' && watchesMerge(rule) && parsePrUrl(result.prUrl) ? result.prUrl : null;
+    // A turn spent answering a reviewer ends with the PR it already had, so a result that leaves
+    // the URL out keeps the watch the previous turn started.
+    const prUrl = parsePrUrl(result.prUrl) ? result.prUrl : parsePrUrl(run.prUrl) ? run.prUrl : null;
+    const watch = status === 'pr_open' && watchesMerge(rule) && prUrl ? prUrl : null;
     lines.push(watch
       ? `\n_herdr workspace \`${run.workspaceId}\` and the run's worktree stay up until ${watch} is merged._`
       : `\n_herdr workspace \`${run.workspaceId}\` is still open._`);
+    // What the agent asked of the other roles, and what will happen to each ask. Decided here, and
+    // said in this comment, so the issue records the handoff next to the report that made it; the
+    // turns themselves start after the comment is up, so their pickup comments follow it.
+    const relay = this.planNudges(key, run, rule, result);
+    if (relay.lines.length) lines.push('', ...relay.lines);
     log(`${key}: done (${status}) ${result.prUrl || ''}`);
     await this.report(key, rule, rule.onDone, lines.join('\n'), 'done');
+    await this.carryOutNudges(key, run, rule, relay);
     if (this.tracker && rule.onDone.state && status === 'pr_open') {
       try { await this.tracker.setState({ ...readJson(path.join(run.archiveDir, 'issue.json'), {}), id: run.issueId }, rule.onDone.state); }
       catch (e) { log(`${key}: onDone state failed: ${e.message}`); }
@@ -906,6 +980,123 @@ class IssueHerd {
       log(`${key}: waiting for ${watch} to be merged before shutting the run down`);
     }
     await this.stampAnswered(key, run, rule);
+    // Nudges that arrived while this turn was running were held for it. It is over: hand them over.
+    await this.deliverQueuedNudges(key);
+  }
+
+  /**
+   * What the run is called when it says who it is nudging, and what the brief says about nudging:
+   * every role the project runs, and how many nudges this issue has left.
+   */
+  nudging(issueKey) {
+    const roles = [...new Set(this.cfg.rules.filter((r) => r.enabled !== false && r.role).map((r) => r.role))];
+    return { roles, left: nudgesLeft(this.state.nudges[issueKey], this.cfg.maxNudges), max: this.cfg.maxNudges };
+  }
+
+  /**
+   * Decide what happens to each nudge a result asked for, without doing any of it yet. Returns
+   * { lines, turns, queued }: the lines for the finish comment, the nudged turns to start, and the
+   * nudges to hold for a run that is busy. Every decision is written into state.nudges as it is
+   * made, because the cap is counted from there and a decision is a decision whether or not the
+   * herdr call after it works.
+   */
+  planNudges(key, run, rule, result) {
+    const { nudges, rejected } = nudgesIn(result);
+    const lines = rejected.map((r) => `⚠️ Nudge ignored: ${r}.`);
+    const plan = { lines, turns: [], queued: [], capped: null };
+    if (!nudges.length) return plan;
+    const issueKey = run.issueKey || issueKeyOf(key);
+    const from = run.role || null;
+    const entries = (this.state.nudges[issueKey] ??= []);
+    for (const nudge of nudges) {
+      const targetKey = runKeyFor(issueKey, nudge.role);
+      const targetRun = this.state.runs[targetKey] || null;
+      // A target whose supervisor is still on it — its status says done, its finish comment is
+      // still going up — is busy: a turn started under a supervisor that is about to leave would
+      // be a turn nobody watches.
+      const { outcome, reason } = planNudge({ nudge, from, targetRun, sent: nudgesSent(entries), max: this.cfg.maxNudges, busy: this.supervising.has(targetKey) });
+      entries.push({ from, to: nudge.role, at: new Date().toISOString(), outcome, message: nudge.message.slice(0, 200) });
+      const icon = outcome === 'refused' ? '🙋' : '👉';
+      lines.push(`${icon} **Nudge → \`${nudge.role}\`** — ${reason}.\n> ${nudge.message.replace(/\r?\n/g, '\n> ')}`);
+      log(`${key}: nudge → ${targetKey}: ${outcome} (${reason.replace(/`/g, '')})`);
+      const held = { from: from || rule.name, message: nudge.message, at: new Date().toISOString() };
+      if (outcome === 'turn') plan.turns.push({ targetKey, nudge: held });
+      else if (outcome === 'queue') plan.queued.push({ targetKey, nudge: held });
+      else if (/maxNudges/.test(reason) && !plan.capped) plan.capped = { to: nudge.role, nudge: held, reason };
+    }
+    saveState(this.state);
+    return plan;
+  }
+
+  /**
+   * Do what planNudges decided: hold the nudges for busy runs, start the turns, and if the cap
+   * ended the conversation, say so where a person will hear it — the finish comment already says
+   * it, but that is one comment among several, and this is the moment somebody is needed.
+   */
+  async carryOutNudges(key, run, rule, plan) {
+    for (const { targetKey, nudge } of plan.queued) {
+      const target = this.state.runs[targetKey];
+      if (!target) continue;
+      (target.queuedNudges ??= []).push(nudge); saveState(this.state);
+      // The turn it was waiting on may have ended between the decision and now, in which case
+      // nobody else is going to hand this over.
+      if (!this.supervising.has(targetKey)) await this.deliverQueuedNudges(targetKey);
+    }
+    for (const { targetKey, nudge } of plan.turns) await this.startNudgedTurn(targetKey, [nudge], key);
+    if (plan.capped) {
+      const issueKey = run.issueKey || issueKeyOf(key);
+      await this.report(key, rule, rule.onBlocked, `🙋 The agents on ${issueKey} have nudged each other ${this.cfg.maxNudges} times, which is the limit (\`maxNudges\`), and \`${run.role || rule.name}\` still needs \`${plan.capped.to}\` to act. A person needs to step in: read the reports on the issue and answer in the workspace of whichever agent should go next, or raise \`maxNudges\` in \`.issue-herd/config.local.json\` to let them carry on.`, 'request');
+    }
+  }
+
+  /**
+   * Another turn of `targetKey`, asked for by another role. The same pickup as any later turn —
+   * same run key, claim, worktree and (when it is still up) session; the previous result is set
+   * aside and the brief carries the nudge. `askedBy` is the run that asked, for the log.
+   *
+   * A failure here is reported and swallowed: the nudging run is already over, and the fact that
+   * its ask could not be delivered is what the owner needs to hear, not a crashed supervisor.
+   */
+  async startNudgedTurn(targetKey, nudges, askedBy) {
+    const target = this.state.runs[targetKey];
+    if (!target) return false;
+    const rule = this.cfg.rules.find((r) => r.name === target.rule);
+    const issueKey = target.issueKey || issueKeyOf(targetKey);
+    let why = null;
+    if (!rule) why = `its rule "${target.rule}" is no longer in the config`;
+    else if (rule.enabled === false) why = `its rule "${rule.name}" is disabled${rule.disabledReason ? ` (${rule.disabledReason})` : ''}`;
+    let issue = null;
+    if (!why) {
+      // The issue as it is now, so the brief quotes the reports that led here. The archived copies
+      // are the fallback for a tracker that is not answering, and the only copies in smoke mode:
+      // the target's own, else the nudging run's — it is the same issue.
+      if (this.tracker) { try { issue = await this.tracker.issueByKey(issueKey); } catch (e) { log(`${targetKey}: could not re-read ${issueKey} for the nudged turn (${e.message}); using the archived copy`); } }
+      for (const dir of [target.archiveDir, this.state.runs[askedBy]?.archiveDir]) issue ||= dir ? readJson(path.join(dir, 'issue.json'), null) : null;
+      if (!issue) why = 'the issue could not be read';
+    }
+    if (why) {
+      log(`${targetKey}: nudged by ${askedBy}, but no turn can start: ${why}`);
+      if (this.tracker) { try { await this.tracker.comment(target.issueId, `⚠️ \`${target.role || target.rule}\` was nudged but cannot take a turn: ${why}.`); } catch { /* ignore */ } }
+      return false;
+    }
+    try {
+      await this.pickUp(issue, rule, { pass: (target.pass || 1) + 1, holdsClaim: Boolean(target.claimed), nudges });
+      return true;
+    } catch (e) {
+      log(`${targetKey}: the nudged turn could not start: ${e.message}`);
+      return false;
+    }
+  }
+
+  /** Give a run that has just finished the nudges that were held while it was busy. */
+  async deliverQueuedNudges(key) {
+    const run = this.state.runs[key];
+    const held = run?.queuedNudges;
+    if (!held?.length) return;
+    // A turn in progress keeps them: they are delivered when it finishes, never over the top of it.
+    if (run.status === 'running' || run.status === 'starting') return;
+    run.queuedNudges = []; saveState(this.state);
+    await this.startNudgedTurn(key, held, held.map((n) => n.from).join(', '));
   }
 
   /**
@@ -1034,6 +1225,8 @@ class IssueHerd {
   /** After a restart, re-attach to runs that were in flight. */
   async resume() {
     for (const [key, run] of Object.entries(this.state.runs)) {
+      // A nudge held for a run that finished while the watcher was down is still owed.
+      if (run.queuedNudges?.length && run.status !== 'running' && run.status !== 'starting') { await this.deliverQueuedNudges(key); continue; }
       if (run.status !== 'running' && run.status !== 'starting') continue;
       const rule = this.cfg.rules.find((r) => r.name === run.rule) || this.cfg.defaults;
       const result = run.resultPath ? readJson(run.resultPath, null) : null;
@@ -1358,6 +1551,12 @@ async function main(argv) {
       const outcome = r.result ? `${r.result.status}${r.result.prUrl ? ' ' + r.result.prUrl : ''}` : (r.error || '');
       console.log(`${k.padEnd(16)} ${(r.role || '-').padEnd(8)} ${r.status.padEnd(14)} ${agent.padEnd(8)} ${(r.workspaceId || '').padEnd(4)} ${r.rule.padEnd(12)} ${r.startedAt.slice(0, 16)} ${outcome}  ${r.title || ''}`);
     }
+    // Who nudged whom, per issue, against the cap — the conversation the roles had on their own.
+    for (const [issueKey, entries] of Object.entries(s.nudges || {})) {
+      if (!entries?.length) continue;
+      console.log(`\n${issueKey}: ${nudgesSent(entries)} of ${cfg.maxNudges} nudges used`);
+      for (const e of entries) console.log(`  ${(e.at || '').slice(0, 16)} ${e.from || '?'} → ${e.to} ${e.outcome}${e.outcome === 'refused' ? '' : `: ${(e.message || '').split('\n')[0].slice(0, 80)}`}`);
+    }
     return;
   }
   if (cmd === 'reset') {
@@ -1367,6 +1566,8 @@ async function main(argv) {
     const s = loadState();
     const gone = Object.keys(s.runs).filter((k) => k === key || issueKeyOf(k) === key);
     for (const k of gone) delete s.runs[k];
+    // The nudges are the issue's, not one role's: forgetting the issue hands the budget back too.
+    if (s.nudges?.[key]) delete s.nudges[key];
     saveState(s);
     console.log(gone.length ? `forgot ${gone.join(', ')}` : `no run called ${key}`);
     return;
@@ -1418,7 +1619,10 @@ async function smoke({ cfg, herdr, argv }) {
   };
   rule.compiled = compile('any:true');
   rule.role = normalizeRole(rule.role, 'smoke rule');
-  const key = `SMOKE-${Date.now().toString().slice(-4)}`;
+  // `--key SMOKE-1` names the fake issue, so a test can seed state.json with another role's run on
+  // it before the smoke run starts — the only way to drive a nudge without a tracker.
+  const keyFlag = argv.indexOf('--key');
+  const key = keyFlag !== -1 && argv[keyFlag + 1] ? argv[keyFlag + 1] : `SMOKE-${Date.now().toString().slice(-4)}`;
   const nowIso = new Date().toISOString();
   const issue = {
     id: 'fake', identifier: key, ref: key, title: 'issue-herd smoke test', description: 'Prove the herdr pipeline works end to end.',
@@ -1426,13 +1630,17 @@ async function smoke({ cfg, herdr, argv }) {
     team: { id: 't', key: 'SMK', name: 'Smoke' }, assignee: null, creator: null, state: { name: 'Todo', type: 'unstarted' },
     cycle: null, comments: [], createdAt: nowIso, updatedAt: nowIso,
   };
-  const app = new IssueHerd({ cfg: { ...cfg, rules: [rule] }, tracker: null, herdr });
+  // The repository's own rules ride along behind the smoke rule: a smoke result that nudges another
+  // role needs that role's rule to give it a turn, and the brief lists the roles the project runs.
+  const app = new IssueHerd({ cfg: { ...cfg, rules: [rule, ...cfg.rules] }, tracker: null, herdr });
   await app.pickUp(issue, rule);
   // The run is filed under its run key, which carries the rule's role — `defaults.role` in
   // config.json reaches the smoke rule like any other default, so this is not always the issue key.
   const runKey = runKeyFor(key, rule.role);
   log(`smoke: waiting for ${runKey} to finish…`);
   while (app.state.runs[runKey].status === 'running') await sleep(2000);
+  // A result that nudged another role started that role's turn; it is part of the pipeline too.
+  while (app.supervising.size) await sleep(500);
   const run = app.state.runs[runKey];
   log(`smoke: ${run.status} ${JSON.stringify(run.result || run.error || '')}`);
   console.log(`\nSmoke run ${runKey}: ${run.status}. herdr workspace ${run.workspaceId} left open; clean up with:\n  herdr workspace close ${run.workspaceId}\n  issue-herd reset ${runKey}`);

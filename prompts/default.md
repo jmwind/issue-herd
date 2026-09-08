@@ -83,7 +83,11 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
    granted you the merge (step 5). In that case write the result file first, because it is what
    hands the PR to the reviewers and starts the watch on it — issue-herd reads it within a minute
    whether or not you have stopped; then keep watching the issue for the reviewers' reports, merge
-   when all of them say OK, and stop after that.
+   when all of them say OK, and stop after that. A reviewer that needs something changed may reach
+   you as a nudge — a new turn with its findings in the brief — rather than as a comment you have to
+   go and find.
+
+{{nudgeLines}}
 
 ## Constraints
 

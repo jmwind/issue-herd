@@ -27,3 +27,12 @@ test('the reviewing briefs still never merge', () => {
     assert.doesNotMatch(read(name), /unless the issue says you may/, `${name} must not carry the implementer's exception`);
   }
 });
+
+test('every brief that a role can run leaves room for how to nudge the other roles', () => {
+  // GH-61: the roles on an issue hand work to each other through the result file's `nudge`, and
+  // the brief is the only place an agent learns that. The block is rendered by the watcher, so a
+  // template that drops the placeholder silently turns the feature off for that role.
+  for (const name of ['default.md', 'review-lead.md', 'review-usability.md', 'review-security.md']) {
+    assert.match(read(name), /\{\{nudgeLines\}\}/, `${name} must carry {{nudgeLines}}`);
+  }
+});

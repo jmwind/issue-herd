@@ -190,6 +190,57 @@ treats the role as finished — it fails closed, and `issue-herd reset` is how y
 by hand. And a run still waiting for its PR to merge (`awaiting_merge`) is not eligible for another
 turn, because that watch would be lost.
 
+## Working together: nudges
+
+`passes` lets a role come back when the issue moves on, but it says nothing about *who* should
+move it. A reviewer that finds something wrong writes its verdict on the issue, and the
+implementer's agent sits idle in the next pane until a person reads the comment and types "the
+reviewer wants X" into it — then does the same in the other direction when the fix is pushed.
+That is the loop the roles were meant to run on their own.
+
+So a finishing agent may name the role it needs next, in its result:
+
+```json
+{
+  "status": "nothing_to_do",
+  "summary": "NOT OK TO MERGE TO MAIN — the retry loop can spin for ever …",
+  "notes": "src/poll.mjs:41 — …",
+  "nudge": { "role": "impl", "message": "Bound the retry loop in src/poll.mjs:41, push, and nudge me back." }
+}
+```
+
+and issue-herd relays it: the `impl` run on the same issue gets **another turn straight away**,
+through the same `herdr agent prompt` a person would have typed. It is the same turn machinery as
+`passes` — same run key, claim, worktree and (when it is still up) session; the previous result is
+set aside as `result.pass1.json`; the brief names the turn, quotes the nudge, and points at what
+the run said last time — but it is asked for by another role rather than earned by the issue moving
+on, so it is not measured against `passes`, and it does not wait for a poll. A list of nudges
+reaches several roles, which is how an implementer that has pushed a fix hands it back to both
+reviewers at once.
+
+The trail stays on the issue. The nudging run's finish comment carries the nudge and what happened
+to it; the nudged turn's pickup comment says who asked for it; `issue-herd status` lists the
+conversation per issue. A nudge is the *ask* — the report goes in `summary` and `notes` as usual,
+and a verdict that needs no action is just a comment.
+
+Three things keep it from running away:
+
+- **It is capped.** `"maxNudges": 6` (top-level, that is the default) is how many nudges the
+  agents may relay on one issue, all roles together. The seventh is refused, the finish comment says
+  so, and you get a 🙋 comment and notification (`onBlocked`): a person is needed. Raise it in `config.local.json` to let
+  them carry on, or `issue-herd reset <issue>` to hand the budget back. `0` turns nudging off, and
+  the briefs then say nothing about it.
+- **A busy role is not interrupted.** A nudge for a run in the middle of a turn is held and becomes
+  its next turn the moment it finishes — interrupting it would race its own result.
+- **A person still wins.** Every nudged turn re-reads the issue: one assigned to somebody else in
+  the meantime is left alone, exactly as any turn would be. And the briefs tell the agents to write
+  `needs_human` rather than nudge again when they are going round in circles or the issue asks for
+  a person.
+
+The briefs that ship all teach it (through `{{nudgeLines}}`, which the watcher renders only for a
+role with somebody to nudge). A brief of your own that drops the placeholder simply does not offer
+the move. Turns started by a nudge are not held by `maxConcurrent`: the session is already there.
+
 ## Three roles on GitHub: what this repository runs
 
 issue-herd works its own issues, so `.issue-herd/config.json` in this repository is a worked
@@ -230,6 +281,12 @@ up after its result is in, waiting for the two reports, and to merge nothing whi
 missing. That needs `onDone.closeWorkspace` off (the default) on the implementer's rule, and
 `onDone.comment` on for every reviewer's — a verdict the implementer cannot see on the issue is a
 verdict it will wait for forever.
+
+Once the reviewers have run, the loop closes without anyone typing: a `NOT OK` review nudges
+`impl`, which fixes, pushes and nudges both reviewers back; a second `OK` is a comment the
+implementer sees. The implementer's rule stops matching once the label is on, which is fine —
+a nudged turn is not a pickup, so `match` is never consulted for it. Six nudges is roughly two
+rounds of that before a person is asked in ([Working together](#working-together-nudges)).
 
 Nothing here is GitHub-specific except the handoff: on Linear the same shape uses
 `"match": "label:ai and state:\"In Review\""` and `onDone.state`, and no label is needed.
