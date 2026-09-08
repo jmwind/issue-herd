@@ -44,7 +44,7 @@ import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
 import { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } from '../src/worktree.mjs';
 import { agentArgv, describeAgent, exitCommandFor, TRANSLATED_KINDS } from '../src/agents.mjs';
-import { conflictPrompt, conflictStep, parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
+import { conflictPrompt, keepMergeable, parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
 import { GitHubTracker } from '../src/trackers/github.mjs';
 import { askSecret, loadCredentials } from '../src/auth.mjs';
 import { stampFactory } from '../src/console/registry.mjs';
@@ -958,38 +958,20 @@ class IssueHerd {
    * own to keep mergeable until it is merged or closed; this is the half of that it cannot do
    * itself — noticing. The watcher is already asking GitHub about the PR once a minute, so when
    * the answer says "dirty" the implementer's session, still up in its pane, is typed the one
-   * message that sends it back to work. Once per conflict, not once a minute (see conflictStep).
-   *
-   * A session that has gone — exited by hand, or `onDone.closeWorkspace` — has nobody to tell, so
-   * the person is told instead, through the same channels as a blocked agent: a stale PR is a run
-   * waiting on someone.
+   * message that sends it back to work. Once per conflict, not once a minute; a session that has
+   * gone — exited by hand, or `onDone.closeWorkspace` — has nobody to tell, so the person is told
+   * instead, through the same channels as a blocked agent. The decisions are in src/pr.mjs; this
+   * is the wiring to herdr, the tracker and state.json.
    */
   async keepMergeable(key, run, rule, pr) {
-    const step = conflictStep(run, pr);
-    if (step === 'clear') {
-      delete run.conflictHead; saveState(this.state);
-      log(`${key}: ${run.prUrl} is mergeable again`);
-      return;
-    }
-    if (step !== 'nudge') return;
-    const head = pr.headSha || 'unknown';
-    const agent = run.agentName ? await this.herdr.agentGet(run.agentName).catch(() => null) : null;
-    if (!agent) {
-      run.conflictHead = head; saveState(this.state);
-      log(`${key}: ${run.prUrl} conflicts with ${pr.baseRef || 'its base'} and agent ${run.agentName || '(none)'} is gone; nobody to send back to it`);
-      await this.report(key, rule, rule.onBlocked, `⚠️ ${run.prUrl} conflicts with \`${pr.baseRef || 'its base branch'}\` and the implementer's session for ${key} has ended, so nobody is there to bring the branch up to date. Merge \`${pr.baseRef || 'the base branch'}\` into \`${run.branch || 'the branch'}\` by hand, or open a new session on it.`, 'request');
-      return;
-    }
-    try {
-      await this.herdr.prompt(run.agentName, conflictPrompt({ prUrl: run.prUrl, branch: run.branch, baseRef: pr.baseRef, briefPath: run.dir ? path.join(run.dir, 'brief.md') : null }));
-    } catch (e) {
-      // Not lost, not yet deliverable: a dialog is up, or herdr is unwell. The marker is not set,
-      // so the next poll tries again.
-      log(`${key}: ${run.prUrl} conflicts with ${pr.baseRef || 'its base'} but the agent could not be told yet (${isBlocked(e) ? 'it is showing a dialog' : e.message}); will try again`);
-      return;
-    }
-    run.conflictHead = head; saveState(this.state);
-    log(`${key}: ${run.prUrl} conflicts with ${pr.baseRef || 'its base'}; asked agent ${run.agentName} to bring ${run.branch || 'the branch'} up to date`);
+    const base = pr.baseRef || 'the base branch';
+    const did = await keepMergeable(run, pr, {
+      log: (m) => log(`${key}: ${m}`),
+      lookupAgent: () => (run.agentName ? this.herdr.agentGet(run.agentName) : null),
+      nudge: () => this.herdr.prompt(run.agentName, conflictPrompt({ prUrl: run.prUrl, branch: run.branch, baseRef: pr.baseRef, briefPath: run.dir ? path.join(run.dir, 'brief.md') : null })),
+      tellPerson: () => this.report(key, rule, rule.onBlocked, `⚠️ ${run.prUrl} conflicts with \`${base}\` and the implementer's session for ${key} has ended, so nobody is there to bring the branch up to date. Merge \`${base}\` into \`${run.branch || 'the branch'}\` by hand, or open a new session on it.`, 'request'),
+    });
+    if (did && did !== 'retry') saveState(this.state);
   }
 
   /**

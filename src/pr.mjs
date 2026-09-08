@@ -45,10 +45,13 @@ export function stateOf(pr) {
  * Does GitHub say this pull request cannot be merged because of conflicts? `mergeable_state` is
  * "dirty" for exactly that (and `mergeable` false); "blocked", "behind" and "unstable" are reviews,
  * branch protection and checks, which are not the implementer's branch being stale. `mergeable` is
- * null while GitHub is still working it out after a push: "not known yet", never "conflicting".
+ * null while GitHub is still working it out after a push — that is `null` here too: "not known
+ * yet" is neither "conflicting" nor "clean", and the watcher must not act on it either way.
  */
 export function conflictsOf(pr) {
-  return pr?.mergeable_state === 'dirty' || pr?.mergeable === false;
+  if (pr?.mergeable_state === 'dirty' || pr?.mergeable === false) return true;
+  if (pr?.mergeable === true || (pr?.mergeable_state && pr.mergeable_state !== 'unknown')) return false;
+  return null;
 }
 
 /**
@@ -91,9 +94,59 @@ export async function prState(url, { token = null, host = 'github.com', fetchImp
  */
 export function conflictStep(run, pr) {
   if (!pr || pr.state !== 'open') return null;
+  // GitHub recomputing after a push answers "unknown" for a poll or two. That is not the PR being
+  // clean again: the marker stays, or the same conflicts would be announced twice.
+  if (pr.conflicts === null) return null;
   const head = pr.headSha || 'unknown';
   if (!pr.conflicts) return run?.conflictHead ? 'clear' : null;
   return run?.conflictHead === head ? null : 'nudge';
+}
+
+/**
+ * Keep one open pull request mergeable, as far as the watcher can: notice, and send the
+ * implementer back to it. `run` is the watcher's record (mutated: `conflictHead`); the three
+ * callbacks are herdr and the tracker.
+ *
+ *   lookupAgent()  → the agent, or null when herdr has no such agent; throws when herdr could not
+ *                    be asked at all (a timeout, a restart). Those are different answers: null is
+ *                    "the session is gone, tell a person", a throw is "ask again next poll".
+ *   nudge()        → type the conflict message into the session; throws when it cannot be delivered
+ *                    (a dialog is up), which is also "again next poll".
+ *   tellPerson()   → the session is gone, so report the conflict to whoever is left.
+ *
+ * Returns what happened: 'cleared' | 'nudged' | 'told' | 'retry' | null. The marker is set only when
+ * someone was actually told, so a poll that could not reach anyone tries again.
+ */
+export async function keepMergeable(run, pr, { lookupAgent, nudge, tellPerson, log = () => {} }) {
+  const step = conflictStep(run, pr);
+  const base = pr?.baseRef || 'its base';
+  if (step === 'clear') {
+    delete run.conflictHead;
+    log(`${pr.url} is mergeable again`);
+    return 'cleared';
+  }
+  if (step !== 'nudge') return null;
+  const head = pr.headSha || 'unknown';
+  let agent;
+  try { agent = await lookupAgent(); }
+  catch (e) {
+    log(`${pr.url} conflicts with ${base} but herdr could not say whether the agent is still up (${e.message}); will try again`);
+    return 'retry';
+  }
+  if (!agent) {
+    run.conflictHead = head;
+    log(`${pr.url} conflicts with ${base} and the agent is gone; nobody to send back to it`);
+    await tellPerson();
+    return 'told';
+  }
+  try { await nudge(); }
+  catch (e) {
+    log(`${pr.url} conflicts with ${base} but the agent could not be told yet (${e.message}); will try again`);
+    return 'retry';
+  }
+  run.conflictHead = head;
+  log(`${pr.url} conflicts with ${base}; asked the agent to bring the branch up to date`);
+  return 'nudged';
 }
 
 /**
