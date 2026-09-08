@@ -122,7 +122,64 @@ button{font:inherit;color:inherit}
 @keyframes swing{from{transform:rotate(-70deg)}to{transform:rotate(50deg)}}
 .gear{width:14px;height:14px;animation:spin 5s linear infinite;color:var(--muted)}
 @keyframes spin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.belt::before,.items,.inserter .arm,.gear,.craft i,.led.green{animation:none}}
+/* the index: one plant per factory, a belt running from each down to the next. A working plant
+   turns its gears, lights its slots, smokes and shows a craft bar; an idle one stands still; one
+   whose watcher is gone is dark with a red light. */
+.plants{display:flex;flex-direction:column}
+.plant{position:relative;display:flex;flex-direction:column;gap:8px;padding:10px;text-decoration:none;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge);cursor:pointer}
+.plant.working{box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge),0 0 18px rgba(94,182,99,.18)}
+.plant.stale{filter:saturate(.5) brightness(.85)}
+.plant .roof{position:relative;display:flex;align-items:center;gap:8px;min-width:0;padding-top:4px}
+.plant .roof b{font:700 17px var(--font);color:var(--heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plant .roof .m,.plant .needs .m{font:600 12px var(--font);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plant .roof .chev{margin-left:auto;font-size:22px;color:var(--dim);line-height:1}
+.chimney{position:absolute;right:34px;top:-10px;width:36px;height:12px;pointer-events:none}
+.chimney::before{content:"";position:absolute;left:11px;bottom:-4px;width:12px;height:12px;background:var(--frame-2);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge)}
+.chimney i{position:absolute;bottom:6px;left:0;width:9px;height:9px;border-radius:50%;background:rgba(200,200,200,.35);opacity:0}
+.chimney i:nth-child(2){left:13px}.chimney i:nth-child(3){left:22px}
+.plant.working .chimney i{animation:puff 2.4s ease-out infinite}
+.plant.working .chimney i:nth-child(2){animation-delay:.8s}.plant.working .chimney i:nth-child(3){animation-delay:1.6s}
+@keyframes puff{0%{transform:translateY(0) scale(.6);opacity:0}15%{opacity:.7}100%{transform:translateY(-22px) scale(1.8);opacity:0}}
+.plant .floor{position:relative;display:flex;align-items:center;gap:10px;padding:8px;background:var(--inset);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);font:600 13px var(--font);color:var(--muted)}
+.plant .gears{display:inline-flex;align-items:center;gap:0;flex:none}
+.plant .gears .gear{width:22px;height:22px;color:var(--dim);animation:none;margin-right:-4px}
+.plant .gears .gear:nth-child(2){width:16px;height:16px;position:relative;top:-6px}
+.plant .gears .gear:nth-child(3){width:26px;height:26px;position:relative;top:4px}
+.plant.working .gears .gear{color:var(--orange);animation:spin 4s linear infinite}
+.plant.working .gears .gear:nth-child(2){animation:spinback 3s linear infinite}
+.plant.working .gears .gear:nth-child(3){animation-duration:5s}
+@keyframes spinback{to{transform:rotate(-360deg)}}
+.plant .lights{display:inline-flex;gap:4px;padding:3px 5px;background:var(--inset-2);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);flex:none}
+.plant.working .floor .ph{color:var(--green-2)}
+.plant.stale .floor .ph{color:var(--red-2)}
+.plant .floor .craft{left:1px;right:1px;bottom:1px}
+.plant .crew{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font:600 13px var(--font);color:var(--muted)}
+.plant .crew b{color:var(--text);font-size:15px}
+.plant .crew .who{color:var(--dim);margin-left:2px}
+.prod{width:100%;border-collapse:collapse;font:600 13px var(--font);color:var(--muted);table-layout:fixed}
+.prod th,.prod td{padding:4px 6px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prod thead th{font:700 11px var(--font);letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding-bottom:2px}
+.prod tbody th{text-align:left;font-weight:600;color:var(--muted);width:30%;white-space:normal;line-height:1.15}
+.prod tbody th:first-child{padding-left:2px}
+.prod tbody tr{background:var(--inset);box-shadow:inset 0 1px 0 var(--lo)}
+.prod td b{display:block;font:700 15px var(--font);color:var(--text);font-variant-numeric:tabular-nums}
+.prod td b.own{color:var(--green-2)}.prod td b.you{color:var(--yellow)}.prod td b.none{color:var(--dim)}
+.prod td small{display:block;font:600 10px var(--font);color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+.prod .ico{display:inline-block;width:11px;height:11px;margin-right:5px;vertical-align:-1px;box-shadow:inset 1px 1px 0 rgba(255,255,255,.35),inset -1px -1px 0 rgba(0,0,0,.6),0 0 0 1px var(--edge)}
+.prod .ico.commit{background:#8FA9B8}.prod .ico.merged{background:#B79CD9}.prod .ico.lines{background:#D9C07A}
+.plant .needs{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.plant .needs .m{margin-left:auto}
+/* the belt between two plants: a vertical run of chevrons, cargo riding down it from a plant that is working */
+.link{display:flex;justify-content:center;height:56px;flex:none}
+.vbelt{position:relative;width:34px;height:100%;background:#262626;box-shadow:inset 2px 0 0 var(--lo),inset -2px 0 0 var(--lo),inset -1px 0 0 var(--hi);overflow:hidden}
+.vbelt::before{content:"";position:absolute;inset:0 4px;opacity:.9;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='18'%3E%3Cpath d='M3 4 L13 12 L23 4' fill='none' stroke='%23E39827' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") repeat-y 0 0/26px 18px;animation:vbeltmove .45s linear infinite}
+@keyframes vbeltmove{to{background-position:0 18px}}
+.link:not(.on) .vbelt::before{animation-duration:1.4s;opacity:.5}
+.cargo{position:absolute;left:0;top:0;width:100%;height:200%;display:flex;flex-direction:column;align-items:center;justify-content:space-around;animation:cargomove 3.2s linear infinite;will-change:transform}
+@keyframes cargomove{from{transform:translateY(-50%)}to{transform:translateY(0)}}
+.cargo i{width:14px;height:14px;flex:none;box-shadow:inset 1px 1px 0 rgba(255,255,255,.35),inset -1px -1px 0 rgba(0,0,0,.6),0 0 0 1px var(--edge)}
+.cargo i.commit{background:#8FA9B8}.cargo i.pr{background:var(--orange)}.cargo i.merged{background:#B79CD9}.cargo i.lines{background:#D9C07A}
+@media (prefers-reduced-motion:reduce){.belt::before,.items,.inserter .arm,.gear,.craft i,.led.green,.vbelt::before,.cargo,.chimney i,.plant.working .gears .gear{animation:none}}
 /* detail */
 .ehead{padding:8px 10px 0;display:flex;flex-direction:column;gap:6px}
 .ehead .key{font:700 12px var(--font);color:var(--orange-2);letter-spacing:.04em}

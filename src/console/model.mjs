@@ -264,15 +264,53 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
   const weight = { blocked: 0, question: 1, needs_human: 2, merge: 3, stopped: 4, failed: 5, gone: 6, holding: 7, finished: 8 };
   alerts.sort((a, b) => weight[a.kind] - weight[b.kind] || b.sinceMs - a.sinceMs);
 
-  const running = issues.flatMap((i) => i.runs).filter((r) => r.status === 'running' || r.status === 'starting').length;
+  const allRuns = issues.flatMap((i) => i.runs);
+  const running = allRuns.filter((r) => r.status === 'running' || r.status === 'starting').length;
+  // A factory is working when an agent on it is: the lights are on and the belts move.
+  const working = allRuns.filter((r) => r.light === 'green' && r.agentAlive).length;
+  const windows = productionWindows(now);
   return {
     id, repo, name, tracker, roles: roleList, rules,
     maxConcurrent: config.maxConcurrent ?? null, pollSeconds: config.pollSeconds ?? registry?.pollSeconds ?? null,
     watcher: { version: registry?.version || null, lastPoll: registry?.lastPoll || null, stale, workspaceId: registry?.workspaceId || null, pid: registry?.pid || null },
-    counts: { running, alerts: alerts.length, inflight: issues.filter((i) => i.bucket === 'inflight').length, merged: issues.filter((i) => i.bucket === 'merged').length, done: issues.filter((i) => i.bucket === 'done').length },
+    counts: { running, working, alerts: alerts.length, inflight: issues.filter((i) => i.bucket === 'inflight').length, merged: issues.filter((i) => i.bucket === 'merged').length, done: issues.filter((i) => i.bucket === 'done').length },
     humanWaitMs: issues.reduce((s, i) => s + i.humanWaitMs, 0),
+    production: { today: production(issues, windows.today, now), week: production(issues, windows.week, now), month: production(issues, windows.month, now) },
     alerts, issues,
   };
+}
+
+// ---------------------------------------------------------------- production
+
+/** When today, this week (from Monday) and this month began, in the machine's local time. */
+export function productionWindows(now = Date.now()) {
+  const d = new Date(now);
+  const today = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const week = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7).getTime();
+  const month = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  return { today, week, month };
+}
+
+/**
+ * The factory's production since `from`: tasks finished (and how many of those merged), the
+ * agents' time working with nobody waited for, and a person's time being waited for (dialogs,
+ * questions, a PR waiting to be merged). Times are clipped to the window, so a run that
+ * straddles midnight counts today's part only.
+ */
+export function production(issues, from, now = Date.now()) {
+  let finished = 0, merged = 0, workingMs = 0, humanMs = 0;
+  const clip = (a, b) => Math.max(0, Math.min(b, now) - Math.max(a, from));
+  for (const iss of issues) {
+    if (iss.bucket !== 'inflight' && iss.finishedAt && Date.parse(iss.finishedAt) >= from) { finished++; if (iss.merged) merged++; }
+    for (const r of iss.runs) {
+      for (const s of r.segments) {
+        if (s.kind === 'working') workingMs += clip(s.from, s.to);
+        else if (s.kind === 'blocked' || s.kind === 'question') humanMs += clip(s.from, s.to);
+      }
+      if (r.waitingSince) humanMs += clip(r.waitingSince, now);
+    }
+  }
+  return { finished, merged, workingMs, humanMs };
 }
 
 function clip(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; }

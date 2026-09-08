@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView } from '../src/console/model.mjs';
+import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView, productionWindows, production } from '../src/console/model.mjs';
 import { Gate, hashPasscode, verifyPasscode } from '../src/console/passcode.mjs';
 import { stampFactory, loadRegistry, isStale, forgetFactory } from '../src/console/registry.mjs';
 import { complexity } from '../src/console/git.mjs';
@@ -190,6 +190,35 @@ test('a failed run stops being an alert after a day', () => {
   assert.deepEqual(fresh.alerts.map((a) => a.kind), ['failed']);
   const old = factoryView({ id: 'x', repo: '/r', state: { runs }, now: T(1, 2) + 86400e3 });
   assert.deepEqual(old.alerts, []);
+});
+
+test('production: what came out today, this week and this month, and time on its own against time waiting on a person', () => {
+  // 2026-09-07 is a Monday: today and this week begin together, the month a week earlier.
+  const w = productionWindows(T(15, 0));
+  assert.equal(w.today, T(0, 0)); assert.equal(w.week, T(0, 0)); assert.equal(w.month, new Date(2026, 8, 1).getTime());
+  assert.equal(productionWindows(new Date(2026, 8, 9, 12).getTime()).week, T(0, 0), 'Wednesday belongs to Monday\'s week');
+  const runs = {
+    // finished this afternoon: 40 min of run, 7 of them a person's (from the log)
+    'GH-7@impl': { rule: 'implement', role: 'impl', status: 'done', issueKey: 'GH-7', title: 'Fix', startedAt: iso(14, 0), finishedAt: iso(14, 40), agentName: 'gh-7-impl', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/9' } },
+    // merged last week: counts for the month only, and its hour of work is outside today's window
+    'GH-2': { rule: 'implement', status: 'merged', issueKey: 'GH-2', title: 'Old', startedAt: new Date(2026, 8, 3, 10).toISOString(), finishedAt: new Date(2026, 8, 3, 11).toISOString(), agentName: 'gh-2', prUrl: 'https://github.com/o/r/pull/3' },
+    // merged in August: outside every window
+    'GH-1': { rule: 'implement', status: 'merged', issueKey: 'GH-1', title: 'Older', startedAt: new Date(2026, 7, 20, 10).toISOString(), finishedAt: new Date(2026, 7, 20, 12).toISOString(), agentName: 'gh-1', prUrl: 'https://github.com/o/r/pull/1' },
+  };
+  const v = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, events: parseLog(LOG), now: T(15, 0) });
+  assert.deepEqual(v.production.today, { finished: 1, merged: 0, workingMs: 33 * 60e3, humanMs: 7 * 60e3 });
+  assert.deepEqual(v.production.week, v.production.today);
+  assert.deepEqual(v.production.month, { finished: 2, merged: 1, workingMs: (33 + 60) * 60e3, humanMs: 7 * 60e3 });
+  assert.equal(v.counts.working, 0);
+  // a PR waiting 20 min for its merge is still in flight, not output, and the wait is a person's
+  const waiting = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { ...runs, 'GH-7@impl': { ...runs['GH-7@impl'], status: 'awaiting_merge', prUrl: 'https://github.com/o/r/pull/9' } } }, events: parseLog(LOG), now: T(15, 0) });
+  assert.deepEqual(waiting.production.today, { finished: 0, merged: 0, workingMs: 33 * 60e3, humanMs: 27 * 60e3 });
+  // a run straddling midnight counts today's part only
+  const straddle = [{ bucket: 'inflight', runs: [{ segments: [{ from: T(0, 0) - 30 * 60e3, to: T(0, 30), kind: 'working' }], waitingSince: null }] }];
+  assert.equal(production(straddle, T(0, 0), T(1, 0)).workingMs, 30 * 60e3);
+  // an agent that herdr says is working lights the factory up
+  const lit = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { 'GH-3@impl': { rule: 'implement', role: 'impl', status: 'running', issueKey: 'GH-3', title: 't', startedAt: iso(14, 50), agentName: 'gh-3-impl' } } }, index: indexSnapshot({ agents: [{ name: 'gh-3-impl', agent_status: 'working' }] }), now: T(15, 0) });
+  assert.equal(lit.counts.working, 1);
 });
 
 test('complexity grades from size facts, with a reason', () => {
