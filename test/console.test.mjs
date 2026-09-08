@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView, SETTLE_MS } from '../src/console/model.mjs';
+import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView, productionWindows, production, SETTLE_MS } from '../src/console/model.mjs';
 import { Gate, hashPasscode, verifyPasscode } from '../src/console/passcode.mjs';
 import { stampFactory, loadRegistry, isStale, forgetFactory } from '../src/console/registry.mjs';
 import { complexity } from '../src/console/git.mjs';
@@ -247,6 +247,54 @@ test('a failed run stops being an alert after a day', () => {
   assert.deepEqual(old.alerts, []);
 });
 
+test('production: what came out today, this week and this month, and time on its own against time waiting on a person', () => {
+  // 2026-09-07 is a Monday: today and this week begin together, the month a week earlier.
+  const w = productionWindows(T(15, 0));
+  assert.equal(w.today, T(0, 0)); assert.equal(w.week, T(0, 0)); assert.equal(w.month, new Date(2026, 8, 1).getTime());
+  assert.equal(productionWindows(new Date(2026, 8, 9, 12).getTime()).week, T(0, 0), 'Wednesday belongs to Monday\'s week');
+  const runs = {
+    // finished this afternoon: 40 min of run, 7 of them a person's (from the log)
+    'GH-7@impl': { rule: 'implement', role: 'impl', status: 'done', issueKey: 'GH-7', title: 'Fix', startedAt: iso(14, 0), finishedAt: iso(14, 40), agentName: 'gh-7-impl', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/9' } },
+    // merged last week: counts for the month only, and its hour of work is outside today's window
+    'GH-2': { rule: 'implement', status: 'merged', issueKey: 'GH-2', title: 'Old', startedAt: new Date(2026, 8, 3, 10).toISOString(), finishedAt: new Date(2026, 8, 3, 11).toISOString(), agentName: 'gh-2', prUrl: 'https://github.com/o/r/pull/3' },
+    // merged in August: outside every window
+    'GH-1': { rule: 'implement', status: 'merged', issueKey: 'GH-1', title: 'Older', startedAt: new Date(2026, 7, 20, 10).toISOString(), finishedAt: new Date(2026, 7, 20, 12).toISOString(), agentName: 'gh-1', prUrl: 'https://github.com/o/r/pull/1' },
+  };
+  const v = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, events: parseLog(LOG), now: T(15, 0) });
+  assert.deepEqual(v.production.today, { finished: 1, merged: 0, workingMs: 33 * 60e3, humanMs: 7 * 60e3 });
+  assert.deepEqual(v.production.week, v.production.today);
+  assert.deepEqual(v.production.month, { finished: 2, merged: 1, workingMs: (33 + 60) * 60e3, humanMs: 7 * 60e3 });
+  assert.equal(v.counts.working, 0);
+  // a PR waiting 20 min for its merge is still in flight, not output, and the wait is a person's
+  const waiting = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { ...runs, 'GH-7@impl': { ...runs['GH-7@impl'], status: 'awaiting_merge', prUrl: 'https://github.com/o/r/pull/9' } } }, events: parseLog(LOG), now: T(15, 0) });
+  assert.deepEqual(waiting.production.today, { finished: 0, merged: 0, workingMs: 33 * 60e3, humanMs: 27 * 60e3 });
+  // a run straddling midnight counts today's part only
+  const straddle = [{ bucket: 'inflight', runs: [{ segments: [{ from: T(0, 0) - 30 * 60e3, to: T(0, 30), kind: 'working' }], waitingSince: null }] }];
+  assert.equal(production(straddle, T(0, 0), T(1, 0)).workingMs, 30 * 60e3);
+  // a merged PR keeps the wait it had: the watcher stamps mergedAt and overwrites finishedAt with
+  // the moment it noticed, so the wait runs from the agent's own finish (the log's done event) to the merge
+  const MLOG = '[2026-09-07 10:00:00] GH-4@impl: prompted (state working)\n[2026-09-07 11:00:00] GH-4@impl: done (pr_open) https://github.com/o/r/pull/4\n[2026-09-07 13:00:10] GH-4@impl: https://github.com/o/r/pull/4 is merged\n';
+  const open = { 'GH-4@impl': { rule: 'implement', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-4', title: 'm', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-4-impl', prUrl: 'https://github.com/o/r/pull/4' } };
+  const before = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: open }, events: parseLog(MLOG), now: T(13, 0) });
+  assert.deepEqual(before.production.today, { finished: 0, merged: 0, workingMs: 60 * 60e3, humanMs: 120 * 60e3 });
+  assert.deepEqual(before.issues[0].runs[0].mergeWait, { from: T(11, 0), to: null }, 'an open wait has no end, so the view is the same from tick to tick');
+  const merged = { 'GH-4@impl': { ...open['GH-4@impl'], status: 'merged', mergedAt: iso(13, 0), finishedAt: iso(13, 0, 30) } };
+  const after = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: merged }, events: parseLog(MLOG), now: T(14, 0) });
+  assert.deepEqual(after.production.today, { finished: 1, merged: 1, workingMs: 60 * 60e3, humanMs: 120 * 60e3 }, 'the two hours waited are still there after the merge');
+  assert.equal(after.issues[0].humanWaitMs, 120 * 60e3, 'and on the task itself');
+  assert.deepEqual(after.issues[0].runs[0].mergeWait, { from: T(11, 0), to: T(13, 0) });
+  // with a reviewer that reported at noon the person's wait began then; one still reading at the merge means it never began
+  const reviewed = { ...merged, 'GH-4@review': { rule: 'tech-lead', role: 'review', status: 'done', issueKey: 'GH-4', title: 'm', startedAt: iso(11, 1), finishedAt: iso(12, 0), agentName: 'gh-4-review', result: { status: 'nothing_to_do' } } };
+  assert.equal(factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: reviewed }, events: parseLog(MLOG), now: T(14, 0) }).production.today.humanMs, 60 * 60e3);
+  const reading = { ...reviewed, 'GH-4@review': { ...reviewed['GH-4@review'], status: 'done', finishedAt: iso(13, 30) } };
+  assert.equal(factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: reading }, events: parseLog(MLOG), now: T(14, 0) }).production.today.humanMs, 0);
+  // without the log the agent's own finish is unknown, and an unknown wait counts as none rather than as the whole run
+  assert.equal(factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: merged }, now: T(14, 0) }).production.today.humanMs, 0);
+  // an agent that herdr says is working lights the factory up
+  const lit = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { 'GH-3@impl': { rule: 'implement', role: 'impl', status: 'running', issueKey: 'GH-3', title: 't', startedAt: iso(14, 50), agentName: 'gh-3-impl' } } }, index: indexSnapshot({ agents: [{ name: 'gh-3-impl', agent_status: 'working' }] }), now: T(15, 0) });
+  assert.equal(lit.counts.working, 1);
+});
+
 test('complexity grades from size facts, with a reason', () => {
   assert.equal(complexity(null), null);
   const s = complexity({ added: 20, removed: 3, files: 2, paths: ['src/a.mjs', 'test/a.test.mjs'], commits: [] });
@@ -318,6 +366,34 @@ test('markDone: the one action — every agent still up on the task gets its exi
   assert.match(stuck.error, /review \(gh-1-review\) still running; not marked done/);
   assert.deepEqual(stuck.outcomes.map((o) => o.outcome), ['exited', 'is still running'], 'what happened to each agent is still reported');
   assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {}, 'a partial shutdown is not a done note');
+  app.stop();
+});
+
+test('tick: a clock-only advance does not emit another state; a real change does', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  process.env.ISSUE_HERD_CONSOLE_NOTES = path.join(dir, 'console.json');
+  t.after(() => { delete process.env.ISSUE_HERD_CONSOLE_NOTES; });
+  const repo = path.join(dir, 'app'); fs.mkdirSync(path.join(repo, '.issue-herd', 'state'), { recursive: true });
+  // an unknown tracker keeps the console off the network: no credentials, no issue or PR lookups
+  fs.writeFileSync(path.join(repo, '.issue-herd', 'config.json'), JSON.stringify({ name: 'app', tracker: 'nope', rules: [{ name: 'ai', role: 'impl', match: 'any:true' }] }));
+  const run = { rule: 'ai', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-1', title: 't', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-1-impl' };
+  const state = path.join(repo, '.issue-herd', 'state', 'state.json');
+  fs.writeFileSync(state, JSON.stringify({ runs: { 'GH-1@impl': run } }));
+  const registry = path.join(dir, 'factories.json');
+  stampFactory({ repo, name: 'app', tracker: 'nope', version: '1.0.0', pollSeconds: 30 }, registry, new Date());
+  const app = new FactoryConsole({ herdr: { run: async () => null }, registryFile: registry, hostname: 'box' });
+  let emitted = 0; app.subscribe(() => emitted++);
+  const first = await app.tick();
+  assert.equal(first.factories.length, 1);
+  assert.deepEqual(first.factories[0].alerts.map((a) => a.kind), ['merge'], 'a PR waiting on a person: the wait is open and its clock runs');
+  assert.equal(emitted, 1);
+  await new Promise((r) => setTimeout(r, 30));
+  await app.tick();
+  assert.equal(emitted, 1, 'only the clock moved: the same state is not pushed again');
+  fs.writeFileSync(state, JSON.stringify({ runs: { 'GH-1@impl': { ...run, status: 'merged', mergedAt: new Date().toISOString(), finishedAt: new Date().toISOString() } } }));
+  await app.tick();
+  assert.equal(emitted, 2, 'the merge is a change, and is pushed');
   app.stop();
 });
 

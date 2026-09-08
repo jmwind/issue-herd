@@ -122,7 +122,80 @@ button{font:inherit;color:inherit}
 @keyframes swing{from{transform:rotate(-70deg)}to{transform:rotate(50deg)}}
 .gear{width:14px;height:14px;animation:spin 5s linear infinite;color:var(--muted)}
 @keyframes spin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.belt::before,.items,.inserter .arm,.gear,.craft i,.led.green{animation:none}}
+/* the index: one plant per factory, a belt running from each down to the next. A working plant
+   turns its gears, lights its slots and shows a craft bar; an idle one stands still; one
+   whose watcher is gone is dark with a red light. */
+.plants{display:flex;flex-direction:column}
+/* the plant is an assembling machine: a chamfered steel body with a dark contour, a lighter inner
+   plate, rivets at the chamfers, and the machine's port with its gears on the left of the floor */
+.plant{--cut:14px;position:relative;display:flex;flex-direction:column;gap:8px;padding:12px;text-decoration:none;cursor:pointer;color:var(--text);background:#0A0A0A;clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut))}
+.plant::before{content:"";position:absolute;inset:3px;--cut:12px;background:linear-gradient(#4B5156,#34393D);clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut))}
+.plant::after{content:"";position:absolute;inset:7px;--cut:10px;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo);clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut))}
+.plant > *{position:relative;z-index:1}
+.plant .rivet{position:absolute;width:7px;height:7px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#B8C2C8,#5A646A 60%,#23282B);box-shadow:0 0 0 1px #0A0A0A;z-index:2}
+.plant .rivet.tl{left:9px;top:9px}.plant .rivet.tr{right:9px;top:9px}.plant .rivet.bl{left:9px;bottom:9px}.plant .rivet.br{right:9px;bottom:9px}
+.plant.working{filter:drop-shadow(0 0 10px rgba(94,182,99,.22))}
+.plant.stale{filter:saturate(.5) brightness(.85)}
+.plant .roof{position:relative;display:flex;align-items:center;gap:8px;min-width:0;padding-top:4px}
+.plant .roof b{font:700 17px var(--font);color:var(--heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plant .roof .m,.plant .needs .m{font:600 12px var(--font);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plant .roof .chev{margin-left:auto;font-size:22px;color:var(--dim);line-height:1}
+.plant .floor{position:relative;display:flex;align-items:stretch;gap:10px;font:600 13px var(--font);color:var(--muted)}
+.plant .floor .panel{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:8px;padding:8px;background:var(--inset);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi)}
+.plant .floor .panel .state{display:flex;align-items:center;gap:10px;min-width:0}
+.plant .floor .panel .ph{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the assembling machine */
+.asm{width:92px;height:92px;flex:none;overflow:visible}
+.asm .body{fill:url(#asmb);stroke:#0A0A0A;stroke-width:3;stroke-linejoin:round}
+.asm .panel{fill:#5F6B72;stroke:#2A3236;stroke-width:1.5;stroke-linejoin:round}
+.asm .rivet{fill:#B8C2C8;stroke:#1A1F22;stroke-width:1}
+.asm .port{fill:url(#asmp);stroke:#0A0A0A;stroke-width:3}
+.asm .ring{fill:none;stroke:#3A4247;stroke-width:2}
+.asm .glass{fill:#fff;opacity:.08;pointer-events:none}
+.asm .g1 path{fill:var(--orange);stroke:#0A0A0A;stroke-width:1.5;fill-rule:evenodd;stroke-linejoin:round}
+.asm .g2 path,.asm .g3 path{fill:#9AA5AB;stroke:#0A0A0A;stroke-width:1.2;fill-rule:evenodd;stroke-linejoin:round}
+.asm .g1,.asm .g2,.asm .g3{transform-box:fill-box;transform-origin:center}
+.asm .lampbox{fill:#1A1D1F;stroke:#0A0A0A}
+.asm .lamp{fill:var(--led-x)}
+.plant.working .asm .g1{animation:spin 3s linear infinite}
+.plant.working .asm .g2{animation:spinback 1.4s linear infinite}
+.plant.working .asm .g3{animation:spinback 1.25s linear infinite}
+.plant.working .asm .g1 path{fill:var(--orange-2)}
+.plant.working .asm .lamp{fill:var(--led-g);filter:drop-shadow(0 0 3px var(--led-g));animation:blink 1.4s infinite}
+.plant.idle .asm .lamp{fill:var(--led-y)}
+.plant.stale .asm .lamp{fill:var(--led-r)}
+@keyframes spinback{to{transform:rotate(-360deg)}}
+.plant .lights{display:inline-flex;gap:4px;padding:3px 5px;background:var(--inset-2);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi);flex:none}
+.plant.working .floor .ph{color:var(--green-2)}
+.plant.stale .floor .ph{color:var(--red-2)}
+.plant .floor .panel .craft{left:1px;right:1px;bottom:1px}
+.plant .crew{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font:600 13px var(--font);color:var(--muted);padding-top:6px;box-shadow:inset 0 1px 0 var(--lo)}
+.plant .crew b{color:var(--text);font-size:15px}
+.plant .crew .who{color:var(--dim);margin-left:2px}
+.prod{width:100%;border-collapse:collapse;font:600 13px var(--font);color:var(--muted);table-layout:fixed}
+.prod th,.prod td{padding:4px 6px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prod thead th{font:700 11px var(--font);letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding-bottom:2px}
+.prod tbody th{text-align:left;font-weight:600;color:var(--muted);width:30%;white-space:normal;line-height:1.15}
+.prod tbody th:first-child{padding-left:2px}
+.prod tbody tr{background:var(--inset);box-shadow:inset 0 1px 0 var(--lo)}
+.prod td b{display:block;font:700 15px var(--font);color:var(--text);font-variant-numeric:tabular-nums}
+.prod td b.own{color:var(--green-2)}.prod td b.you{color:var(--yellow)}.prod td b.none{color:var(--dim)}
+.prod td small{display:block;font:600 10px var(--font);color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+.prod .ico{display:inline-block;width:11px;height:11px;margin-right:5px;vertical-align:-1px;box-shadow:inset 1px 1px 0 rgba(255,255,255,.35),inset -1px -1px 0 rgba(0,0,0,.6),0 0 0 1px var(--edge)}
+.prod .ico.commit{background:#8FA9B8}.prod .ico.merged{background:#B79CD9}.prod .ico.lines{background:#D9C07A}
+.plant .needs{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.plant .needs .m{margin-left:auto}
+/* the belt between two plants: a vertical run of chevrons, cargo riding down it from a plant that is working */
+.link{display:flex;justify-content:center;height:56px;flex:none}
+.vbelt{position:relative;width:34px;height:100%;background:#262626;box-shadow:inset 2px 0 0 var(--lo),inset -2px 0 0 var(--lo),inset -1px 0 0 var(--hi);overflow:hidden}
+.vbelt::before{content:"";position:absolute;inset:0 4px;opacity:.9;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='18'%3E%3Cpath d='M3 4 L13 12 L23 4' fill='none' stroke='%23E39827' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") repeat-y 0 0/26px 18px;animation:vbeltmove .45s linear infinite}
+@keyframes vbeltmove{to{background-position:0 18px}}
+.link:not(.on) .vbelt::before{animation-duration:1.4s;opacity:.5}
+.cargo{position:absolute;left:0;top:0;width:100%;height:200%;display:flex;flex-direction:column;align-items:center;justify-content:space-around;animation:cargomove 3.2s linear infinite;will-change:transform}
+@keyframes cargomove{from{transform:translateY(-50%)}to{transform:translateY(0)}}
+.cargo i{width:14px;height:14px;flex:none;box-shadow:inset 1px 1px 0 rgba(255,255,255,.35),inset -1px -1px 0 rgba(0,0,0,.6),0 0 0 1px var(--edge)}
+.cargo i.commit{background:#8FA9B8}.cargo i.pr{background:var(--orange)}.cargo i.merged{background:#B79CD9}.cargo i.lines{background:#D9C07A}
+@media (prefers-reduced-motion:reduce){.belt::before,.items,.inserter .arm,.gear,.craft i,.led.green,.vbelt::before,.cargo,.plant.working .asm .g1,.plant.working .asm .g2,.plant.working .asm .g3,.plant.working .asm .lamp{animation:none}}
 /* detail */
 .ehead{padding:8px 10px 0;display:flex;flex-direction:column;gap:6px}
 .ehead .key{font:700 12px var(--font);color:var(--orange-2);letter-spacing:.04em}

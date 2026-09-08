@@ -192,10 +192,21 @@ issue-herd console                 # http://127.0.0.1:8498/
 issue-herd console set-passcode    # gate it, and serve it on this machine's Tailscale address too
 ```
 
-Three screens, in Factorio's idiom because a factory is what this is:
+Four screens, in Factorio's idiom because a factory is what this is:
 
-- **Overview.** A factory picker in the title bar (one machine runs several; the mark beside it
-  opens issue-herd on GitHub in a new tab), then the factory itself at a glance — its tracker and
+- **All factories.** The page the console opens on: every factory on the machine as one plant,
+  with a belt running from each down to the next. A plant shows its name, tracker and
+  repository, who works there (the roles, or the rules when it has none, and the agents behind
+  them), and a production table — tasks finished today, this week and this month (and how many
+  merged), the agents' time working *on its own* against the time spent *waiting on you*, with
+  the share it ran alone — plus its alert and assembling counts. A plant whose agent is working
+  looks like it: the assembler's gears turn, its lamp and the slot lights go green and cargo rides the
+  belt out of it; an idle plant stands still; one whose watcher has gone dark is dimmed with a
+  red light. Tap a plant for its floor. Today, the week and the month begin at local midnight,
+  Monday and the first; a run that straddles a boundary counts the part inside the window.
+- **Overview.** One factory's floor. The factory picker in the title bar switches factories or
+  goes back to all of them (the mark beside it opens issue-herd on GitHub in a new tab), then
+  the factory itself at a glance — its tracker and
   repository, every rule with the role it plays, the agent and model behind it and the issues it
   matches, and whether the watcher is alive — with the legend for the lights under it. Then
   **Alerts** (one card per task that needs a person, with what to do about it), **Assembling**
@@ -208,8 +219,9 @@ Three screens, in Factorio's idiom because a factory is what this is:
   each role's report, a merged scrollback (the last 100 lines of every agent on the task, one
   block per role in that role's colour, read only; while an agent is working, herdr can only
   give the screen it is showing right now, so the block is shorter), and one **Mark done** button.
-- **Factory picker.** Every factory with its tracker, last poll, running and alert counts, and a
-  watcher not seen for three polls marked stale.
+- **Factory picker.** In the title bar on every screen: all factories, then each one with its
+  tracker, last poll, running and alert counts, and a watcher not seen for three polls marked
+  stale.
 
 **What raises an alert.** A person actually being the one waited for: a dialog, a question, a
 decision, a failure, or a pull request no role is still working on. A task that has finished —

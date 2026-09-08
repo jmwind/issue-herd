@@ -245,7 +245,7 @@ export class FactoryConsole {
       generatedAt: new Date(now).toISOString(),
     };
     // Elapsed times move every tick; only a change in what is *shown* is worth a push.
-    const hash = crypto.createHash('sha1').update(JSON.stringify(next, (k, v) => (k === 'elapsedMs' || k === 'humanWaitMs' || k === 'sinceMs' || k === 'generatedAt' || k === 'segments') ? undefined : v)).digest('hex');
+    const hash = crypto.createHash('sha1').update(JSON.stringify(next, (k, v) => (/Ms$/.test(k) || k === 'generatedAt' || k === 'segments') ? undefined : v)).digest('hex');
     this.current = next;
     if (hash !== this.hash) { this.hash = hash; for (const fn of this.listeners) { try { fn(next); } catch { /* listener's problem */ } } }
     return next;
