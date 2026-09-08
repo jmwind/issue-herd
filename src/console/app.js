@@ -12,6 +12,27 @@
   var MARK = (document.getElementById('mark') || { innerHTML: '' }).innerHTML;
   var ROLE_COLORS = { impl: 'var(--orange-2)', review: '#8FA9B8', usability: '#B79CD9' }, EXTRA = ['#D9C07A', '#7ED184', '#E05252'];
   function roleColor(role, i) { return ROLE_COLORS[role] || EXTRA[i % EXTRA.length]; }
+  // A gear as a path: `teeth` square teeth of `depth` around a circle of radius r, with a hub hole.
+  function gearPath(cx, cy, r, teeth, depth) {
+    var pts = [], n = teeth * 4;
+    for (var i = 0; i < n; i++) { var a = i / n * Math.PI * 2, out = i % 4 === 1 || i % 4 === 2, rr = out ? r : r - depth; pts.push((cx + Math.cos(a) * rr).toFixed(1) + ',' + (cy + Math.sin(a) * rr).toFixed(1)); }
+    var h = Math.max(2, r * 0.28);
+    return 'M' + pts.join('L') + 'Z M' + (cx - h) + ',' + cy + 'a' + h + ',' + h + ' 0 1 0 ' + (h * 2) + ',0a' + h + ',' + h + ' 0 1 0 ' + (-h * 2) + ',0Z';
+  }
+  // An assembling machine: chamfered steel body, rivets, a hazard stripe, and a round port with
+  // a big gear and two small ones meshing on it. The gears turn while the plant is working.
+  var ASSEMBLER = '<svg class="asm" viewBox="0 0 100 100" aria-hidden="true">' +
+    '<defs><linearGradient id="asmb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8A979E"/><stop offset="1" stop-color="#4A555B"/></linearGradient>' +
+    '<radialGradient id="asmp" cx=".5" cy=".45" r=".6"><stop offset="0" stop-color="#2A2A2A"/><stop offset="1" stop-color="#050505"/></radialGradient>' +
+    '<pattern id="asmh" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="8" fill="#E9C13A"/><rect x="4" width="4" height="8" fill="#151515"/></pattern></defs>' +
+    '<path class="body" d="M14 2H86L98 14V86L86 98H14L2 86V14Z"/><path class="panel" d="M19 7H81L93 19V81L81 93H19L7 81V19Z"/>' +
+    '<rect x="22" y="86" width="56" height="6" fill="url(#asmh)" stroke="#0A0A0A"/>' +
+    '<circle class="rivet" cx="12" cy="12" r="2.6"/><circle class="rivet" cx="88" cy="12" r="2.6"/><circle class="rivet" cx="12" cy="88" r="2.6"/><circle class="rivet" cx="88" cy="88" r="2.6"/>' +
+    '<circle class="port" cx="50" cy="47" r="28"/><circle class="ring" cx="50" cy="47" r="25"/>' +
+    '<g class="g2"><path d="' + gearPath(67, 34, 8, 7, 2.6) + '"/></g><g class="g3"><path d="' + gearPath(31, 58, 7, 6, 2.4) + '"/></g>' +
+    '<g class="g1"><path d="' + gearPath(50, 47, 17, 10, 4) + '"/></g>' +
+    '<ellipse class="glass" cx="42" cy="34" rx="12" ry="7"/>' +
+    '<rect class="lampbox" x="16" y="16" width="14" height="9"/><circle class="lamp" cx="23" cy="20.5" r="2.8"/></svg>';
   // Where the page is, from the hash: the index of every factory (the default), one factory's floor, or one issue.
   function route() {
     var m = /^#\/i\/([^/]+)\/(.+)$/.exec(location.hash); if (m) return { kind: 'issue', id: decodeURIComponent(m[1]), key: decodeURIComponent(m[2]) };
@@ -177,12 +198,12 @@
       '<tr><th><i class="ico merged"></i>output</th>' + cell('finished', function (p) { return '<b>' + p.finished + '</b>' + (p.merged ? '<small>' + p.merged + ' merged</small>' : ''); }) + '</tr>' +
       '<tr><th><i class="ico commit"></i>on its own</th>' + cell('workingMs', function (p) { return '<b class="own">' + dur(p.workingMs) + '</b>'; }) + '</tr>' +
       '<tr><th><i class="ico lines"></i>waiting on you</th>' + cell('humanMs', function (p) { var r = pct(p.workingMs, p.humanMs); return '<b class="' + (p.humanMs > 1000 ? 'you' : 'none') + '">' + dur(p.humanMs) + '</b>' + (r !== null ? '<small>' + r + '% alone</small>' : ''); }) + '</tr></tbody></table>';
-    var gears = '<span class="gears" aria-hidden="true">' + GEAR + GEAR + GEAR + '</span>';
+    var gears = ASSEMBLER;
     var lights = '<span class="lights" aria-hidden="true">' + [0, 1, 2, 3].map(function (i) { return '<i class="led ' + (i < f.counts.working ? 'green' : i < f.counts.inflight ? 'yellow still' : 'still') + '"></i>'; }).join('') + '</span>';
-    return '<a class="plant ' + state + '" href="#/f/' + esc(f.id) + '">' +
-      '<div class="roof"><span class="chimney"><i></i><i></i><i></i></span><i class="led ' + (alive ? (working ? 'green' : 'yellow still') : 'red') + '"></i><b>' + esc(f.name) + '</b><span class="m">' + esc(f.tracker) + ' · ' + esc(f.repo.replace(/^.*\//, '')) + '</span><span class="chev">›</span></div>' +
-      '<div class="floor">' + gears + lights + '<span class="ph">' + esc(phrase) + '</span>' + (working ? '<span class="craft"><i></i></span>' : '') + '</div>' +
-      '<div class="crew">' + crew + (agents.length ? '<span class="who">' + esc(agents.join(', ')) + '</span>' : '') + '</div>' +
+    return '<a class="plant ' + state + '" href="#/f/' + esc(f.id) + '"><i class="rivet tl"></i><i class="rivet tr"></i><i class="rivet bl"></i><i class="rivet br"></i>' +
+      '<div class="roof"><i class="led ' + (alive ? (working ? 'green' : 'yellow still') : 'red') + '"></i><b>' + esc(f.name) + '</b><span class="m">' + esc(f.tracker) + ' · ' + esc(f.repo.replace(/^.*\//, '')) + '</span><span class="chev">›</span></div>' +
+      '<div class="floor">' + gears + '<span class="panel"><span class="state">' + lights + '<span class="ph">' + esc(phrase) + '</span></span>' +
+      '<span class="crew">' + crew + (agents.length ? '<span class="who">' + esc(agents.join(', ')) + '</span>' : '') + '</span>' + (working ? '<span class="craft"><i></i></span>' : '') + '</span></div>' +
       prod +
       '<div class="needs"><span class="pill' + (alerts ? ' hot' : '') + '">' + (alerts ? alerts + ' alert' + (alerts > 1 ? 's' : '') : 'nothing needs you') + '</span><span class="pill">' + f.counts.inflight + ' assembling</span>' + (f.watcher.lastPoll && alive ? '<span class="m">polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago</span>' : '') + '</div></a>';
   }

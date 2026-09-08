@@ -200,7 +200,7 @@ Four screens, in Factorio's idiom because a factory is what this is:
   them), and a production table — tasks finished today, this week and this month (and how many
   merged), the agents' time working *on its own* against the time spent *waiting on you*, with
   the share it ran alone — plus its alert and assembling counts. A plant whose agent is working
-  looks like it: gears turn, the chimney smokes, the slot lights are green and cargo rides the
+  looks like it: the assembler's gears turn, its lamp and the slot lights go green and cargo rides the
   belt out of it; an idle plant stands still; one whose watcher has gone dark is dimmed with a
   red light. Tap a plant for its floor. Today, the week and the month begin at local midnight,
   Monday and the first; a run that straddles a boundary counts the part inside the window.
