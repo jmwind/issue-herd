@@ -89,6 +89,37 @@ export function watchWorkspaces(index) {
 
 const ROLE_ORDER = ['impl', 'review', 'usability'];
 
+/**
+ * How long an in-flight agent must read as idle, blocked or missing before that is an alert.
+ * Each of those is what a run looks like on its way somewhere else: herdr has not registered the
+ * agent yet, Claude Code is on its startup dialog, the prompt has not landed, a turn ended a
+ * moment before the next one. The console asks herdr every two seconds, so every such moment
+ * moved the task to Alerts and back. 45s is longer than an agent's startup and than the watcher's
+ * own poll, and a question that will wait minutes for its answer loses nothing to it. Leaving an
+ * alert state shows at once.
+ */
+export const SETTLE_MS = 45_000;
+const SETTLES = new Set(['blocked', 'question', 'gone']);
+
+/**
+ * The state herdr reports for a live run, held back until it has lasted `settleMs`. `seen` is the
+ * caller's memory between ticks — what each live run last read as and since when — and is updated
+ * here; without one there is nothing to compare against and the instant state stands. The
+ * watcher's log is memory too: a dialog or question it already logged has been going on at least
+ * that long, so a console that starts up next to a long-blocked agent does not wait again.
+ */
+function settle(key, st, run, segs, { seen, settleMs, now }) {
+  if (!seen) return st;
+  const live = run.status === 'running' || run.status === 'starting';
+  const kind = live && SETTLES.has(st.needsYou) ? st.needsYou : null;
+  if (!kind) { delete seen[key]; return st; }
+  if (seen[key]?.needsYou !== kind) seen[key] = { needsYou: kind, since: now };
+  const last = segs.at(-1);
+  const since = Math.min(seen[key].since, last?.kind === kind ? last.from : Infinity);
+  if (now - since >= settleMs) return st;
+  return { light: 'green', phrase: run.status === 'starting' ? 'starting' : 'working', needsYou: null, settling: kind };
+}
+
 /** A run that made (or is the one that will merge) the task's pull request; every other role reviews it. */
 export function ownsPr(run) { return !!(run.prUrl || run.result?.prUrl) || run.status === 'awaiting_merge' || run.status === 'merged'; }
 
@@ -140,8 +171,10 @@ export function runState(run, agent, { othersLive = false, reviewer = false } = 
  *   index     indexSnapshot() of herdr
  *   sizes     { [runKey]: runSize() result } for whichever runs the caller measured
  *   registry  the registry entry for this repo, or null
+ *   seen      the caller's memory between ticks for settle(): pass the same object every tick,
+ *             or nothing for a one-shot view that shows what herdr says right now
  */
-export function factoryView({ id, repo, config = {}, state = { runs: {} }, events = [], index = indexSnapshot(null), sizes = {}, registry = null, stale = false, enrich = { issues: {}, prs: {}, branches: {} }, cleared = {}, now = Date.now() }) {
+export function factoryView({ id, repo, config = {}, state = { runs: {} }, events = [], index = indexSnapshot(null), sizes = {}, registry = null, stale = false, enrich = { issues: {}, prs: {}, branches: {} }, cleared = {}, seen = null, settleMs = SETTLE_MS, now = Date.now() }) {
   const name = config.name || registry?.name || repo.split('/').pop();
   const tracker = typeof config.tracker === 'object' ? config.tracker?.type : (config.tracker || registry?.tracker || 'linear');
   const rules = (config.rules || []).filter((r) => r.enabled !== false).map((r) => ({
@@ -164,8 +197,8 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     const siblings = iss.runs.filter((o) => o.key !== key).map((o) => o.run);
     const agent = index.agents.get(run.agentName) || null;
     const othersLive = siblings.some(isLive);
-    const st = runState(run, agent, { othersLive, reviewer: !ownsPr(run) && siblings.some(ownsPr) });
     const segs = segments(run, events.filter((e) => e.key === key), now);
+    const st = settle(key, runState(run, agent, { othersLive, reviewer: !ownsPr(run) && siblings.some(ownsPr) }), run, segs, { seen, settleMs, now });
     const started = Date.parse(run.startedAt || '') || now;
     const finished = Date.parse(run.finishedAt || '') || null;
     const size = sizes[key] || null;
@@ -177,7 +210,7 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
       workspaceId: run.workspaceId || agent?.workspace_id || null, branch: run.branch || null, worktree: run.workDir || run.worktreePath || null,
       startedAt: run.startedAt || null, finishedAt: run.finishedAt || null,
       elapsedMs: (finished || now) - started,
-      light: st.light, phrase: st.phrase, needsYou: st.needsYou,
+      light: st.light, phrase: st.phrase, needsYou: st.needsYou, settling: st.settling || null,
       result: run.result ? { status: run.result.status, prUrl: run.result.prUrl || null, summary: run.result.summary || '', notes: run.result.notes || '', live: !!run.resultIsLive } : null,
       prUrl: run.prUrl || run.result?.prUrl || null, error: run.error || null,
       segments: segs, humanWaitMs: humanWaitMs(run, segs, now, { waiting: st.needsYou === 'merge', since: waitingSince }), size, waitingSince,
