@@ -107,7 +107,9 @@ given. See [More than one turn](roles.md#more-than-one-turn-passes).
    you ([roles](roles.md#the-briefs-that-ship)). When GitHub says it is **merged**, you get a
    notification saying so and naming the workspace and worktree the run is still holding, and the
    run is recorded as `merged`. Nothing is torn down unless you asked for it in `onMerged` — see
-   below. A PR **closed without merging** just stops being watched.
+   below. A PR **closed without merging** just stops being watched. While it is open, the same
+   once-a-minute read also notices when it has drifted into **conflicts** with its base — see
+   [Keeping up with `main`](#keeping-up-with-main).
 
 If you restart the watcher, it re-attaches to agents that are still alive, finalizes any run whose
 result file appeared while it was down, and goes on watching the pull requests it had not seen
@@ -141,6 +143,25 @@ merged:
 
 Neither needs a remote or a network: a fetch that fails is not an error, and the local branch is
 then the best answer there is.
+
+The third thing is the pull request itself, after it is open. Several issues being worked at once
+means several PRs waiting on one person, and the ones that wait longest are the ones the others
+land on top of — by the time someone reviews, GitHub says *This branch has conflicts*, and the
+person least placed to resolve them is the reviewer. So the implementer's brief makes the PR **its
+own to keep mergeable until it is merged or closed**, and the watcher does the half of that a
+stopped session cannot: the read it already makes of every open PR once a minute also returns
+GitHub's `mergeable_state`, and when that says `dirty` the implementer's session — still up in its
+pane, because `onDone.closeWorkspace` is off — is typed one message saying so. The brief tells it
+what to do with that: fetch, **merge** the base branch in (never a rebase, never a force-push — the
+branch has been pushed and the reviewers have it), resolve, re-run the checks, push, and say on the
+PR what it merged in. It is told once per conflict, not once a minute: the head the PR had when it
+was told is remembered, the same conflicts on the same commits are nothing new, and a PR that reads
+clean again forgets the marker so the next drift is a fresh episode. The watcher's heartbeat counts
+these as `awaiting merge (1 in conflict)`.
+
+If the session is gone — exited by hand, or by `onDone.closeWorkspace` — there is nobody to tell,
+so you are told instead, once per conflict, through the same `onBlocked` comment and notification a
+blocked agent gets. `"onMerged": null` switches the PR watch off altogether, and this with it.
 
 ## When the PR is merged
 

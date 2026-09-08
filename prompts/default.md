@@ -83,7 +83,18 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
    granted you the merge (step 5). In that case write the result file first, because it is what
    hands the PR to the reviewers and starts the watch on it — issue-herd reads it within a minute
    whether or not you have stopped; then keep watching the issue for the reviewers' reports, merge
-   when all of them say OK, and stop after that.
+   when all of them say OK, and stop after that. Stopping ends your turn, not your session: it
+   stays up in its pane until the PR is merged or closed, and step 7 says why.
+7. **Keep the PR mergeable until it is merged or closed.** Your result is in, but the PR is still
+   yours. Other PRs land on the base branch while a person gets round to reviewing, and a PR that
+   has drifted into conflicts is one nobody can merge. issue-herd watches the PR once a minute after
+   your result is in and, when GitHub reports conflicts, sends a message into this session saying so
+   — you do not need to poll for it. When that message arrives, or whenever you notice it yourself,
+   bring the branch up to date: `git fetch origin <base>` and `git merge origin/<base>` into
+   `{{branch}}` — a merge, never a rebase, never a force-push, because the branch has been pushed and
+   reviewers have it — then resolve every conflict so the change still does what the PR says, re-run
+   the checks from step 4, push, and say on the PR in one line what you merged in. Do not rewrite the
+   result file. Then stop again.
 
 ## Constraints
 
