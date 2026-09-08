@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apiBase, parsePrUrl, prForBranch, prState, stateOf, watchesMerge } from '../src/pr.mjs';
+import { apiBase, conflictPrompt, conflictStep, conflictsOf, parsePrUrl, prForBranch, prState, stateOf, watchesMerge } from '../src/pr.mjs';
 
 /** A fetch that answers one GitHub payload and records what it was asked. */
 function fakeFetch(body, { status = 200 } = {}) {
@@ -37,7 +37,7 @@ test('merged, closed and open are told apart the way GitHub reports them', () =>
 test('a merged PR comes back with the time it was merged', async () => {
   const fetchImpl = fakeFetch({ state: 'closed', merged: true, merged_at: '2026-09-06T10:00:00Z' });
   const r = await prState('https://github.com/jmwind/issue-herd/pull/23', { token: 'tok', fetchImpl });
-  assert.deepEqual(r, { state: 'merged', mergedAt: '2026-09-06T10:00:00Z', number: 23, url: 'https://github.com/jmwind/issue-herd/pull/23' });
+  assert.deepEqual(r, { state: 'merged', mergedAt: '2026-09-06T10:00:00Z', number: 23, url: 'https://github.com/jmwind/issue-herd/pull/23', headSha: null, baseRef: null, conflicts: false });
   assert.equal(fetchImpl.calls[0].url, 'https://api.github.com/repos/jmwind/issue-herd/pulls/23');
   assert.equal(fetchImpl.calls[0].headers.authorization, 'Bearer tok');
 });
@@ -94,4 +94,60 @@ test('prForBranch asks GitHub for the newest PR whose head is the branch, and sa
   assert.equal(calls[0].auth, 'Bearer t');
   assert.equal(await prForBranch({ repo: 'o/r', branch: 'nothing-here', fetchImpl }), null);
   assert.equal(await prForBranch({ repo: null, branch: 'x', fetchImpl }), null);
+});
+
+test('conflicts are GitHub\'s "dirty", not its "blocked", "behind" or "not computed yet"', () => {
+  assert.equal(conflictsOf({ mergeable: false, mergeable_state: 'dirty' }), true);
+  assert.equal(conflictsOf({ mergeable: true, mergeable_state: 'clean' }), false);
+  // Branch protection, a missing review, a failing check: the branch is not stale, so not the implementer's problem here.
+  assert.equal(conflictsOf({ mergeable: true, mergeable_state: 'blocked' }), false);
+  assert.equal(conflictsOf({ mergeable: true, mergeable_state: 'behind' }), false);
+  assert.equal(conflictsOf({ mergeable: true, mergeable_state: 'unstable' }), false);
+  // The first read after a push, while GitHub is still computing: null is "not known yet".
+  assert.equal(conflictsOf({ mergeable: null, mergeable_state: 'unknown' }), false);
+  assert.equal(conflictsOf(null), false);
+});
+
+test('an open PR comes back with its head, base and whether it conflicts', async () => {
+  const fetchImpl = fakeFetch({ state: 'open', merged: false, mergeable: false, mergeable_state: 'dirty', head: { sha: 'abc123' }, base: { ref: 'main' } });
+  const r = await prState('https://github.com/jmwind/issue-herd/pull/23', { fetchImpl });
+  assert.deepEqual(r, { state: 'open', mergedAt: null, number: 23, url: 'https://github.com/jmwind/issue-herd/pull/23', headSha: 'abc123', baseRef: 'main', conflicts: true });
+});
+
+test('the implementer is told once per conflict, again when the head moves and still conflicts, and forgotten when clean', () => {
+  const dirty = (headSha) => ({ state: 'open', conflicts: true, headSha });
+  const clean = (headSha) => ({ state: 'open', conflicts: false, headSha });
+  // Fresh conflict: tell it.
+  assert.equal(conflictStep({}, dirty('a1')), 'nudge');
+  // Same head, still dirty, next minute: already told.
+  assert.equal(conflictStep({ conflictHead: 'a1' }, dirty('a1')), null);
+  // It pushed a fix (or something else landed) and the PR still conflicts: that is news.
+  assert.equal(conflictStep({ conflictHead: 'a1' }, dirty('b2')), 'nudge');
+  // Clean again: forget the marker so the next drift is a fresh episode...
+  assert.equal(conflictStep({ conflictHead: 'b2' }, clean('b2')), 'clear');
+  // ...and a clean PR that was never in conflict is nothing to do at all.
+  assert.equal(conflictStep({}, clean('b2')), null);
+  assert.equal(conflictStep(undefined, clean('b2')), null);
+  // Merged or closed PRs are the merge watch's business, not this one's.
+  assert.equal(conflictStep({ conflictHead: 'a1' }, { state: 'merged', conflicts: false }), null);
+  assert.equal(conflictStep({}, null), null);
+  // A payload without a head sha still gets told exactly once.
+  assert.equal(conflictStep({}, dirty(null)), 'nudge');
+  assert.equal(conflictStep({ conflictHead: 'unknown' }, dirty(null)), null);
+});
+
+test('the conflict message says what happened, what to do, and what never to do', () => {
+  const msg = conflictPrompt({ prUrl: 'https://github.com/o/r/pull/9', branch: '9-fix-impl', baseRef: 'main', briefPath: '/wt/.issue-herd/state/runs/GH-9@impl/brief.md' });
+  assert.match(msg, /^issue-herd: your pull request https:\/\/github\.com\/o\/r\/pull\/9 now conflicts with main/);
+  assert.match(msg, /git fetch origin main/);
+  assert.match(msg, /git merge origin\/main/);
+  assert.match(msg, /`9-fix-impl`/);
+  assert.match(msg, /never a rebase, never a force-push/);
+  assert.match(msg, /Do not rewrite the result file/);
+  assert.match(msg, /runs\/GH-9@impl\/brief\.md/);
+  // Without a base ref or brief path it still reads as a sentence.
+  const bare = conflictPrompt({ prUrl: 'https://github.com/o/r/pull/9' });
+  assert.match(bare, /conflicts with the base branch/);
+  assert.match(bare, /git merge origin\/<base>/);
+  assert.doesNotMatch(bare, /\(\)/);
 });

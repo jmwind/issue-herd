@@ -42,7 +42,18 @@ export function stateOf(pr) {
 }
 
 /**
- * Ask GitHub about one pull request. Returns { state, mergedAt, number, url }.
+ * Does GitHub say this pull request cannot be merged because of conflicts? `mergeable_state` is
+ * "dirty" for exactly that (and `mergeable` false); "blocked", "behind" and "unstable" are reviews,
+ * branch protection and checks, which are not the implementer's branch being stale. `mergeable` is
+ * null while GitHub is still working it out after a push: "not known yet", never "conflicting".
+ */
+export function conflictsOf(pr) {
+  return pr?.mergeable_state === 'dirty' || pr?.mergeable === false;
+}
+
+/**
+ * Ask GitHub about one pull request. Returns { state, mergedAt, number, url, headSha, baseRef,
+ * conflicts }.
  * Throws when the URL is not a PR on the trusted host, or when GitHub will not answer — the
  * watcher logs that once and keeps waiting, because a token that expired is not a merged PR.
  */
@@ -60,7 +71,43 @@ export async function prState(url, { token = null, host = 'github.com', fetchImp
     e.status = res.status;
     throw e;
   }
-  return { state: stateOf(json), mergedAt: json?.merged_at || null, number: pr.number, url };
+  return {
+    state: stateOf(json), mergedAt: json?.merged_at || null, number: pr.number, url,
+    headSha: json?.head?.sha || null, baseRef: json?.base?.ref || null, conflicts: conflictsOf(json),
+  };
+}
+
+/**
+ * What the watcher owes an open pull request this poll, given what it did last time.
+ *
+ * The implementer is told once per conflict, not once a minute: `run.conflictHead` is the head the
+ * PR had when it was last told, so the same conflicts on the same commits are nothing new. A
+ * different head that still conflicts is new — either the fix was pushed and something else landed
+ * on top of it, or the fix did not take — and the implementer hears about it again. A PR that reads
+ * clean again forgets the marker, so the next drift is a fresh episode.
+ *
+ * Returns 'nudge' (tell the implementer and remember this head), 'clear' (the conflicts are gone,
+ * forget the marker), or null (nothing to do).
+ */
+export function conflictStep(run, pr) {
+  if (!pr || pr.state !== 'open') return null;
+  const head = pr.headSha || 'unknown';
+  if (!pr.conflicts) return run?.conflictHead ? 'clear' : null;
+  return run?.conflictHead === head ? null : 'nudge';
+}
+
+/**
+ * The message the watcher types into the implementer's session when its PR has drifted into
+ * conflicts. Self-contained: the session may be hours past its brief, so it says what happened,
+ * what the brief already asked for, and what not to do (rewrite history, or the result file).
+ */
+export function conflictPrompt({ prUrl, branch, baseRef, briefPath }) {
+  const base = baseRef || '<base>';
+  return `issue-herd: your pull request ${prUrl} now conflicts with ${baseRef || 'the base branch'} — something merged after you pushed, and GitHub reports it as not mergeable. `
+    + `Your brief${briefPath ? ` (${briefPath})` : ''} says the PR is yours to keep mergeable until it is merged or closed. `
+    + `Bring the branch up to date now: \`git fetch origin ${base}\` and \`git merge origin/${base}\` into \`${branch || 'your branch'}\` — a merge, never a rebase, never a force-push — `
+    + `resolve every conflict so the change still does what the PR says, re-run the repository's checks, push, and say on the PR in one line what you merged in. `
+    + `Do not rewrite the result file. Then stop again.`;
 }
 
 /**
