@@ -66,14 +66,17 @@ export function humanWaitMs(run, segs, now = Date.now(), merge = {}) {
 
 // ---------------------------------------------------------------- herdr
 
-/** herdr's snapshot as two maps: agents by name, workspaces by id. Tolerates a missing snapshot. */
+/**
+ * herdr's snapshot as two maps: agents by name, workspaces by id. Tolerates a missing snapshot —
+ * `available` is false then, and empty maps mean "unknown", not "nothing is running".
+ */
 export function indexSnapshot(snapshot) {
   const s = snapshot?.result?.snapshot || snapshot?.snapshot || snapshot || {};
   const agents = new Map(); const workspaces = new Map(); const panes = new Map();
   for (const a of s.agents || []) agents.set(a.name, a);
   for (const w of s.workspaces || []) workspaces.set(w.workspace_id, w);
   for (const p of s.panes || []) panes.set(p.pane_id, p);
-  return { agents, workspaces, panes, version: s.version || null };
+  return { agents, workspaces, panes, version: s.version || null, available: !!snapshot };
 }
 
 /** Watcher workspaces herdr knows about (`<name>Watch`) with the directory they run in. */
@@ -230,7 +233,8 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
       key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status, ownsPr: ownsPr(run),
       agent: run.agentName, agentKind: rules.find((r) => r.name === run.rule)?.agent || 'claude', agentStatus: agent?.agent_status || null, agentAlive: !!agent,
       // Still open in herdr: listed in the snapshot, or the agent is standing in it right now.
-      workspaceId: wsId, workspaceOpen: !!wsId && (index.workspaces.has(wsId) || agent?.workspace_id === wsId),
+      // Null when herdr did not answer: unknown is not closed.
+      workspaceId: wsId, workspaceOpen: !wsId ? false : !index.available ? null : index.workspaces.has(wsId) || agent?.workspace_id === wsId,
       branch: run.branch || null, worktree: run.workDir || run.worktreePath || null,
       startedAt: run.startedAt || null, finishedAt: run.finishedAt || null,
       elapsedMs: (finished || now) - started,

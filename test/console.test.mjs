@@ -53,7 +53,7 @@ test('the snapshot is indexed and watcher workspaces are found by their label', 
   const idx = indexSnapshot(SNAPSHOT);
   assert.equal(idx.agents.get('gh-7-impl').agent_status, 'blocked');
   assert.deepEqual(watchWorkspaces(idx), [{ workspaceId: 'w0', label: 'appWatch', name: 'app', cwd: '/home/me/app' }]);
-  assert.equal(indexSnapshot(null).agents.size, 0);
+  assert.equal(indexSnapshot(null).agents.size, 0); assert.equal(indexSnapshot(null).available, false); assert.equal(idx.available, true);
 });
 
 test('runState maps run + agent onto a light, a phrase and whether a person is needed', () => {
@@ -349,6 +349,7 @@ test('markDone: the one action — every agent still up on the task gets its exi
     closeWorkspace: async (id) => { closed.push(id); order.push(id); },
   };
   const app = new FactoryConsole({ herdr, registryFile: path.join(dir, 'factories.json'), hostname: 'box' });
+  app.current.herdr = { connected: true, version: '0.8.2' };
   app.current.factories = [{ id: 'f', repo: '/r', issues: [{ key: 'GH-1', runs: [
     { key: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', agentAlive: true, workspaceId: 'w1', workspaceOpen: true },
     { key: 'GH-1@review', role: 'review', agent: 'gh-1-review', agentKind: 'codex', agentAlive: true, workspaceId: 'w2', workspaceOpen: true },
@@ -398,6 +399,7 @@ test('tidy: closes the workspaces of exited agents on tasks already marked done,
   const closed = [];
   const herdr = { run: async () => null, stopAgent: async () => { throw new Error('tidy must not touch agents'); }, closeWorkspace: async (id) => { if (id === 'w9') throw new Error('herdr workspace close: nope'); closed.push(id); } };
   const app = new FactoryConsole({ herdr, registryFile: path.join(os.tmpdir(), 'ih-none.json'), hostname: 'box' });
+  app.current.herdr = { connected: true, version: '0.8.2' };
   const run = (key, role, o) => ({ key, role, agent: key.toLowerCase(), agentKind: 'claude', agentAlive: false, workspaceOpen: true, ...o });
   app.current.factories = [
     { id: 'a', repo: '/a', issues: [
@@ -413,6 +415,35 @@ test('tidy: closes the workspaces of exited agents on tasks already marked done,
   const all = await app.tidy();
   assert.deepEqual(all.map((o) => [o.factory, o.workspaceId, o.workspace]), [['a', 'w1', 'closed'], ['b', 'w8', 'closed'], ['b', 'w9', 'is still open (herdr workspace close: nope)']], 'every factory otherwise, and a refusal is reported, not hidden');
   assert.deepEqual(closed, ['w1', 'w1', 'w8']);
+  app.stop();
+});
+
+test('markDone and tidy: herdr not answering is not a shutdown — nothing is closed, nothing is recorded, the click is refused with the reason', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  process.env.ISSUE_HERD_CONSOLE_NOTES = path.join(dir, 'console.json');
+  t.after(() => { delete process.env.ISSUE_HERD_CONSOLE_NOTES; });
+  // With no snapshot every agent reads as gone and every workspace as unknown, never as closed.
+  const v = factoryView({ id: 'app', repo: '/r', config: CONFIG, state: fixtureState(), index: indexSnapshot(null), now: T(15, 0) });
+  assert.deepEqual(v.issues.map((i) => i.runs.map((r) => [r.agentAlive, r.workspaceId, r.workspaceOpen])), [[[false, 'w1', null]], [[false, 'w2', null]], [[false, null, false]]]);
+  const calls = [];
+  const herdr = { run: async () => { throw new Error('connect ECONNREFUSED'); }, stopAgent: async (a) => { calls.push(['stop', a]); return 'exited'; }, closeWorkspace: async (id) => { calls.push(['close', id]); } };
+  const app = new FactoryConsole({ herdr, registryFile: path.join(dir, 'factories.json'), hostname: 'box' });
+  app.current.herdr = { connected: false, version: null };
+  app.current.factories = [{ id: 'f', repo: '/r', issues: [{ key: 'GH-1', cleared: false, bucket: 'done', runs: [{ key: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', agentAlive: false, workspaceId: 'w1', workspaceOpen: null }] }] }];
+  const refused = await app.markDone({ factory: 'f', issue: 'GH-1' });
+  assert.equal(refused.done, false); assert.deepEqual(refused.outcomes, []);
+  assert.match(refused.error, /herdr is not answering; nothing was closed and nothing is marked done/);
+  assert.deepEqual(calls, [], 'no exit, no close: there is nothing to see');
+  assert.ok(!fs.existsSync(process.env.ISSUE_HERD_CONSOLE_NOTES) || !JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done?.['/r|GH-1'], 'no done note');
+  await assert.rejects(app.tidy(), /herdr is not answering/);
+  // Undo needs nothing from herdr.
+  assert.deepEqual(await app.markDone({ factory: 'f', issue: 'GH-1' }, false), { done: false, outcomes: [] });
+  // herdr back: the same click goes through, closing what it can see.
+  app.current.herdr = { connected: true, version: '0.8.2' };
+  app.current.factories[0].issues[0].runs[0].workspaceOpen = true;
+  const ok = await app.markDone({ factory: 'f', issue: 'GH-1' });
+  assert.equal(ok.done, true); assert.deepEqual(calls, [['close', 'w1']]);
   app.stop();
 });
 

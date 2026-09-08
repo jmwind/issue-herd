@@ -294,7 +294,9 @@ detail screen (without restarting the agents or reopening the workspaces). An ag
 exit (herdr could not prompt it, or it did not go within the timeout) keeps the task in Alerts and
 nothing is recorded — its workspace is left alone, too, rather than pulled out from under it — and
 a workspace herdr would not close does the same: a task with an agent or a workspace still on it
-is not done, whatever was clicked, and the toast says which. Worktrees stay, and so do the run's
+is not done, whatever was clicked, and the toast says which. While herdr is not answering at all
+the button is refused outright, for the same reason: with nothing visible, nothing can be closed,
+and a sign-off that closed nothing would be the pile again. Worktrees stay, and so do the run's
 archived `brief.md` and `result.json`: the pane was never the long-term record. `onMerged` is
 still where automatic clean-up is configured; Mark done is a person's sign-off, which is why it
 closes what `onMerged` by default keeps.

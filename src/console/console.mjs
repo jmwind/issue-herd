@@ -7,6 +7,9 @@ import path from 'node:path';
 import { mergeConfig } from '../config.mjs';
 import { exitCommandFor } from '../agents.mjs';
 import { isNotFound } from '../herdr.mjs';
+
+/** Why a Mark done or Tidy is refused while herdr is not answering: nothing can be closed, so nothing is recorded. */
+const HERDR_AWAY = 'herdr is not answering; nothing was closed and nothing is marked done — try again when it is back';
 import { resolveCredential } from '../auth.mjs';
 import { trackerClass, trackerSpec } from '../trackers/index.mjs';
 import { GitHubTracker, repoFromGit } from '../trackers/github.mjs';
@@ -285,10 +288,14 @@ export class FactoryConsole {
    * An agent that does not exit (the prompt failed, or it did not go within herdr's timeout), or a
    * workspace herdr would not close, keeps the task where it is: `done` comes back false, the note
    * is not written, and the task's card stays in Alerts, because a task with an agent or a
-   * workspace still on it is not done whatever anyone clicked.
+   * workspace still on it is not done whatever anyone clicked. Nor is one whose agents and
+   * workspaces cannot be seen: when herdr is not answering, the view reads every agent as gone
+   * and every workspace as unknown, and closing nothing is not a shutdown, so the click is
+   * refused with the reason rather than recorded.
    */
   async markDone({ factory, issue }, done = true) {
     const { f } = this.findTask({ factory, issue });
+    if (done && !this.current.herdr?.connected) return { done: false, outcomes: [], error: HERDR_AWAY };
     const outcomes = done ? await this.closeTask({ factory, issue }) : [];
     const stuck = outcomes.filter((o) => o.outcome === 'is still running' || /^is still open/.test(o.workspace || ''));
     if (stuck.length) {
@@ -348,6 +355,7 @@ export class FactoryConsole {
    * per run, and whatever would not close. `factory` null means every factory.
    */
   async tidy({ factory = null } = {}) {
+    if (!this.current.herdr?.connected) throw new Error(HERDR_AWAY);
     const outcomes = [];
     for (const f of this.current.factories) {
       if (factory && f.id !== factory) continue;
