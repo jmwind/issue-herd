@@ -53,12 +53,14 @@ export function segments(run, events, now = Date.now()) {
 /**
  * Milliseconds a person was being waited for: dialogs, questions, and a PR waiting to be merged.
  * The merge wait counts from `merge.since` (default: when the run finished), and not at all while
- * `merge.waiting` is false — a PR that reviewers are still reading is nobody's wait.
+ * `merge.waiting` is false — a PR that reviewers are still reading is nobody's wait. Once the PR
+ * is merged the wait is history, not gone: it ran from `merge.since` to `merge.until`.
  */
 export function humanWaitMs(run, segs, now = Date.now(), merge = {}) {
   let ms = 0;
   for (const s of segs) if (s.kind === 'blocked' || s.kind === 'question') ms += s.to - s.from;
   if (run.status === 'awaiting_merge' && merge.waiting !== false) ms += now - (merge.since || Date.parse(run.finishedAt || '') || now);
+  else if (run.status === 'merged' && merge.since && merge.until) ms += Math.max(0, merge.until - merge.since);
   return Math.max(0, ms);
 }
 
@@ -171,6 +173,19 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     const size = sizes[key] || null;
     // A PR is a person's to merge from the moment the last role on the task has finished with it.
     const waitingSince = st.needsYou === 'merge' ? Math.max(finished || now, ...siblings.map((o) => Date.parse(o.finishedAt || '') || 0)) : null;
+    // A merge that happened keeps its wait. The watcher stamps `mergedAt` and then overwrites
+    // `finishedAt` with the moment it noticed, so the agent's own finish is the log's `done`
+    // event; the wait ran from the last role's finish to the merge, and there was none if a role
+    // was still on the task when the PR merged. No `done` event in the log (the tail is finite)
+    // means the wait is unknown, and unknown counts as none.
+    const mergedAt = run.status === 'merged' ? Date.parse(run.mergedAt || '') || null : null;
+    const doneAt = segs.find((s) => s.kind === 'done')?.from || null;
+    let mergeWait = waitingSince ? { from: waitingSince, to: now } : null;
+    if (mergedAt && doneAt) {
+      const roleEnds = siblings.filter((o) => (Date.parse(o.startedAt || '') || 0) < mergedAt).map((o) => Date.parse(o.finishedAt || '') || Infinity);
+      const from = Math.max(doneAt, ...roleEnds);
+      if (from < mergedAt) mergeWait = { from, to: mergedAt };
+    }
     return {
       key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status, ownsPr: ownsPr(run),
       agent: run.agentName, agentKind: rules.find((r) => r.name === run.rule)?.agent || 'claude', agentStatus: agent?.agent_status || null, agentAlive: !!agent,
@@ -180,7 +195,7 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
       light: st.light, phrase: st.phrase, needsYou: st.needsYou,
       result: run.result ? { status: run.result.status, prUrl: run.result.prUrl || null, summary: run.result.summary || '', notes: run.result.notes || '', live: !!run.resultIsLive } : null,
       prUrl: run.prUrl || run.result?.prUrl || null, error: run.error || null,
-      segments: segs, humanWaitMs: humanWaitMs(run, segs, now, { waiting: st.needsYou === 'merge', since: waitingSince }), size, waitingSince,
+      segments: segs, humanWaitMs: humanWaitMs(run, segs, now, { waiting: st.needsYou === 'merge', since: mergeWait?.from, until: mergeWait?.to }), size, waitingSince, mergeWait,
     };
   });
 
@@ -294,8 +309,8 @@ export function productionWindows(now = Date.now()) {
 /**
  * The factory's production since `from`: tasks finished (and how many of those merged), the
  * agents' time working with nobody waited for, and a person's time being waited for (dialogs,
- * questions, a PR waiting to be merged). Times are clipped to the window, so a run that
- * straddles midnight counts today's part only.
+ * questions, a PR waiting to be merged, and the wait a merged PR had). Times are clipped to the
+ * window, so a run that straddles midnight counts today's part only.
  */
 export function production(issues, from, now = Date.now()) {
   let finished = 0, merged = 0, workingMs = 0, humanMs = 0;
@@ -307,7 +322,7 @@ export function production(issues, from, now = Date.now()) {
         if (s.kind === 'working') workingMs += clip(s.from, s.to);
         else if (s.kind === 'blocked' || s.kind === 'question') humanMs += clip(s.from, s.to);
       }
-      if (r.waitingSince) humanMs += clip(r.waitingSince, now);
+      if (r.mergeWait) humanMs += clip(r.mergeWait.from, r.mergeWait.to);
     }
   }
   return { finished, merged, workingMs, humanMs };

@@ -216,6 +216,24 @@ test('production: what came out today, this week and this month, and time on its
   // a run straddling midnight counts today's part only
   const straddle = [{ bucket: 'inflight', runs: [{ segments: [{ from: T(0, 0) - 30 * 60e3, to: T(0, 30), kind: 'working' }], waitingSince: null }] }];
   assert.equal(production(straddle, T(0, 0), T(1, 0)).workingMs, 30 * 60e3);
+  // a merged PR keeps the wait it had: the watcher stamps mergedAt and overwrites finishedAt with
+  // the moment it noticed, so the wait runs from the agent's own finish (the log's done event) to the merge
+  const MLOG = '[2026-09-07 10:00:00] GH-4@impl: prompted (state working)\n[2026-09-07 11:00:00] GH-4@impl: done (pr_open) https://github.com/o/r/pull/4\n[2026-09-07 13:00:10] GH-4@impl: https://github.com/o/r/pull/4 is merged\n';
+  const open = { 'GH-4@impl': { rule: 'implement', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-4', title: 'm', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-4-impl', prUrl: 'https://github.com/o/r/pull/4' } };
+  const before = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: open }, events: parseLog(MLOG), now: T(13, 0) });
+  assert.deepEqual(before.production.today, { finished: 0, merged: 0, workingMs: 60 * 60e3, humanMs: 120 * 60e3 });
+  const merged = { 'GH-4@impl': { ...open['GH-4@impl'], status: 'merged', mergedAt: iso(13, 0), finishedAt: iso(13, 0, 30) } };
+  const after = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: merged }, events: parseLog(MLOG), now: T(14, 0) });
+  assert.deepEqual(after.production.today, { finished: 1, merged: 1, workingMs: 60 * 60e3, humanMs: 120 * 60e3 }, 'the two hours waited are still there after the merge');
+  assert.equal(after.issues[0].humanWaitMs, 120 * 60e3, 'and on the task itself');
+  assert.deepEqual(after.issues[0].runs[0].mergeWait, { from: T(11, 0), to: T(13, 0) });
+  // with a reviewer that reported at noon the person's wait began then; one still reading at the merge means it never began
+  const reviewed = { ...merged, 'GH-4@review': { rule: 'tech-lead', role: 'review', status: 'done', issueKey: 'GH-4', title: 'm', startedAt: iso(11, 1), finishedAt: iso(12, 0), agentName: 'gh-4-review', result: { status: 'nothing_to_do' } } };
+  assert.equal(factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: reviewed }, events: parseLog(MLOG), now: T(14, 0) }).production.today.humanMs, 60 * 60e3);
+  const reading = { ...reviewed, 'GH-4@review': { ...reviewed['GH-4@review'], status: 'done', finishedAt: iso(13, 30) } };
+  assert.equal(factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: reading }, events: parseLog(MLOG), now: T(14, 0) }).production.today.humanMs, 0);
+  // without the log the agent's own finish is unknown, and an unknown wait counts as none rather than as the whole run
+  assert.equal(factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: merged }, now: T(14, 0) }).production.today.humanMs, 0);
   // an agent that herdr says is working lights the factory up
   const lit = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { 'GH-3@impl': { rule: 'implement', role: 'impl', status: 'running', issueKey: 'GH-3', title: 't', startedAt: iso(14, 50), agentName: 'gh-3-impl' } } }, index: indexSnapshot({ agents: [{ name: 'gh-3-impl', agent_status: 'working' }] }), now: T(15, 0) });
   assert.equal(lit.counts.working, 1);

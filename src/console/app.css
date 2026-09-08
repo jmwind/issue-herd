@@ -179,7 +179,7 @@ button{font:inherit;color:inherit}
 @keyframes cargomove{from{transform:translateY(-50%)}to{transform:translateY(0)}}
 .cargo i{width:14px;height:14px;flex:none;box-shadow:inset 1px 1px 0 rgba(255,255,255,.35),inset -1px -1px 0 rgba(0,0,0,.6),0 0 0 1px var(--edge)}
 .cargo i.commit{background:#8FA9B8}.cargo i.pr{background:var(--orange)}.cargo i.merged{background:#B79CD9}.cargo i.lines{background:#D9C07A}
-@media (prefers-reduced-motion:reduce){.belt::before,.items,.inserter .arm,.gear,.craft i,.led.green,.vbelt::before,.cargo,.chimney i,.plant.working .gears .gear{animation:none}}
+@media (prefers-reduced-motion:reduce){.belt::before,.items,.inserter .arm,.gear,.craft i,.led.green,.vbelt::before,.cargo,.plant.working .chimney i,.plant.working .gears .gear,.plant.working .gears .gear:nth-child(2){animation:none}}
 /* detail */
 .ehead{padding:8px 10px 0;display:flex;flex-direction:column;gap:6px}
 .ehead .key{font:700 12px var(--font);color:var(--orange-2);letter-spacing:.04em}
