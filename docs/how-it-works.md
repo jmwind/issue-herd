@@ -261,7 +261,10 @@ Nothing is written except the registry.
 — even after an auto-merge — until someone has looked at it (the reports, the scrollback) and
 says it is done. The button sends every agent still up on the task its own exit command
 (`/exit` for Claude Code, `/quit` for codex, each shutting down the way it wants), clears the
-task's alerts and moves it to output. The decision is recorded in
+task's alerts and moves it to output. That takes a few seconds when an agent has to shut down,
+so from the click until the task lands in output the button turns a gear and says what it is
+doing ("Closing 2 agents…", "Moving to output…") and the card runs a progress strip; a refusal
+puts the button back with the reason in a toast. The decision is recorded in
 `~/.config/issue-herd/console.json` (the console's own file, never the watcher's state); a newer
 run on the task brings it back, and so does Undo on the detail screen (without restarting the
 agents). An agent that does not exit (herdr could not prompt it, or it did not go within the

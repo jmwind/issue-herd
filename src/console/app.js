@@ -9,6 +9,9 @@
   var GEAR = '<svg class="gear" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm9.4 5.3-2.1-.4a7.5 7.5 0 0 0-.6-1.5l1.2-1.8-1.9-1.9-1.8 1.2c-.5-.3-1-.5-1.5-.6l-.4-2.1h-2.6l-.4 2.1c-.5.1-1 .3-1.5.6L8 6.7 6.1 8.6l1.2 1.8c-.3.5-.5 1-.6 1.5l-2.1.4v2.6l2.1.4c.1.5.3 1 .6 1.5l-1.2 1.8 1.9 1.9 1.8-1.2c.5.3 1 .5 1.5.6l.4 2.1h2.6l.4-2.1c.5-.1 1-.3 1.5-.6l1.8 1.2 1.9-1.9-1.2-1.8c.3-.5.5-1 .6-1.5l2.1-.4z"/></svg>';
   var INSERTER = '<div class="inserter"><svg viewBox="0 0 32 30"><rect x="10" y="22" width="12" height="6" fill="#4A4A4A" stroke="#0A0A0A"/><g class="arm"><rect x="14" y="4" width="4" height="22" fill="#E39827" stroke="#0A0A0A"/><rect x="10" y="1" width="12" height="5" fill="#5C5C5C" stroke="#0A0A0A"/></g></svg></div>';
   var view = null, sheet = false, showAll = false, tails = {}, expanded = {}, receivedAt = 0;
+  // Mark done / Undo in flight, by task: the button and card show it until the console's state
+  // reflects the decision (the task in output, or back), not just until the request returns.
+  var busy = {};
   var MARK = (document.getElementById('mark') || { innerHTML: '' }).innerHTML;
   var ROLE_COLORS = { impl: 'var(--orange-2)', review: '#8FA9B8', usability: '#B79CD9' }, EXTRA = ['#D9C07A', '#7ED184', '#E05252'];
   function roleColor(role, i) { return ROLE_COLORS[role] || EXTRA[i % EXTRA.length]; }
@@ -117,13 +120,22 @@
     acts += doneButton(f, iss, live);
     var tail = scrollback(f.id + '|' + iss.key);
     var wait = iss.humanWaitMs + (iss.light === 'green' ? 0 : drift());
-    return '<div class="alert"><div class="k"><i class="led ' + esc(iss.light) + ' still"></i><b>' + esc(iss.key) + ' ' + esc(iss.title) + (many ? ' · ' + esc(f.name) : '') + '</b><span class="you' + (wait > 1000 ? '' : ' none') + '" title="time a person was waited on">' + (wait > 1000 ? dur(wait) : '0') + '<small>you</small></span></div>' +
-      '<a class="open" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '">' + chips(iss) + stats(iss) + '</a><ul class="why">' + lines + '</ul>' + tail + '<div class="acts">' + acts + '</div></div>';
+    var b = busy[f.id + '|' + iss.key];
+    return '<div class="alert' + (b ? ' busy' : '') + '"><div class="k"><i class="led ' + esc(iss.light) + ' still"></i><b>' + esc(iss.key) + ' ' + esc(iss.title) + (many ? ' · ' + esc(f.name) : '') + '</b><span class="you' + (wait > 1000 ? '' : ' none') + '" title="time a person was waited on">' + (wait > 1000 ? dur(wait) : '0') + '<small>you</small></span></div>' +
+      '<a class="open" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '">' + chips(iss) + stats(iss) + '</a><ul class="why">' + lines + '</ul>' + tail + '<div class="acts">' + acts + '</div>' + (b ? '<span class="craft"><i></i></span>' : '') + '</div>';
   }
   // The one action on a task: a person says it is done. Its agents are closed, its alerts go,
   // and it moves to output. `live` is the agents still up, named so the confirm can say who goes.
   function doneButton(f, iss, live) {
+    var b = busy[f.id + '|' + iss.key];
+    if (b) return busyButton(b);
     return '<button class="btn done" data-done="' + esc(f.id) + '|' + esc(iss.key) + '" data-agents="' + esc(live.map(function (r) { return r.agent; }).join(', ')) + '" title="Close its agents, clear its alerts and move it to output. Your call.">✓ Mark done</button>';
+  }
+  // The same button while its request is in flight: a turning gear and what the console is doing
+  // right now, so a click that takes a few seconds (an agent shutting down) is visibly doing it.
+  function busyButton(b) {
+    var what = b.undo ? 'Bringing it back…' : b.agents ? 'Closing ' + b.agents + ' agent' + (b.agents === 1 ? '' : 's') + '…' : b.settled ? 'Moving to output…' : 'Marking done…';
+    return '<button class="btn done busy" disabled aria-live="polite">' + GEAR + esc(what) + '</button>';
   }
   // Every agent's last lines, one block per role with its colour in the gutter. Read only.
   function scrollback(key) {
@@ -271,7 +283,8 @@
     if (results) results = section('Reports', iss.runs.filter(function (r) { return r.result; }).length, results);
     var live = iss.runs.filter(function (r) { return r.agentAlive; });
     var acts = live.length ? section('Agents still up', live.length, '<div class="inset pane">' + scrollback(f.id + '|' + iss.key) + '<div class="acts"><button class="btn" data-tail="' + esc(f.id) + '|' + esc(iss.key) + '">Scrollback</button></div></div>') : '';
-    acts += '<div class="acts">' + (iss.cleared && !live.length ? '<span class="pill">marked done by you</span><button class="btn" data-undone="' + esc(f.id) + '|' + esc(iss.key) + '">Undo</button>' : doneButton(f, iss, live)) + '</div>';
+    var b = busy[f.id + '|' + iss.key];
+    acts += '<div class="acts">' + (b ? busyButton(b) : iss.cleared && !live.length ? '<span class="pill">marked done by you</span><button class="btn" data-undone="' + esc(f.id) + '|' + esc(iss.key) + '">Undo</button>' : doneButton(f, iss, live)) + '</div>';
     return head + belt() + '<div class="ehead"><span class="key">' + esc(f.name) + '</span><h2>' + esc(iss.title) + '</h2>' + status + '</div><div class="body">' + links + roles + change + results + acts + '</div>';
   }
 
@@ -281,6 +294,20 @@
     var r = route();
     chosen = r.kind === 'index' ? null : r.id;
     root.innerHTML = r.kind === 'issue' ? detail(r.id, r.key) : r.kind === 'factory' ? overview() : index();
+  }
+  // A Mark done or Undo is over when the console's state shows it: the task out of Alerts and
+  // in output (or back, for Undo), or gone from the view. A state that never catches up (the
+  // console restarted, say) is not a reason to hold the button forever: SETTLE_MS after the
+  // console answered, it goes back to a button.
+  var SETTLE_MS = 8000;
+  function settle() {
+    var changed = false, now = Date.now();
+    Object.keys(busy).forEach(function (key) {
+      var b = busy[key], p = key.split('|'), f = factoryOf(p[1], p[0]), iss = f && f.issues.filter(function (i) { return i.key === p[1]; })[0];
+      var landed = !f || !iss ? !!b.settled : b.undo ? !iss.cleared : iss.cleared && iss.bucket !== 'inflight' && !hasAlert(f, iss);
+      if ((b.settled && landed) || (b.settled && now - b.settled > SETTLE_MS)) { delete busy[key]; changed = true; }
+    });
+    if (changed) render();
   }
   function toast(t) { var el = document.createElement('div'); el.className = 'toast'; el.textContent = t; document.body.appendChild(el); setTimeout(function () { el.remove(); }, 2600); }
 
@@ -297,13 +324,19 @@
     else if (t.dataset.done || t.dataset.undone) {
       var d = (t.dataset.done || t.dataset.undone).split('|'), undo = !!t.dataset.undone, agents = t.dataset.agents;
       if (!undo && !confirm('Mark ' + d[1] + ' done? ' + (agents ? 'Every agent still up on it (' + agents + ') is sent its exit command and shuts down the way it wants; workspaces and worktrees stay. ' : '') + 'Its alerts are cleared and it moves to output. A new run on it brings it back.')) return;
-      t.disabled = true;
+      var key = d[0] + '|' + d[1];
+      busy[key] = { undo: undo, agents: undo || !agents ? 0 : agents.split(', ').length };
+      render();
       fetch(undo ? '/api/undone' : '/api/done', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: d[0], issue: d[1] }) })
         .then(function (r) { return r.json(); }).then(function (j) {
-          if (!j.ok || j.error) return toast('Could not: ' + (j.error || 'unknown'));
+          if (!j.ok || j.error) { delete busy[key]; render(); return toast('Could not: ' + (j.error || 'unknown')); }
           var closed = (j.outcomes || []).map(function (o) { return o.agent + ' ' + o.outcome; }).join(' · ');
           toast(undo ? d[1] + ' is back' : d[1] + ' marked done' + (closed ? ' · ' + closed : ''));
-        }).catch(function () { toast('The console did not answer.'); });
+          // The console said yes; the button keeps turning until the state that moves the task lands.
+          if (busy[key]) { busy[key].settled = Date.now(); busy[key].agents = 0; }
+          render(); settle();
+          setTimeout(settle, SETTLE_MS + 50);
+        }).catch(function () { delete busy[key]; render(); toast('The console did not answer.'); });
     }
   });
   document.getElementById('app').addEventListener('click', function (e) { if (e.target.id === 'dim') { sheet = false; render(); } });
@@ -312,7 +345,7 @@
 
   function connect() {
     var es = new EventSource('/api/events');
-    es.addEventListener('state', function (ev) { view = JSON.parse(ev.data); receivedAt = Date.now(); render(); });
+    es.addEventListener('state', function (ev) { view = JSON.parse(ev.data); receivedAt = Date.now(); render(); settle(); });
     es.onerror = function () { es.close(); fetch('/api/state').then(function (r) { if (r.status === 401) location.replace('/'); }).catch(function () {}); setTimeout(connect, 3000); };
   }
   connect();

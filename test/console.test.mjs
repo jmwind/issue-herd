@@ -444,6 +444,9 @@ test('http: an ungated console serves the app and the state, and refuses cross-o
   const ok = await fetch(base + '/api/exit', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', run: 'GH-1' }) });
   assert.equal(ok.status, 200); assert.deepEqual(await ok.json(), { ok: true, outcome: 'exited' }); assert.deepEqual(calls, [{ factory: 'f', run: 'GH-1' }]);
   assert.equal((await fetch(base + '/app.css')).headers.get('content-type'), 'text/css; charset=utf-8');
+  // Mark done takes seconds when an agent has to shut down: the page shows it from the click until the state lands.
+  const js = await (await fetch(base + '/app.js')).text();
+  assert.match(js, /class="btn done busy" disabled/, 'the button shows its request in flight'); assert.match(js, /Closing ' \+ b\.agents \+ ' agent/, 'and says which step it is on');
   const done = await fetch(base + '/api/done', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', issue: 'GH-1' }) });
   assert.deepEqual(await done.json(), { ok: true, done: true, outcomes: [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }], error: null }, 'marking done reports what happened to the agents it closed');
   assert.deepEqual(calls.at(-1), { done: { factory: 'f', issue: 'GH-1' }, value: true });
