@@ -234,6 +234,16 @@ wait time — and a reviewer that has finished is done: its report is a line on 
 nothing blocking*, *has findings*), never a decision of its own. The merge alert shows those
 verdicts under its line, and its clock starts when the last reviewer finished.
 
+An agent still in flight that reads as idle, blocked or missing has to stay that way for 45
+seconds before it is an alert. Each of those is what a run looks like on its way somewhere else
+— herdr has not registered the agent yet, Claude Code is on its startup dialog, the prompt has
+not landed, one turn ended a moment before the next — and the console reads herdr every two
+seconds, so without the wait a task bounced between Alerts and Assembling. Until the state has
+held, the row stays green in Assembling; once it has, the card appears; leaving an alert state
+shows at once. A dialog or question the watcher has already logged counts from the log's time,
+so a console started next to a long-blocked agent does not wait again. Results the watcher wrote
+(a decision, a failure, a stop) are its call and are never held back.
+
 **Where it reads from.** Each watcher stamps `~/.config/issue-herd/factories.json` every poll
 (name, tracker, version, last poll); the console lists those entries, plus any `<name>Watch`
 workspace herdr shows, and reads each factory's `config.json`, `state.json` and log directly. Agent

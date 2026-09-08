@@ -62,7 +62,7 @@ class Cached {
 export class FactoryConsole {
   constructor({ herdr, registryFile, log = () => {}, intervalMs = 2000, hostname = os.hostname(), version = null }) {
     this.herdr = herdr; this.registryFile = registryFile; this.log = log; this.intervalMs = intervalMs; this.hostname = hostname; this.version = version;
-    this.caches = new Map(); // repo → { config, local, state, log }
+    this.caches = new Map(); // repo → { config, local, state, seen, log }
     this.live = new Map();   // repo → { tracker, ghToken, issues: Map, prs: Map, busy }
     // Tasks a person marked done in the console. The console's own file, never the watcher's
     // state.json (two writers on one file is how state gets lost); keyed by repo and issue.
@@ -104,6 +104,7 @@ export class FactoryConsole {
       config: new Cached((f) => JSON.parse(fs.readFileSync(f, 'utf8'))),
       local: new Cached((f) => JSON.parse(fs.readFileSync(f, 'utf8'))),
       state: new Cached((f) => JSON.parse(fs.readFileSync(f, 'utf8'))),
+      seen: {}, // what each live run last read as and since when, for the model's settle window
       log: new Cached((f, st) => {
         const fd = fs.openSync(f, 'r');
         try { const start = Math.max(0, st.size - LOG_TAIL); const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start); return parseLog(buf.toString('utf8')); }
@@ -229,7 +230,7 @@ export class FactoryConsole {
       const enrich = { issues: Object.fromEntries([...live.issues].map(([k, v]) => [k, v.state])), prs: Object.fromEntries([...live.prs].map(([k, v]) => [k, v.state])), branches: Object.fromEntries([...live.branches].filter(([, v]) => v.url).map(([k, v]) => [k, v.url])) };
       const cleared = {};
       for (const [k, v] of Object.entries(this.notes.done || {})) if (k.startsWith(f.repo + '|')) cleared[k.slice(f.repo.length + 1)] = Date.parse(v.at) || 0;
-      const view = factoryView({ id, repo: f.repo, config, state, events, index, sizes, registry: f.registry, stale: f.stale, enrich, cleared, now });
+      const view = factoryView({ id, repo: f.repo, config, state, events, index, sizes, registry: f.registry, stale: f.stale, enrich, cleared, seen: c.seen, now });
       if (f.workspaceId && !view.watcher.workspaceId) view.watcher.workspaceId = f.workspaceId;
       view.watcher.paneOnly = !!f.paneOnly;
       view.live = { tracker: !!live.tracker, github: !!live.ghToken, why: live.why };

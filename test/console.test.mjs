@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView, productionWindows, production } from '../src/console/model.mjs';
+import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView, productionWindows, production, SETTLE_MS } from '../src/console/model.mjs';
 import { Gate, hashPasscode, verifyPasscode } from '../src/console/passcode.mjs';
 import { stampFactory, loadRegistry, isStale, forgetFactory } from '../src/console/registry.mjs';
 import { complexity } from '../src/console/git.mjs';
@@ -174,6 +174,61 @@ test('a PR waiting on reviewers is nobody\'s wait, and a reviewer\'s report is n
   // a lone run that stops for a decision, with no PR anyone else owns, is still a decision
   assert.equal(runState({ status: 'done', result: { status: 'needs_human' } }, null, { reviewer: false }).needsYou, 'needs_human');
   assert.ok(ownsPr(runs['GH-45@impl'])); assert.ok(!ownsPr(runs['GH-45@review']));
+});
+
+test('an in-flight agent that reads as idle, blocked or gone is not an alert until it has held for the settle window', () => {
+  // GH-56: the console reads herdr every 2s, and a run on its way up (no agent yet, then idle until
+  // the prompt lands) or between turns bounced the task into Alerts and back.
+  const runs = { 'GH-56@impl': { rule: 'implement', role: 'impl', status: 'starting', issueKey: 'GH-56', title: 'Stop the bounce', startedAt: iso(9, 0), agentName: 'gh-56-impl', workspaceId: 'w1' } };
+  const at = (index, now, state = runs, seen = memory) => factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: state }, index: indexSnapshot(index), seen, now });
+  const memory = {};
+  const none = { agents: [] };
+  const idle = { agents: [{ name: 'gh-56-impl', agent_status: 'idle', workspace_id: 'w1' }] };
+  const working = { agents: [{ name: 'gh-56-impl', agent_status: 'working', workspace_id: 'w1' }] };
+  const blocked = { agents: [{ name: 'gh-56-impl', agent_status: 'blocked', workspace_id: 'w1' }] };
+  // starting, no agent registered yet: a green "starting" row in Assembling, nothing in Alerts
+  let v = at(none, T(9, 0, 2));
+  assert.deepEqual(v.alerts, []); assert.equal(v.issues[0].bucket, 'inflight');
+  assert.deepEqual([v.issues[0].light, v.issues[0].phrase, v.issues[0].runs[0].settling], ['green', 'impl starting', 'gone']);
+  // the agent is up but idle: the prompt has not landed; the clock restarts because the state changed
+  const running = { 'GH-56@impl': { ...runs['GH-56@impl'], status: 'running' } };
+  v = at(idle, T(9, 0, 20), running);
+  assert.deepEqual(v.alerts, []); assert.deepEqual([v.issues[0].light, v.issues[0].phrase, v.issues[0].runs[0].settling], ['green', 'impl working', 'question']);
+  // it starts working: remembered as such, so the log cannot later revive an episode the console saw end
+  v = at(working, T(9, 0, 30), running);
+  assert.deepEqual(v.alerts, []); assert.equal(v.issues[0].runs[0].settling, null); assert.deepEqual(memory, { 'GH-56@impl': { needsYou: null, since: T(9, 0, 30) } });
+  // idle again, held for less than the window: still nothing; held for the window: a question, at once
+  v = at(idle, T(9, 5, 0), running); assert.deepEqual(v.alerts, []);
+  v = at(idle, T(9, 5, 0) + SETTLE_MS - 1, running); assert.deepEqual(v.alerts, []);
+  v = at(idle, T(9, 5, 0) + SETTLE_MS, running);
+  assert.deepEqual(v.alerts.map((a) => a.kind), ['question']); assert.deepEqual([v.issues[0].light, v.issues[0].phrase], ['yellow', 'impl waiting on you']);
+  // leaving an alert state shows at once, and a different alert state starts its own clock
+  v = at(blocked, T(9, 6, 0), running); assert.deepEqual(v.alerts, []); assert.equal(v.issues[0].runs[0].settling, 'blocked');
+  v = at(blocked, T(9, 6, 0) + SETTLE_MS, running); assert.deepEqual(v.alerts.map((a) => a.kind), ['blocked']);
+  v = at(working, T(9, 6, 50), running); assert.deepEqual(v.alerts, []); assert.equal(v.issues[0].phrase, 'impl working');
+  // the watcher's log is memory too: a dialog it logged a while ago is settled for a console that just started
+  const log = parseLog('[2026-09-07 09:10:00] GH-56@impl: prompted (state working)\n[2026-09-07 09:20:00] GH-56@impl: blocked — waiting for approval or input in w1\n');
+  v = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: running }, index: indexSnapshot(blocked), events: log, seen: {}, now: T(9, 30) });
+  assert.deepEqual(v.alerts.map((a) => a.kind), ['blocked']);
+  // The log seeds the clock only on the console's first look. Afterwards a recovery the console saw
+  // ends the episode even though the watcher, on its slower poll, never logged it: the same state
+  // coming back two seconds later is a new episode and waits the full window (the reviewer's case).
+  for (const [index, kind] of [[blocked, 'blocked'], [idle, 'question']]) {
+    const mem = {};
+    const logged = parseLog(`[2026-09-07 09:00:00] GH-56@impl: prompted (state working)\n[2026-09-07 09:01:00] GH-56@impl: ${kind === 'blocked' ? 'blocked — waiting for approval or input in w1' : 'idle without a result — probably asking a question in w1'}\n`);
+    const look = (idx, now) => factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: running }, index: indexSnapshot(idx), events: logged, seen: mem, now });
+    assert.deepEqual(look(index, T(9, 2, 0)).alerts.map((a) => a.kind), [kind], 'first look: the log says it has been so for a minute');
+    assert.deepEqual(look(working, T(9, 2, 2)).alerts, [], 'the console saw it recover');
+    v = look(index, T(9, 2, 4));
+    assert.deepEqual(v.alerts, [], `${kind} again two seconds later is a new episode, whatever the log still says`); assert.equal(v.issues[0].runs[0].settling, kind);
+    assert.deepEqual(look(index, T(9, 2, 4) + SETTLE_MS - 1).alerts, []);
+    assert.deepEqual(look(index, T(9, 2, 4) + SETTLE_MS).alerts.map((a) => a.kind), [kind], 'and settles after the full window');
+  }
+  // without a memory the view is instant, as a one-shot reading should be
+  assert.deepEqual(at(blocked, T(9, 0, 2), running, null).alerts.map((a) => a.kind), ['blocked']);
+  // a run's own finished states are the watcher's call and are not held back
+  const failed = { 'GH-56@impl': { ...runs['GH-56@impl'], status: 'failed', finishedAt: iso(9, 1), error: 'no' } };
+  assert.deepEqual(at(none, T(9, 1, 1), failed).alerts.map((a) => a.kind), ['failed']);
 });
 
 test('factoryView without roles still lists each run as one slot', () => {

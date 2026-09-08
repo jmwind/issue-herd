@@ -56,8 +56,8 @@
       "role": "usability",
       "match": "label:ai and label:ready-for-review",
       "basedOn": "impl",
-      "model": "claude-haiku-4-5",
-      "effort": "high",
+      "model": "claude-sonnet-5",
+      "effort": "medium",
       "prompt": "prompts/review-usability.md"
     }
   ]
