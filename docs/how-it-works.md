@@ -281,17 +281,28 @@ Nothing is written except the registry.
 **Mark done.** The one action on a task, and a person's to take: a finished task sits in Alerts
 — even after an auto-merge — until someone has looked at it (the reports, the scrollback) and
 says it is done. The button sends every agent still up on the task its own exit command
-(`/exit` for Claude Code, `/quit` for codex, each shutting down the way it wants), clears the
-task's alerts and moves it to output. That takes a few seconds when an agent has to shut down,
-so from the click until the task lands in output the button turns a gear and says what it is
-doing ("Closing 2 agents…", "Moving to output…") and the card runs a progress strip; a refusal
-puts the button back with the reason in a toast. The decision is recorded in
-`~/.config/issue-herd/console.json` (the console's own file, never the watcher's state); a newer
-run on the task brings it back, and so does Undo on the detail screen (without restarting the
-agents). An agent that does not exit (herdr could not prompt it, or it did not go within the
-timeout) keeps the task in Alerts and nothing is recorded: a task with an agent still on it is
-not done, whatever was clicked. Workspaces and worktrees stay; `onMerged` is still where
-clean-up is configured.
+(`/exit` for Claude Code, `/quit` for codex, each shutting down the way it wants), then closes
+every run's herdr workspace — the ones whose agent just left and the ones whose agent had
+already exited, every role on the task — so the panes leave the herdr window instead of piling
+up there as exited sessions; then it clears the task's alerts and moves it to output. That takes
+a few seconds when an agent has to shut down, so from the click until the task lands in output
+the button turns a gear and says what it is doing ("Closing 2 agents and 3 workspaces…", "Moving
+to output…") and the card runs a progress strip; a refusal puts the button back with the reason
+in a toast. The decision is recorded in `~/.config/issue-herd/console.json` (the console's own
+file, never the watcher's state); a newer run on the task brings it back, and so does Undo on the
+detail screen (without restarting the agents or reopening the workspaces). An agent that does not
+exit (herdr could not prompt it, or it did not go within the timeout) keeps the task in Alerts and
+nothing is recorded — its workspace is left alone, too, rather than pulled out from under it — and
+a workspace herdr would not close does the same: a task with an agent or a workspace still on it
+is not done, whatever was clicked, and the toast says which. Worktrees stay, and so do the run's
+archived `brief.md` and `result.json`: the pane was never the long-term record. `onMerged` is
+still where automatic clean-up is configured; Mark done is a person's sign-off, which is why it
+closes what `onMerged` by default keeps.
+
+**Tidy.** Tasks marked done before Mark done closed workspaces left a pile. When any task marked
+done still has a workspace open for an agent that has exited, the Output section's header shows
+*Tidy N workspaces*: one click, one confirm, and those workspaces are closed (for the factory on
+screen, or all of them from the overview). Agents still up are never touched by it.
 
 **The gate.** With no passcode the console binds to loopback only and asks nothing. With one
 (`set-passcode`, at least four digits because the phone's keypad has no letters; stored as a

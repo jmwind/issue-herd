@@ -93,6 +93,7 @@ test('factoryView: issues bucketed, role slots in order, alerts ranked, human wa
   // GH-9 merged this morning with nobody left on it → waits for a person's sign-off, last
   assert.deepEqual(v.alerts.map((a) => [a.kind, a.issueKey]), [['blocked', 'GH-7'], ['holding', 'GH-8'], ['finished', 'GH-9']]);
   assert.equal(v.alerts[0].workspaceId, 'w1');
+  assert.deepEqual(v.issues.map((i) => i.runs.map((r) => [r.workspaceId, r.workspaceOpen])), [[['w1', true]], [['w2', true]], [[null, false]]], 'each run says whether herdr still has its workspace: w2 is not in the list but gh-8 is standing in it');
   assert.equal(v.counts.running, 1); assert.equal(v.counts.alerts, 3);
   assert.equal(v.watcher.version, '0.2.4');
   assert.deepEqual(v.rules.map((r) => r.agent), ['claude', 'codex']);
@@ -336,36 +337,82 @@ test('tailscale addresses are the 100.64/10 IPv4 ones only', () => {
   assert.deepEqual(tailscaleAddresses({ lo: [{ family: 'IPv4', address: '127.0.0.1' }], ts: [{ family: 'IPv4', address: '100.101.7.22' }, { family: 'IPv6', address: 'fd7a::1' }], en0: [{ family: 'IPv4', address: '192.168.1.5' }] }), ['100.101.7.22']);
 });
 
-test('markDone: the one action — every agent still up on the task gets its exit command, the decision is recorded, undo leaves the agents alone', async (t) => {
+test('markDone: the one action — every agent still up on the task gets its exit command, every run\'s workspace is closed, the decision is recorded, undo leaves them alone', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   process.env.ISSUE_HERD_CONSOLE_NOTES = path.join(dir, 'console.json');
   t.after(() => { delete process.env.ISSUE_HERD_CONSOLE_NOTES; });
-  const stopped = [];
-  const herdr = { run: async () => null, stopAgent: async (agent, opts) => { stopped.push([agent, opts.exitCommand]); return 'exited'; } };
+  const stopped = []; const closed = []; const order = [];
+  const herdr = {
+    run: async () => null,
+    stopAgent: async (agent, opts) => { stopped.push([agent, opts.exitCommand]); order.push(agent); return 'exited'; },
+    closeWorkspace: async (id) => { closed.push(id); order.push(id); },
+  };
   const app = new FactoryConsole({ herdr, registryFile: path.join(dir, 'factories.json'), hostname: 'box' });
   app.current.factories = [{ id: 'f', repo: '/r', issues: [{ key: 'GH-1', runs: [
-    { key: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', agentAlive: true },
-    { key: 'GH-1@review', role: 'review', agent: 'gh-1-review', agentKind: 'codex', agentAlive: true },
-    { key: 'GH-1@usability', role: 'usability', agent: 'gh-1-usability', agentKind: 'claude', agentAlive: false },
+    { key: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', agentAlive: true, workspaceId: 'w1', workspaceOpen: true },
+    { key: 'GH-1@review', role: 'review', agent: 'gh-1-review', agentKind: 'codex', agentAlive: true, workspaceId: 'w2', workspaceOpen: true },
+    // exited on its own, workspace still sitting in herdr's sidebar: that is the pile
+    { key: 'GH-1@usability', role: 'usability', agent: 'gh-1-usability', agentKind: 'claude', agentAlive: false, workspaceId: 'w3', workspaceOpen: true },
+    // exited and closed by hand already: nothing to do, nothing to report
+    { key: 'GH-1@split', role: 'split', agent: 'gh-1-split', agentKind: 'claude', agentAlive: false, workspaceId: 'w4', workspaceOpen: false },
   ] }] }];
   const done = await app.markDone({ factory: 'f', issue: 'GH-1' });
   assert.equal(done.done, true);
-  assert.deepEqual(done.outcomes.map((o) => [o.role, o.outcome]), [['impl', 'exited'], ['review', 'exited']], 'only the agents still up are closed');
+  assert.deepEqual(done.outcomes.map((o) => [o.role, o.outcome, o.workspaceId, o.workspace]), [['impl', 'exited', 'w1', 'closed'], ['review', 'exited', 'w2', 'closed'], ['usability', 'was already gone', 'w3', 'closed']], 'every run with an agent up or a workspace open is reported');
   assert.deepEqual(stopped, [['gh-1-impl', '/exit'], ['gh-1-review', '/quit']], 'each agent gets its own exit command');
+  assert.deepEqual(closed, ['w1', 'w2', 'w3'], 'every role\'s workspace goes, the already-exited one included');
+  assert.deepEqual(order, ['gh-1-impl', 'w1', 'gh-1-review', 'w2', 'w3'], 'an agent exits before its workspace closes');
   assert.ok(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done['/r|GH-1'].at, 'the decision is the console\'s own note');
   const undone = await app.markDone({ factory: 'f', issue: 'GH-1' }, false);
   assert.deepEqual(undone, { done: false, outcomes: [] });
-  assert.equal(stopped.length, 2, 'undo does not touch the agents');
+  assert.equal(stopped.length, 2); assert.equal(closed.length, 3, 'undo touches neither the agents nor the workspaces');
   assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {});
   await assert.rejects(app.markDone({ factory: 'f', issue: 'GH-9' }), /no task GH-9/);
-  // An agent that will not go keeps the task where it is: nothing recorded, the card stays.
+  // An agent that will not go keeps the task where it is: nothing recorded, the card stays, and
+  // its workspace is not pulled out from under it.
   herdr.stopAgent = async (agent) => (agent === 'gh-1-review' ? 'is still running' : 'exited');
+  closed.length = 0;
   const stuck = await app.markDone({ factory: 'f', issue: 'GH-1' });
   assert.equal(stuck.done, false);
   assert.match(stuck.error, /review \(gh-1-review\) still running; not marked done/);
-  assert.deepEqual(stuck.outcomes.map((o) => o.outcome), ['exited', 'is still running'], 'what happened to each agent is still reported');
+  assert.deepEqual(stuck.outcomes.map((o) => [o.outcome, o.workspace]), [['exited', 'closed'], ['is still running', 'left open'], ['was already gone', 'closed']], 'what happened to each agent and workspace is still reported');
+  assert.deepEqual(closed, ['w1', 'w3'], 'the running agent keeps its workspace');
   assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {}, 'a partial shutdown is not a done note');
+  // A workspace herdr will not close is surfaced the same way, not left as a zombie behind a done note.
+  herdr.stopAgent = async () => 'exited';
+  herdr.closeWorkspace = async (id) => { if (id === 'w2') throw new Error('herdr workspace close: socket gone'); };
+  const zombie = await app.markDone({ factory: 'f', issue: 'GH-1' });
+  assert.equal(zombie.done, false);
+  assert.match(zombie.error, /review workspace w2 is still open \(herdr workspace close: socket gone\); not marked done/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {});
+  // A workspace herdr no longer has is not a failure: it is what we wanted.
+  herdr.closeWorkspace = async () => { const e = new Error('herdr workspace close: no such workspace'); e.code = 'workspace_not_found'; throw e; };
+  const gone = await app.markDone({ factory: 'f', issue: 'GH-1' });
+  assert.equal(gone.done, true);
+  assert.deepEqual(gone.outcomes.map((o) => o.workspace), ['was already closed', 'was already closed', 'was already closed']);
+  app.stop();
+});
+
+test('tidy: closes the workspaces of exited agents on tasks already marked done, and nothing else', async (t) => {
+  const closed = [];
+  const herdr = { run: async () => null, stopAgent: async () => { throw new Error('tidy must not touch agents'); }, closeWorkspace: async (id) => { if (id === 'w9') throw new Error('herdr workspace close: nope'); closed.push(id); } };
+  const app = new FactoryConsole({ herdr, registryFile: path.join(os.tmpdir(), 'ih-none.json'), hostname: 'box' });
+  const run = (key, role, o) => ({ key, role, agent: key.toLowerCase(), agentKind: 'claude', agentAlive: false, workspaceOpen: true, ...o });
+  app.current.factories = [
+    { id: 'a', repo: '/a', issues: [
+      { key: 'GH-1', cleared: true, bucket: 'done', runs: [run('GH-1@impl', 'impl', { workspaceId: 'w1' }), run('GH-1@review', 'review', { workspaceId: 'w2', workspaceOpen: false }), run('GH-1@usability', 'usability', { workspaceId: 'w3', agentAlive: true })] },
+      { key: 'GH-2', cleared: false, bucket: 'done', runs: [run('GH-2@impl', 'impl', { workspaceId: 'w4' })] },
+      { key: 'GH-3', cleared: true, bucket: 'inflight', runs: [run('GH-3@impl', 'impl', { workspaceId: 'w5' })] },
+      { key: 'GH-4', cleared: true, bucket: 'merged', runs: [run('GH-4@impl', 'impl', { workspaceId: null })] },
+    ] },
+    { id: 'b', repo: '/b', issues: [{ key: 'GH-7', cleared: true, bucket: 'merged', runs: [run('GH-7@impl', 'impl', { workspaceId: 'w8' }), run('GH-7@review', 'review', { workspaceId: 'w9' })] }] },
+  ];
+  const one = await app.tidy({ factory: 'a' });
+  assert.deepEqual(one.map((o) => [o.issue, o.workspaceId, o.workspace]), [['GH-1', 'w1', 'closed']], 'marked done, agent gone, workspace open: that and only that; one factory when asked');
+  const all = await app.tidy();
+  assert.deepEqual(all.map((o) => [o.factory, o.workspaceId, o.workspace]), [['a', 'w1', 'closed'], ['b', 'w8', 'closed'], ['b', 'w9', 'is still open (herdr workspace close: nope)']], 'every factory otherwise, and a refusal is reported, not hidden');
+  assert.deepEqual(closed, ['w1', 'w1', 'w8']);
   app.stop();
 });
 
@@ -424,7 +471,8 @@ test('a finished task waits in Alerts for a person\'s sign-off whatever became o
 async function serve(t, { hash = null } = {}) {
   const calls = [];
   const app = { view: () => ({ hostname: 'box', factories: [] }), subscribe: () => () => {}, exit: async (a) => { calls.push(a); return 'exited'; }, tail: async () => 'tail text',
-    markDone: async (a, done) => { calls.push({ done: a, value: done }); return { done, outcomes: done ? [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }] : [] }; },
+    markDone: async (a, done) => { calls.push({ done: a, value: done }); return { done, outcomes: done ? [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited', workspaceId: 'w1', workspace: 'closed' }] : [] }; },
+    tidy: async (a) => { calls.push({ tidy: a }); return [{ factory: 'f', issue: 'GH-2', run: 'GH-2@impl', role: 'impl', workspaceId: 'w2', workspace: 'closed' }]; },
     tailTask: async () => [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', alive: true, phrase: 'working', text: 'impl lines' }, { run: 'GH-1@review', role: 'review', agent: 'gh-1-review', agentKind: 'codex', alive: false, phrase: 'done', text: null }] };
   const gate = new Gate({ hash });
   const { handler } = createHandler({ gate, console: app, hostname: 'box' });
@@ -448,8 +496,13 @@ test('http: an ungated console serves the app and the state, and refuses cross-o
   const js = await (await fetch(base + '/app.js')).text();
   assert.match(js, /class="btn done busy" disabled/, 'the button shows its request in flight'); assert.match(js, /Closing ' \+ b\.agents \+ ' agent/, 'and says which step it is on');
   const done = await fetch(base + '/api/done', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', issue: 'GH-1' }) });
-  assert.deepEqual(await done.json(), { ok: true, done: true, outcomes: [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited' }], error: null }, 'marking done reports what happened to the agents it closed');
+  assert.deepEqual(await done.json(), { ok: true, done: true, outcomes: [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited', workspaceId: 'w1', workspace: 'closed' }], error: null }, 'marking done reports what happened to the agents and workspaces it closed');
   assert.deepEqual(calls.at(-1), { done: { factory: 'f', issue: 'GH-1' }, value: true });
+  assert.match(js, /workspaces are closed; worktrees stay/, 'the confirm says the workspaces go');
+  const tidy = await fetch(base + '/api/tidy', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f' }) });
+  assert.deepEqual(await tidy.json(), { ok: true, outcomes: [{ factory: 'f', issue: 'GH-2', run: 'GH-2@impl', role: 'impl', workspaceId: 'w2', workspace: 'closed' }] }, 'tidy reports each workspace it closed');
+  assert.deepEqual(calls.at(-1), { tidy: { factory: 'f' } });
+  assert.equal((await fetch(base + '/api/tidy', { method: 'POST', body: '{}' })).status, 403, 'tidy is same-origin only');
   assert.equal((await fetch(base + '/api/done', { method: 'POST', body: '{}' })).status, 403, 'marking done is same-origin only');
   assert.equal((await fetch(base + '/api/undone', { method: 'POST', body: '{}' })).status, 403);
   assert.equal((await fetch(base + '/api/close', { method: 'POST', headers: { origin: 'http://' + host }, body: '{}' })).status, 404, 'there is no separate close: Mark done is the one action');

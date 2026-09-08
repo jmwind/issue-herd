@@ -225,10 +225,13 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
       const from = Math.max(doneAt, ...roleEnds);
       if (from < mergedAt) mergeWait = { from, to: mergedAt };
     }
+    const wsId = run.workspaceId || agent?.workspace_id || null;
     return {
       key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status, ownsPr: ownsPr(run),
       agent: run.agentName, agentKind: rules.find((r) => r.name === run.rule)?.agent || 'claude', agentStatus: agent?.agent_status || null, agentAlive: !!agent,
-      workspaceId: run.workspaceId || agent?.workspace_id || null, branch: run.branch || null, worktree: run.workDir || run.worktreePath || null,
+      // Still open in herdr: listed in the snapshot, or the agent is standing in it right now.
+      workspaceId: wsId, workspaceOpen: !!wsId && (index.workspaces.has(wsId) || agent?.workspace_id === wsId),
+      branch: run.branch || null, worktree: run.workDir || run.worktreePath || null,
       startedAt: run.startedAt || null, finishedAt: run.finishedAt || null,
       elapsedMs: (finished || now) - started,
       light: st.light, phrase: st.phrase, needsYou: st.needsYou, settling: st.settling || null,
