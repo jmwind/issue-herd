@@ -12,7 +12,7 @@ Give a rule a `role` and everything the run is keyed by follows it:
 | | no role (the default) | `"role": "review"` |
 |---|---|---|
 | claim label | `herdr` | `herdr:review` |
-| pickup comment | `🐑 **issue-herd** picked this up on …` | `🐑 **issue-herd** picked this up as \`review\` on …` |
+| pickup comment | `🧵 **weawr** picked this up on …` | `🧵 **weawr** picked this up as \`review\` on …` |
 | run key (`status`, `reset`, `runs/<KEY>/`) | `GH-7` | `GH-7@review` |
 | herdr sidebar | `GH-7 Fix the thing` | `GH-7 review Fix the thing` |
 | herdr agent | `gh-7` | `gh-7-review` |
@@ -35,7 +35,7 @@ Give a rule a `role` and everything the run is keyed by follows it:
   one role the first matching rule still wins, exactly as before; across roles, one poll can start
   one run per role.
 - **A rule with no role claims the whole issue.** That is the old behaviour, unchanged: its label
-  is `herdr`, and *any* pickup comment blocks it. Leave `role` out and nothing about issue-herd
+  is `herdr`, and *any* pickup comment blocks it. Leave `role` out and nothing about weawr
   changes.
 - **`"roles"` is the project's switch.** A list disables the rules whose role is not in it, so
   turning reviewer agents off is one line rather than deleting the rules. Omit it and every rule's
@@ -52,14 +52,14 @@ Give a rule a `role` and everything the run is keyed by follows it:
   [A second opinion](#a-second-opinion-a-reviewer-on-another-provider).
 - **A reviewer can hold the code it reviews.** `"basedOn": "impl"` starts this role's worktree from
   that role's branch — see [Reviewing the actual code](#reviewing-the-actual-code-basedon).
-- `issue-herd reset GH-7` forgets every role's run on the issue; `issue-herd reset GH-7@review`
+- `weawr reset GH-7` forgets every role's run on the issue; `weawr reset GH-7@review`
   forgets just that one.
 
 ## The briefs that ship
 
-`prompt` is resolved in `<repo>/.issue-herd/` first and then in issue-herd's own `prompts/`, so a
+`prompt` is resolved in `<repo>/.weawr/` first and then in weawr's own `prompts/`, so a
 rule can name one of these without copying it, and a project overrides one by putting a file of the
-same name in `.issue-herd/prompts/`:
+same name in `.weawr/prompts/`:
 
 | `prompt` | for | says |
 |---|---|---|
@@ -67,7 +67,7 @@ same name in `.issue-herd/prompts/`:
 | `prompts/review-lead.md` | a tech-lead review | accuracy, structure, maintainability, performance; ends in `OK TO MERGE TO MAIN` or not |
 | `prompts/review-usability.md` | a usability and docs review | walk the getting-started path a newcomer walks; ends in `USABILITY: OK` or the findings |
 | `prompts/review-security.md` | a security assessment | attacker-controlled input → effect, one pass, one verdict |
-| `prompts/smoke.md` | `issue-herd smoke` | prove the pipeline works, change nothing |
+| `prompts/smoke.md` | `weawr smoke` | prove the pipeline works, change nothing |
 
 Every one of them is a plain markdown file with `{{placeholders}}`, and the reviewing three all end
 with "do not push, do not merge" — the verdict is a comment on the issue, and merging is never a
@@ -98,7 +98,7 @@ A reviewer is only a second set of eyes if it is not the same eyes. `agentKind`,
 
 `agentKind` goes straight to `herdr agent start --kind`, and herdr is the authority on which
 agents it can start — `herdr agent start --help` lists them (claude, codex, gemini, cursor, grok,
-copilot, and others). What issue-herd adds is the translation, because everything after `--` is
+copilot, and others). What weawr adds is the translation, because everything after `--` is
 the agent's *own* command line and the four things a rule asks for are spelled differently by each:
 
 | | Claude Code | codex |
@@ -110,13 +110,13 @@ the agent's *own* command line and the four things a rule asks for are spelled d
 | leaves with | `/exit` | `/quit` |
 
 An agent with no translation still runs: it gets `--model` and whatever the rule puts in
-`agentArgs`, which is enough for most of them and means issue-herd does not have to know every
+`agentArgs`, which is enough for most of them and means weawr does not have to know every
 agent's flags before you can use one.
 
 Two things worth knowing:
 
 - **Sign in to each provider yourself**, once per machine (`claude`, `codex login`, …).
-  `issue-herd login` is for the *tracker*; it never touches an agent's credentials.
+  `weawr login` is for the *tracker*; it never touches an agent's credentials.
 - **Answer each agent's first-run dialogs yourself, once per repository.** codex asks whether it
   trusts a directory the first time it opens one (and about hooks, if you have any). A run that
   starts on that dialog is reported as blocked and waits — nothing is lost — but the cure is to run
@@ -146,11 +146,11 @@ worktrees, two branches, no fighting over a checkout.
 On a **later turn** the worktree already exists — and the reason there is a later turn is that the
 implementer pushed something. So it is fast-forwarded to whatever that branch is now (`git fetch`,
 then `reset --hard`), or the second review would read the first turn's code and conclude its own
-findings had been ignored. That reset only ever runs in a worktree issue-herd made for this role,
+findings had been ignored. That reset only ever runs in a worktree weawr made for this role,
 and only ever moves it onto a *different* branch, so what it discards is a reviewer's scratch
 files, never anyone's commits.
 
-`basedOn` needs `"worktree": "self"` — only the mode where issue-herd creates the worktree can
+`basedOn` needs `"worktree": "self"` — only the mode where weawr creates the worktree can
 decide where it starts, so the other modes refuse it at config load rather than quietly ignoring it.
 A `basedOn` naming a role no rule runs is refused there too: silently, it would be a reviewer on
 the default branch and a config that says otherwise.
@@ -174,7 +174,7 @@ turn, so a reviewer with turns left costs nothing while it waits.
 
 The obvious way for that to become a loop is for the role to answer itself — its own closing
 comment bumps the issue, which looks like the issue moving on. So when a rule has turns left,
-issue-herd re-reads the issue's own clock *after* it has finished commenting and measures the next
+weawr re-reads the issue's own clock *after* it has finished commenting and measures the next
 turn against that. A role can never be woken by its own report.
 
 The rest of a later turn is deliberately the same run, not a new one: same run key, same claim
@@ -186,7 +186,7 @@ before the new turn starts, so the supervisor cannot mistake the old answer for 
 each turn is archived under its own name in `runs/<KEY>/`.
 
 Two limits worth knowing. Turns are counted in `state.json`, so a watcher that loses its state
-treats the role as finished — it fails closed, and `issue-herd reset` is how you hand a turn back
+treats the role as finished — it fails closed, and `weawr reset` is how you hand a turn back
 by hand. And a run still waiting for its PR to merge (`awaiting_merge`) is not eligible for another
 turn, because that watch would be lost.
 
@@ -209,7 +209,7 @@ So a finishing agent may name the role it needs next, in its result:
 }
 ```
 
-and issue-herd relays it: the `impl` run on the same issue gets **another turn straight away**,
+and weawr relays it: the `impl` run on the same issue gets **another turn straight away**,
 through the same `herdr agent prompt` a person would have typed. It is the same turn machinery as
 `passes` — same run key, claim, worktree and (when it is still up) session; the previous result is
 set aside as `result.pass1.json`; the brief names the turn, quotes the nudge, and points at what
@@ -219,7 +219,7 @@ reaches several roles, which is how an implementer that has pushed a fix hands i
 reviewers at once.
 
 The trail stays on the issue. The nudging run's finish comment carries the nudge and what happened
-to it; the nudged turn's pickup comment says who asked for it; `issue-herd status` lists the
+to it; the nudged turn's pickup comment says who asked for it; `weawr status` lists the
 conversation per issue. A nudge is the *ask* — the report goes in `summary` and `notes` as usual,
 and a verdict that needs no action is just a comment.
 
@@ -228,7 +228,7 @@ Three things keep it from running away:
 - **It is capped.** `"maxNudges": 6` (top-level, that is the default) is how many nudges the
   agents may relay on one issue, all roles together. The seventh is refused, the finish comment says
   so, and you get a 🙋 comment and notification (`onBlocked`): a person is needed. Raise it in `config.local.json` to let
-  them carry on, or `issue-herd reset <issue>` to hand the budget back. `0` turns nudging off, and
+  them carry on, or `weawr reset <issue>` to hand the budget back. `0` turns nudging off, and
   the briefs then say nothing about it.
 - **A busy role is not interrupted.** A nudge for a run in the middle of a turn — or already
   promised one by another nudge a moment earlier — is held and becomes its next turn the moment
@@ -246,7 +246,7 @@ the move. Turns started by a nudge are not held by `maxConcurrent`: the session 
 
 ## Three roles on GitHub: what this repository runs
 
-issue-herd works its own issues, so `.issue-herd/config.json` in this repository is a worked
+weawr works its own issues, so `.weawr/config.json` in this repository is a worked
 example you can read in full. GitHub has no workflow states — `state` is `open` or `closed` — so
 the handoff between the roles is a **label the implementer adds when its PR is up**:
 
@@ -272,11 +272,11 @@ the handoff between the roles is a **label the implementer adds when its PR is u
 One issue, three claims: `herdr:impl` while it is being built, then `herdr:review` and
 `herdr:usability` in parallel over the same commits (`basedOn: "impl"` gives both reviewers the
 implementer's branch, so they run the tests rather than take its word for them). The implementer is
-told to add the label in `.issue-herd/instructions.md`, which is the file every brief on this repo
+told to add the label in `.weawr/instructions.md`, which is the file every brief on this repo
 ends with — the reviewers are told to leave labels alone. Three different models, because a review
 by the model that wrote the code is a re-read, not a review.
 
-Say who merges in `.issue-herd/instructions.md` too — the scaffolded copy only says "unless the
+Say who merges in `.weawr/instructions.md` too — the scaffolded copy only says "unless the
 issue grants it". This repository's says: the owner, unless the issue says "auto merge when
 reviewed" (or words to that effect), in which case the implementer merges once `OK TO MERGE TO
 MAIN` and `USABILITY: OK` have both landed on the issue. The implementer's brief tells it to stay

@@ -1,6 +1,6 @@
 // Where a run's worktree comes from.
 //
-// issue-herd makes it, with one `git worktree add`, at a path it chooses and on the branch it
+// weawr makes it, with one `git worktree add`, at a path it chooses and on the branch it
 // wants. That is the whole point: everything downstream — the herdr workspace, the brief, the
 // pickup comment, the PR — can name the directory and the branch up front, because there is
 // nothing left to discover or correct.
@@ -122,11 +122,11 @@ export function pullBase({ git, repo, base }) {
  * Returns { path, branch, created }. `branch` is what was asked for, not a promise about what git
  * ended up on; as everywhere else in this tool, the caller asks git for the truth afterwards.
  *
- * Reuse is deliberate. `issue-herd reset <KEY>` followed by another pickup should land in the same
+ * Reuse is deliberate. `weawr reset <KEY>` followed by another pickup should land in the same
  * place rather than accumulating `-2` directories, and an existing branch is attached to rather
  * than clobbered, because an earlier run's commits are not ours to throw away.
  */
-export function makeWorktree({ git, repo, dir = '.issue-herd/worktrees', slug, branch = null, base = null }) {
+export function makeWorktree({ git, repo, dir = '.weawr/worktrees', slug, branch = null, base = null }) {
   if (!slug) throw new Error('makeWorktree needs a slug');
   const root = worktreeRoot(repo, dir);
   const at = path.join(root, slug);
@@ -168,7 +168,7 @@ export function makeWorktree({ git, repo, dir = '.issue-herd/worktrees', slug, b
  * that the implementer pushed something since.
  *
  * Deliberately blunt — `reset --hard` — and deliberately narrow. It runs only in a worktree
- * issue-herd made for a role whose work is reading, so the thing it throws away is a reviewer's
+ * weawr made for a role whose work is reading, so the thing it throws away is a reviewer's
  * scratch files, never anybody's commits: `base` is a different branch, and this one is only ever
  * fast-forwarded onto it. Returns what happened, and never throws; a reviewer looking at slightly
  * old code is a worse review, while a failed run is no review at all.

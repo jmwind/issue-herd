@@ -1,4 +1,4 @@
-// The issue-tracker contract. issue-herd talks to whichever tracker config.json names through
+// The issue-tracker contract. weawr talks to whichever tracker config.json names through
 // this interface, so adding a tracker is one file in src/trackers/ plus one line in
 // src/trackers/index.mjs. linear.mjs is the reference implementation; github.mjs is the second one
 // and shows how little is needed. Neither has any dependencies.
@@ -11,16 +11,16 @@
 //     env:  ['GITHUB_TOKEN'],        // environment variables that carry a token (.env.local / .env are read too)
 //     hint: 'what kind of token',    // shown when no credential is found
 //   }
-//   static async login(ui, opts)     // `issue-herd login`: talk to the person through `ui` (see src/auth.mjs:
+//   static async login(ui, opts)     // `weawr login`: talk to the person through `ui` (see src/auth.mjs:
 //                                    // ui.log / ui.open(url) / ui.ask / ui.askSecret) and return a credential
 //                                    // { token, kind, refreshToken?, expiresAt?, ... }. The CLI validates it with
-//                                    // me() and saves it in ~/.config/issue-herd/credentials.json.
+//                                    // me() and saves it in ~/.config/weawr/credentials.json.
 //   static fallback(options)         // optional: a credential found elsewhere on this machine, or null
 //                                    // (GitHub: `gh auth token`). Called after env and the saved credential.
 //                                    // Give it { kind: 'borrowed', source } when another tool owns and may
 //                                    // rotate the token: `login` then re-reads it every run instead of
 //                                    // saving a copy that would go stale.
-//   static exampleConfig             // optional: what `issue-herd init` layers over config.example.json
+//   static exampleConfig             // optional: what `weawr init` layers over config.example.json
 //                                    // for this tracker (same shape as config.json; merged like config.local.json)
 //
 //   constructor(credential, { options, fetchImpl, onCredential })

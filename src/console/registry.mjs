@@ -10,7 +10,7 @@ import path from 'node:path';
 import { credentialsPath } from '../auth.mjs';
 
 export function registryPath() {
-  return process.env.ISSUE_HERD_REGISTRY || path.join(path.dirname(credentialsPath()), 'factories.json');
+  return process.env.WEAWR_REGISTRY || path.join(path.dirname(credentialsPath()), 'factories.json');
 }
 
 /** Every registered factory, keyed by repository path. {} when there is no file or it is unreadable. */

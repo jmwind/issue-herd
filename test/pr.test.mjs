@@ -14,14 +14,14 @@ function fakeFetch(body, { status = 200 } = {}) {
 }
 
 test('a pull request URL is read as host, owner, repo and number', () => {
-  assert.deepEqual(parsePrUrl('https://github.com/jmwind/issue-herd/pull/23'), { host: 'github.com', owner: 'jmwind', repo: 'issue-herd', number: 23 });
+  assert.deepEqual(parsePrUrl('https://github.com/jmwind/weawr/pull/23'), { host: 'github.com', owner: 'jmwind', repo: 'weawr', number: 23 });
   assert.deepEqual(parsePrUrl('https://ghe.corp.com/team/app/pull/7/files'), { host: 'ghe.corp.com', owner: 'team', repo: 'app', number: 7 });
 });
 
 test('anything that is not a pull request URL is not one', () => {
   // result.json is written by the agent, so this is the guard against waiting forever on a URL
   // that can never be merged.
-  for (const bad of ['', null, 'https://github.com/jmwind/issue-herd/issues/22', 'https://github.com/jmwind/issue-herd', 'not a url', 'https://github.com/o/r/pull/abc']) {
+  for (const bad of ['', null, 'https://github.com/jmwind/weawr/issues/22', 'https://github.com/jmwind/weawr', 'not a url', 'https://github.com/o/r/pull/abc']) {
     assert.equal(parsePrUrl(bad), null, JSON.stringify(bad));
   }
 });
@@ -36,15 +36,15 @@ test('merged, closed and open are told apart the way GitHub reports them', () =>
 
 test('a merged PR comes back with the time it was merged', async () => {
   const fetchImpl = fakeFetch({ state: 'closed', merged: true, merged_at: '2026-09-06T10:00:00Z' });
-  const r = await prState('https://github.com/jmwind/issue-herd/pull/23', { token: 'tok', fetchImpl });
-  assert.deepEqual(r, { state: 'merged', mergedAt: '2026-09-06T10:00:00Z', number: 23, url: 'https://github.com/jmwind/issue-herd/pull/23', headSha: null, baseRef: null, conflicts: null });
-  assert.equal(fetchImpl.calls[0].url, 'https://api.github.com/repos/jmwind/issue-herd/pulls/23');
+  const r = await prState('https://github.com/jmwind/weawr/pull/23', { token: 'tok', fetchImpl });
+  assert.deepEqual(r, { state: 'merged', mergedAt: '2026-09-06T10:00:00Z', number: 23, url: 'https://github.com/jmwind/weawr/pull/23', headSha: null, baseRef: null, conflicts: null });
+  assert.equal(fetchImpl.calls[0].url, 'https://api.github.com/repos/jmwind/weawr/pulls/23');
   assert.equal(fetchImpl.calls[0].headers.authorization, 'Bearer tok');
 });
 
 test('no token is not an error — public repositories answer anyway', async () => {
   const fetchImpl = fakeFetch({ state: 'open' });
-  const r = await prState('https://github.com/jmwind/issue-herd/pull/23', { fetchImpl });
+  const r = await prState('https://github.com/jmwind/weawr/pull/23', { fetchImpl });
   assert.equal(r.state, 'open');
   assert.equal('authorization' in fetchImpl.calls[0].headers, false);
 });
@@ -54,7 +54,7 @@ test('a PR on a host this machine does not trust is refused, not fetched', async
   // Authorization header goes.
   const fetchImpl = fakeFetch({ state: 'closed', merged: true });
   await assert.rejects(
-    () => prState('https://github.com.evil.example/jmwind/issue-herd/pull/23', { token: 'tok', fetchImpl }),
+    () => prState('https://github.com.evil.example/jmwind/weawr/pull/23', { token: 'tok', fetchImpl }),
     /is not the GitHub host this machine trusts/);
   assert.equal(fetchImpl.calls.length, 0, 'nothing was sent');
 });
@@ -112,8 +112,8 @@ test('conflicts are GitHub\'s "dirty"; "blocked", "behind" and "unstable" are cl
 
 test('an open PR comes back with its head, base and whether it conflicts', async () => {
   const fetchImpl = fakeFetch({ state: 'open', merged: false, mergeable: false, mergeable_state: 'dirty', head: { sha: 'abc123' }, base: { ref: 'main' } });
-  const r = await prState('https://github.com/jmwind/issue-herd/pull/23', { fetchImpl });
-  assert.deepEqual(r, { state: 'open', mergedAt: null, number: 23, url: 'https://github.com/jmwind/issue-herd/pull/23', headSha: 'abc123', baseRef: 'main', conflicts: true });
+  const r = await prState('https://github.com/jmwind/weawr/pull/23', { fetchImpl });
+  assert.deepEqual(r, { state: 'open', mergedAt: null, number: 23, url: 'https://github.com/jmwind/weawr/pull/23', headSha: 'abc123', baseRef: 'main', conflicts: true });
 });
 
 test('the implementer is told once per conflict, again when the head moves and still conflicts, and forgotten when clean', () => {
@@ -216,8 +216,8 @@ test('dirty → unknown → dirty on one head is one conflict, and a clean read 
 
 
 test('the conflict message says what happened, what to do, and what never to do', () => {
-  const msg = conflictPrompt({ prUrl: 'https://github.com/o/r/pull/9', branch: '9-fix-impl', baseRef: 'main', briefPath: '/wt/.issue-herd/state/runs/GH-9@impl/brief.md' });
-  assert.match(msg, /^issue-herd: your pull request https:\/\/github\.com\/o\/r\/pull\/9 now conflicts with main/);
+  const msg = conflictPrompt({ prUrl: 'https://github.com/o/r/pull/9', branch: '9-fix-impl', baseRef: 'main', briefPath: '/wt/.weawr/state/runs/GH-9@impl/brief.md' });
+  assert.match(msg, /^weawr: your pull request https:\/\/github\.com\/o\/r\/pull\/9 now conflicts with main/);
   assert.match(msg, /git fetch origin main/);
   assert.match(msg, /git merge origin\/main/);
   assert.match(msg, /`9-fix-impl`/);

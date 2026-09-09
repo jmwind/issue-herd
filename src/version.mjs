@@ -1,6 +1,6 @@
 // Update check: compare the installed version with package.json on the repo's main branch.
 
-export const LATEST_URL = 'https://raw.githubusercontent.com/jmwind/issue-herd/main/package.json';
+export const LATEST_URL = 'https://raw.githubusercontent.com/jmwind/weawr/main/package.json';
 
 /** Numeric semver compare on "x.y.z" (pre-release tags ignored). Returns <0, 0, >0. */
 export function compareVersions(a, b) {
@@ -15,7 +15,7 @@ export function compareVersions(a, b) {
  * Never throws and never takes longer than `timeoutMs`; offline just means null.
  */
 export async function newerVersion(current, { url = LATEST_URL, timeoutMs = 4000, fetchImpl = fetch } = {}) {
-  if (process.env.ISSUE_HERD_NO_UPDATE_CHECK) return null;
+  if (process.env.WEAWR_NO_UPDATE_CHECK) return null;
   try {
     const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs), headers: { 'cache-control': 'no-cache' } });
     if (!res.ok) return null;

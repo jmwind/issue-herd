@@ -1,4 +1,4 @@
-// The CLI as a process, in a throwaway repository. bin/issue-herd.mjs runs main() on import, so the
+// The CLI as a process, in a throwaway repository. bin/weawr.mjs runs main() on import, so the
 // guards that live there — what a repository's config and .env are allowed to do — can only be
 // tested this way. These are the checks that stop a repository you cloned from stealing your token,
 // so they are worth the cost of a subprocess.
@@ -10,11 +10,11 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const BIN = fileURLToPath(new URL('../bin/issue-herd.mjs', import.meta.url));
+const BIN = fileURLToPath(new URL('../bin/weawr.mjs', import.meta.url));
 
 /** A git repository with the given files, cleaned up when the test ends. */
 function repo(t, files) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-cli-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-cli-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q', dir]);
   for (const [name, body] of Object.entries(files)) {
@@ -29,7 +29,7 @@ function repo(t, files) {
 function run(dir, args, env = {}) {
   const r = spawnSync(process.execPath, [BIN, ...args], {
     cwd: dir, encoding: 'utf8',
-    env: { ...process.env, ISSUE_HERD_NO_UPDATE_CHECK: '1', ...env },
+    env: { ...process.env, WEAWR_NO_UPDATE_CHECK: '1', ...env },
   });
   return { status: r.status ?? 1, out: `${r.stdout || ''}${r.stderr || ''}` };
 }
@@ -39,52 +39,52 @@ const config = (extra = {}) => JSON.stringify({ tracker: 'linear', rules: [{ nam
 test('a repository .env cannot move where credentials are read and written', (t) => {
   // Reproduced before the fix: `logout` reported the path the repository chose. .env is committed,
   // so honouring it would let a clone redirect a freshly minted token into its own working tree.
-  const dir = repo(t, { '.issue-herd/config.json': config(), '.env': 'ISSUE_HERD_CREDENTIALS=./stolen.json\nLINEAR_API_KEY=lin_api_fromenv\n' });
+  const dir = repo(t, { '.weawr/config.json': config(), '.env': 'WEAWR_CREDENTIALS=./stolen.json\nLINEAR_API_KEY=lin_api_fromenv\n' });
   const mine = path.join(dir, 'mine.json');
-  const r = run(dir, ['logout', 'linear'], { ISSUE_HERD_CREDENTIALS: mine });
+  const r = run(dir, ['logout', 'linear'], { WEAWR_CREDENTIALS: mine });
   assert.equal(r.status, 0);
   assert.match(r.out, /mine\.json/);
   assert.doesNotMatch(r.out, /stolen\.json/);
-  assert.match(r.out, /ignoring ISSUE_HERD_CREDENTIALS/);
+  assert.match(r.out, /ignoring WEAWR_CREDENTIALS/);
 });
 
 test('a repository .env still supplies the tracker token, which is what it is for', (t) => {
-  const dir = repo(t, { '.issue-herd/config.json': config(), '.env': 'LINEAR_API_KEY=lin_api_fromenv\n' });
+  const dir = repo(t, { '.weawr/config.json': config(), '.env': 'LINEAR_API_KEY=lin_api_fromenv\n' });
   // `match` gets as far as calling Linear, which fails on the fake key — proof the key was read.
   const r = run(dir, ['match', 'any:true']);
   assert.match(r.out, /Linear HTTP 4\d\d|fetch failed/);
   assert.doesNotMatch(r.out, /no Linear credentials/);
 });
 
-test('a config cannot read a file outside .issue-herd into the agent brief', (t) => {
-  // `"instructionsFile": "~/.config/issue-herd/credentials.json"` used to resolve and be pasted
+test('a config cannot read a file outside .weawr into the agent brief', (t) => {
+  // `"instructionsFile": "~/.config/weawr/credentials.json"` used to resolve and be pasted
   // into brief.md, inside the working tree the unattended agent commits from.
   for (const bad of ['/etc/hosts', '../../secrets.txt', '../.git/config']) {
-    const dir = repo(t, { '.issue-herd/config.json': config({ defaults: { instructionsFile: bad } }) });
+    const dir = repo(t, { '.weawr/config.json': config({ defaults: { instructionsFile: bad } }) });
     const r = run(dir, ['status']);
     assert.equal(r.status, 1, bad);
-    assert.match(r.out, /must stay inside \.issue-herd/, bad);
+    assert.match(r.out, /must stay inside \.weawr/, bad);
   }
 });
 
 test('a leading ~ is a directory name, not the home directory', (t) => {
-  // The interesting half of the same guard: "~/.config/issue-herd/credentials.json" resolves to a
-  // literal "~" folder under .issue-herd/, so it reads nothing and the run carries on with no
+  // The interesting half of the same guard: "~/.config/weawr/credentials.json" resolves to a
+  // literal "~" folder under .weawr/, so it reads nothing and the run carries on with no
   // instructions — rather than pasting the real credentials file into the brief.
-  const dir = repo(t, { '.issue-herd/config.json': config({ defaults: { instructionsFile: '~/.config/issue-herd/credentials.json' } }) });
+  const dir = repo(t, { '.weawr/config.json': config({ defaults: { instructionsFile: '~/.config/weawr/credentials.json' } }) });
   const r = run(dir, ['status']);
   assert.equal(r.status, 0);
   assert.doesNotMatch(r.out, /token/i);
 });
 
-test('a config path inside .issue-herd is still fine', (t) => {
-  const dir = repo(t, { '.issue-herd/config.json': config(), '.issue-herd/instructions.md': 'be careful\n' });
+test('a config path inside .weawr is still fine', (t) => {
+  const dir = repo(t, { '.weawr/config.json': config(), '.weawr/instructions.md': 'be careful\n' });
   assert.equal(run(dir, ['status']).status, 0);
 });
 
 test('a tracker name that is an Object property is not a tracker', (t) => {
   for (const bad of ['constructor', '__proto__', 'toString']) {
-    const dir = repo(t, { '.issue-herd/config.json': config({ tracker: bad }) });
+    const dir = repo(t, { '.weawr/config.json': config({ tracker: bad }) });
     const r = run(dir, ['status']);
     assert.equal(r.status, 1, bad);
     assert.match(r.out, /unknown tracker/, bad);
@@ -118,7 +118,7 @@ test('init warns when the .env.local it just recommended would be committed', (t
 });
 
 test('a role that could not be a label, a branch and a directory is refused by name', (t) => {
-  const dir = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: [{ name: 'rev', match: 'any:true', role: 'code review' }] }) });
+  const dir = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', rules: [{ name: 'rev', match: 'any:true', role: 'code review' }] }) });
   const r = run(dir, ['status']);
   assert.equal(r.status, 1);
   assert.match(r.out, /rule "rev": role "code review"/);
@@ -130,22 +130,22 @@ test('two roles pointed at one branch template fail at load, not on the second p
     { name: 'impl', match: 'label:ai', role: 'impl' },
     { name: 'rev', match: 'label:ai', role: 'review' },
   ];
-  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', defaults: { branch: '{{issueBranchName}}' }, rules }) });
+  const bad = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', defaults: { branch: '{{issueBranchName}}' }, rules }) });
   const r = run(bad, ['status']);
   assert.equal(r.status, 1);
   assert.match(r.out, /both work on branch/);
   // the default template names the role, so the same two rules are fine on it
-  const ok = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules }) });
+  const ok = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', rules }) });
   assert.equal(run(ok, ['status']).status, 0);
 });
 
 test('"roles" switches roles on and off for the project without deleting the rules', (t) => {
   const rules = [{ name: 'impl', match: 'label:ai', role: 'impl' }, { name: 'rev', match: 'label:ai', role: 'review' }];
-  const dir = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', roles: ['impl'], rules }) });
+  const dir = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', roles: ['impl'], rules }) });
   // `match` reaches the tracker, so the config was accepted and the disabled rule is still a rule.
   const r = run(dir, ['match', 'any:true'], { LINEAR_API_KEY: 'lin_api_nope' });
   assert.match(r.out, /Linear HTTP 4\d\d|fetch failed/);
-  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', roles: 'impl', rules }) });
+  const bad = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', roles: 'impl', rules }) });
   assert.match(run(bad, ['status']).out, /"roles" must be an array/);
 });
 
@@ -157,17 +157,17 @@ test('reset by issue key forgets every role\'s run on it; by run key, only that 
     'GH-70': { rule: 'r', status: 'done', startedAt: '2026-01-01T00:00', title: 'b' },
   };
   const state = () => JSON.stringify({ runs });
-  const one = repo(t, { '.issue-herd/config.json': config(), '.issue-herd/state/state.json': state() });
+  const one = repo(t, { '.weawr/config.json': config(), '.weawr/state/state.json': state() });
   const r = run(one, ['reset', 'GH-7@review']);
   assert.match(r.out, /forgot GH-7@review/);
-  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(one, '.issue-herd/state/state.json'), 'utf8')).runs).sort(),
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(one, '.weawr/state/state.json'), 'utf8')).runs).sort(),
     ['GH-7', 'GH-70', 'GH-7@impl']);
 
-  const all = repo(t, { '.issue-herd/config.json': config(), '.issue-herd/state/state.json': state() });
+  const all = repo(t, { '.weawr/config.json': config(), '.weawr/state/state.json': state() });
   const r2 = run(all, ['reset', 'GH-7']);
   assert.match(r2.out, /forgot GH-7, GH-7@review, GH-7@impl/);
   // GH-70 is a different issue, not a role of GH-7
-  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(all, '.issue-herd/state/state.json'), 'utf8')).runs), ['GH-70']);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(all, '.weawr/state/state.json'), 'utf8')).runs), ['GH-70']);
 
   assert.match(run(all, ['reset', 'GH-9']).out, /no run called GH-9/);
 });
@@ -177,28 +177,28 @@ test('"basedOn" names another role, checked at config load', (t) => {
     { name: 'impl', match: 'label:ai', role: 'impl' },
     { name: 'rev', match: 'label:ai', role: 'review', basedOn },
   ];
-  const ok = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('impl') }) });
+  const ok = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', rules: rules('impl') }) });
   assert.equal(run(ok, ['status']).status, 0);
 
-  const bad = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('code review') }) });
+  const bad = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', rules: rules('code review') }) });
   assert.match(run(bad, ['status']).out, /rule "rev" \("basedOn"\): role "code review"/);
 
   // a worktree cannot start from itself
-  const self = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('review') }) });
+  const self = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', rules: rules('review') }) });
   assert.match(run(self, ['status']).out, /"basedOn" is its own role/);
 
   // and it cannot start from a role no rule runs — that reviewer would silently get main
-  const missing = repo(t, { '.issue-herd/config.json': JSON.stringify({ tracker: 'linear', rules: rules('implementer') }) });
+  const missing = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', rules: rules('implementer') }) });
   assert.match(run(missing, ['status']).out, /no rule has as its "role"/);
 });
 
-test('"basedOn" is refused where issue-herd does not make the worktree', (t) => {
+test('"basedOn" is refused where weawr does not make the worktree', (t) => {
   // It can only decide where a worktree starts if it is the one creating it. Accepted quietly in
   // the other modes, it would give you a reviewer on the default branch and a config saying
   // otherwise — the config is wrong, and this is the only moment that is cheap to say so.
   for (const mode of ['herdr', 'none']) {
     const dir = repo(t, {
-      '.issue-herd/config.json': JSON.stringify({
+      '.weawr/config.json': JSON.stringify({
         tracker: 'linear',
         rules: [{ name: 'impl', match: 'label:ai', role: 'impl' },
           { name: 'rev', match: 'label:ai', role: 'review', basedOn: 'impl', worktree: mode }],
@@ -211,17 +211,17 @@ test('"basedOn" is refused where issue-herd does not make the worktree', (t) => 
 });
 
 test('"maxNudges" is checked at config load, and 0 is how nudging is turned off', (t) => {
-  const bad = repo(t, { '.issue-herd/config.json': config({ maxNudges: -2 }) });
+  const bad = repo(t, { '.weawr/config.json': config({ maxNudges: -2 }) });
   const r = run(bad, ['status']);
   assert.equal(r.status, 1);
   assert.match(r.out, /"maxNudges" must be a whole number of 0 or more \(0 turns nudging off\), not -2/);
-  const off = repo(t, { '.issue-herd/config.json': config({ maxNudges: 0 }) });
+  const off = repo(t, { '.weawr/config.json': config({ maxNudges: 0 }) });
   assert.equal(run(off, ['status']).status, 0);
 });
 
 test('reset by issue key hands the issue\'s nudge budget back too', (t) => {
-  const dir = repo(t, { '.issue-herd/config.json': config() });
-  const statePath = path.join(dir, '.issue-herd', 'state', 'state.json');
+  const dir = repo(t, { '.weawr/config.json': config() });
+  const statePath = path.join(dir, '.weawr', 'state', 'state.json');
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   const runOn = (key) => ({ rule: 'r', role: 'impl', status: 'done', startedAt: '2026-01-01T00:00:00.000Z', issueKey: key });
   fs.writeFileSync(statePath, JSON.stringify({

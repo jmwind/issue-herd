@@ -182,7 +182,7 @@
       x.issues.forEach(function (i) { if (i.bucket === 'inflight') inflight.push([x, i]); else if (!byTask[i.key]) (i.bucket === 'merged' ? merged : done).push([x, i]); });
     });
     var body = '';
-    if (!factories().length) body += '<div class="empty">No factory has reported yet. Start a watcher with <b>issue-herd</b> in a repository, and it appears here on its first poll.</div>';
+    if (!factories().length) body += '<div class="empty">No factory has reported yet. Start a watcher with <b>weawr</b> in a repository, and it appears here on its first poll.</div>';
     else body += fs.map(factoryCard).join('') + legend();
     body += section('<i class="led ' + (alerts.length ? 'red' : '') + ' still"></i>Alerts', alerts.length, alerts.length ? '<div class="inset pane">' + alerts.map(function (p) { return taskCard(p[0], p[1], p[2], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing needs you. The factory is running by itself.</div></div>', { hot: alerts.length });
     body += section('Assembling', inflight.length, inflight.length ? '<div class="inset pane">' + inflight.map(function (p) { return row(p[0], p[1], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">No issue in flight.</div></div>');
@@ -236,7 +236,7 @@
     var fs = factories();
     var head = titlebar(picker(fs.length ? 'All factories' : 'No factories'), sheet ? pickerSheet() : '');
     var body = '';
-    if (!fs.length) body = '<div class="empty">No factory has reported yet. Start a watcher with <b>issue-herd</b> in a repository, and it appears here on its first poll.</div>';
+    if (!fs.length) body = '<div class="empty">No factory has reported yet. Start a watcher with <b>weawr</b> in a repository, and it appears here on its first poll.</div>';
     else body = '<div class="plants">' + fs.map(function (f, i) { return (i ? link(fs[i - 1], f) : '') + plant(f); }).join('') + '</div>';
     var wait = fs.reduce(function (s, x) { return s + x.humanWaitMs; }, 0), running = fs.reduce(function (s, x) { return s + x.counts.running; }, 0);
     body += '<div class="foot"><span>' + fs.length + ' factor' + (fs.length === 1 ? 'y' : 'ies') + ' on ' + esc(document.body.dataset.hostname) + ' · ' + running + ' running · you were waited on for <b>' + dur(wait) + '</b> in total</span></div>';
@@ -253,7 +253,7 @@
     opts = '<button class="opt' + (!chosen ? ' on' : '') + '" data-choose="all"><i class="led green still"></i><span class="n">All factories</span><span class="c"><span class="pill">' + factories().reduce(function (s, f) { return s + f.counts.inflight; }, 0) + ' assembling</span></span><span class="m">every factory on ' + esc(document.body.dataset.hostname) + '</span></button>' + opts;
     // The chosen factory's rules live at the top of the overview now; the picker is for choosing.
     var f = current(), about = '';
-    if (f) about = '<div class="pane"><div class="acts"><span class="pill">' + (f.watcher.version ? 'issue-herd ' + esc(f.watcher.version) : 'version unknown') + '</span>' + (f.watcher.workspaceId ? '<span class="pill">workspace ' + esc(f.watcher.workspaceId) + '</span>' : '') + '</div></div>';
+    if (f) about = '<div class="pane"><div class="acts"><span class="pill">' + (f.watcher.version ? 'weawr ' + esc(f.watcher.version) : 'version unknown') + '</span>' + (f.watcher.workspaceId ? '<span class="pill">workspace ' + esc(f.watcher.workspaceId) + '</span>' : '') + '</div></div>';
     var lock = document.body.dataset.gated === 'true' ? '<div class="pane"><button class="btn" id="lockbtn">Lock the console</button></div>' : '';
     return '<div class="sheet" role="dialog" aria-label="Factories"><div class="titlebar"><h1>Factories on ' + esc(document.body.dataset.hostname) + '</h1><span class="drag"></span><button class="tbtn red" id="closesheet" aria-label="close">✕</button></div><div class="pane">' + opts + '</div>' + about + lock + '</div>';
   }

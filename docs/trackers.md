@@ -16,7 +16,7 @@ in; name it explicitly with `{ "type": "github", "repo": "owner/name" }`. Issues
 (change the prefix with `"prefix"`), referenced as `#7` in PR text so `Fixes #7` closes them, and
 the default branch is `7-fix-the-thing`. Mapping:
 
-- `team` is the repository (`team:issue-herd`) and `project` is the milestone.
+- `team` is the repository (`team:weawr`) and `project` is the milestone.
 - `state` is `open` or `closed`. There are no workflow states, so `init` sets `onPickup.state` and
   `onDone.state` to `null`. Any other state name is **refused**, with an error naming what GitHub
   has: it will not invent a label or close your issue on a guess.
@@ -28,11 +28,11 @@ the default branch is `7-fix-the-thing`. Mapping:
   every assignee is you.
 - The claim label is created if missing. Pull requests are never treated as issues.
 
-For GitHub Enterprise, set `ISSUE_HERD_GITHUB_HOST=ghe.corp.com` in your shell. That is deliberately
+For GitHub Enterprise, set `WEAWR_GITHUB_HOST=ghe.corp.com` in your shell. That is deliberately
 a machine setting rather than a config key: `config.json` is committed, and this value decides where
 your token is sent, so a repository you clone may *name* the host it expects but not introduce one.
-For the same reason a repository's `.env` cannot set any `ISSUE_HERD_*` variable, and `prompt` and
-`instructionsFile` must point inside `.issue-herd/`.
+For the same reason a repository's `.env` cannot set any `WEAWR_*` variable, and `prompt` and
+`instructionsFile` must point inside `.weawr/`.
 
 **Adding a tracker** is one file. Write `src/trackers/<name>.mjs` against the contract documented
 at the top of [`src/tracker.mjs`](../src/tracker.mjs) — a class with `me`, `openIssues`,
@@ -44,9 +44,9 @@ contract; `checkIssue()` tells a new tracker exactly which field it got wrong.
 
 ## Signing in
 
-`issue-herd login [linear|github]` obtains a token, proves it works with a `me` call, and saves it
-in `~/.config/issue-herd/credentials.json` (mode 600). Runs before `init` too, when the tracker is
-named. `issue-herd logout` forgets it. At startup the banner says which account is in use and where
+`weawr login [linear|github]` obtains a token, proves it works with a `me` call, and saves it
+in `~/.config/weawr/credentials.json` (mode 600). Runs before `init` too, when the tracker is
+named. `weawr logout` forgets it. At startup the banner says which account is in use and where
 the token came from. Lookup order:
 
 1. the environment: `LINEAR_API_KEY`, or `GITHUB_TOKEN` / `GH_TOKEN`, read from the process, then
@@ -72,9 +72,9 @@ id in the code (no secret: PKCE for Linear, device flow for GitHub). Maintainers
 then set `LINEAR_CLIENT_ID` in `src/trackers/linear.mjs` (Linear → Settings → API → OAuth
 applications, callback `http://localhost:8497/callback`, public client) and `GITHUB_CLIENT_ID` in
 `src/trackers/github.mjs` (GitHub → Settings → Developer settings → OAuth Apps, enable device flow).
-Until then the same flows can be tried with the `ISSUE_HERD_LINEAR_CLIENT_ID` and
-`ISSUE_HERD_GITHUB_CLIENT_ID` environment variables, or per repository with a `clientId` in the
-tracker object. `ISSUE_HERD_OAUTH_PORT` moves the loopback port, `ISSUE_HERD_CREDENTIALS` the
-credentials file, and `ISSUE_HERD_GITHUB_HOST` names a GitHub Enterprise host. All of these are read
+Until then the same flows can be tried with the `WEAWR_LINEAR_CLIENT_ID` and
+`WEAWR_GITHUB_CLIENT_ID` environment variables, or per repository with a `clientId` in the
+tracker object. `WEAWR_OAUTH_PORT` moves the loopback port, `WEAWR_CREDENTIALS` the
+credentials file, and `WEAWR_GITHUB_HOST` names a GitHub Enterprise host. All of these are read
 from your shell only, never from a repository's `.env`.
 

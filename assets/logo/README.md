@@ -1,54 +1,59 @@
 # The mark
 
-<img src="png/lockup.png#gh-light-mode-only" width="300"><img src="png/lockup-dark.png#gh-dark-mode-only" width="300">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="weawr-logo-reverse.svg">
+  <img src="weawr-logo.svg" alt="weawr" width="300">
+</picture>
 
-An **`H` branded with an arrow**. Two posts, and the crossbar is an arrow that runs left to right
-and lands on the far post.
+**weawr**, pronounced *weaver*, spelled exactly like that: lower case, always. The symbol is
+**four rounded blocks with a diagonal opening cut through them**, the colours alternating forest
+and lime around the square. The wordmark is heavy, lower case and set tight; it is drawn artwork,
+not a typeface.
 
-It is three things in one picture: the herd `H`, the stamp a line puts on every unit that clears
-QC, and the iron a rancher puts on an animal. It also states the product in one stroke — work goes
-in one side and comes out the other. Picked over two alternatives in
-[#29](https://github.com/jmwind/issue-herd/issues/29), where the runners-up and the reasoning are
-on the record.
-
-It stays off everything the software-factory space has converged on — gears, droid faces,
-smokestacks, hex grids, gradient blobs, angular industrial wordmarks. The side of the metaphor we
-take is the **stockyard**: pens, gates, brands, units moving through in order. We already own that
-side by name.
+The design language, the app icon, the reference boards and the motion versions came in the
+designer's handoff on [#69](https://github.com/jmwind/weawr/issues/69)
+(`weawr-designer-handoff.zip`); this directory holds the parts the repository uses. The rename from
+issue-herd was [#71](https://github.com/jmwind/weawr/issues/71).
 
 ## Files
 
 | File | What it is |
 | --- | --- |
-| `mark.svg` | the mark alone, on a 96-unit grid — favicons, avatars, anywhere square |
-| `lockup.svg` | mark + `issue-herd` wordmark |
-| `png/mark.png`, `png/mark-dark.png` | 512×512, transparent |
-| `png/lockup.png`, `png/lockup-dark.png` | 1328×384, transparent |
+| `weawr-mark.svg` | the symbol alone, forest and lime, for light grounds — anywhere square |
+| `weawr-mark-reverse.svg` | the symbol for dark grounds: a lighter green stands in for forest, lime stays |
+| `weawr-logo.svg` | symbol + wordmark, forest and lime, for light grounds — what the README shows |
+| `weawr-logo-reverse.svg` | symbol + wordmark in chalk and lime, for dark grounds |
+| `weawr-logo-monochrome.svg` | symbol + wordmark in one colour |
+| `../icons/` | the favicon set: `favicon.svg`, `favicon.ico` (16–256), PNGs at 16/32/48, `apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, `site.webmanifest` — the symbol on a dark rounded tile |
+| `../brand/tokens.css` | the palette as CSS custom properties |
 
-Use the `-dark` PNGs on dark backgrounds. The SVGs do it themselves: they carry a
-`prefers-color-scheme` rule, with the light-mode colour left on the element as a presentation
-attribute so a renderer that strips `<style>` still gets a visible mark rather than an invisible
-one.
+Every SVG is paths only, wordmark included, so nothing depends on a font being installed and any
+of them can be inlined. The console inlines `weawr-mark-reverse.svg` into its title bar and serves
+`../icons/` as its favicon; the rest of the console is not themed yet.
 
 ## Colour
 
-| Token | Light | Dark |
+| Token | Hex | Where |
 | --- | --- | --- |
-| ink | `#141210` | `#F6F2ED` |
-| ember | `#C2521A` | `#C2521A` |
+| forest | `#104B32` | two of the blocks, and the wordmark on light grounds |
+| lime | `#B5EB00` | the other two blocks; the accent everywhere |
+| ink | `#10251B` | the tile behind the favicon; text on light grounds |
+| chalk | `#F5F7EF` | the wordmark on dark grounds; the light ground itself |
+| icon green | `#72A98A` | forest's stand-in on dark grounds: the reverse mark, the favicon |
 
-Ember is a hot-iron orange, not a tech blue, and it is on the one element in the mark that is
-*doing* something. The mark also works flat, in one colour, either way round.
+The site colours (`--weawr-site-background`, `--weawr-site-text`, `--weawr-muted`, `--weawr-rule`)
+are in `tokens.css` for when the console gets its theme; nothing reads them yet.
 
-## Drawing rules
+## Rules
 
-- 96-unit grid, 12-unit stroke, round caps and joins. Keep the two posts at `x=24` and `x=72`.
-- Never re-colour the posts and the arrow the same when both are visible; the arrow is what moves.
-- Below 16px, drop the arrowhead before you drop anything else.
+- Keep the four-block shape, the diagonal opening, the alternating colours and the lower-case name.
+- Clear space of at least one block's width on every side.
+- Small sizes get the symbol alone; below that, the favicon set (the symbol on a tile).
+- Dark ground, reverse files; light ground, plain files. Never colour the blocks all the same.
 
 ## Still open
 
-The wordmark in `lockup.svg` is live text (Inter, falling back to the system UI stack), so it
-renders differently depending on what the viewer has installed. The PNGs are a fixed render and are
-what the README uses. Before this goes anywhere public — a site, a package page, printed anything —
-set the wordmark in a licensed face and convert it to outlines.
+The vectors were traced from the approved raster concept; a designer may still refine curves,
+optical spacing and small-size detail. The motion versions — a six-second assembly and a rotating
+wheel, GIF and MP4 — use the raster and should be rebuilt from these paths before they go anywhere
+public. They are in the handoff, not here.

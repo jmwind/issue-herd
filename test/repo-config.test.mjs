@@ -1,4 +1,4 @@
-// issue-herd works its own issues, so this repository's `.issue-herd/config.json` is both the
+// weawr works its own issues, so this repository's `.weawr/config.json` is both the
 // dogfood and an example other projects copy. Nothing else in the suite reads the committed
 // config: a rule pointing at a prompt that was renamed, or a role missing from "roles", would be
 // found by the watcher at 3am and reported as one line in a log nobody is reading.
@@ -10,17 +10,17 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
-const CONFIG_DIR = path.join(REPO, '.issue-herd');
+const CONFIG_DIR = path.join(REPO, '.weawr');
 const cfg = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'config.json'), 'utf8'));
 
-/** What the CLI's expand() does: `.issue-herd/<p>` if it is there, else the package's own copy. */
+/** What the CLI's expand() does: `.weawr/<p>` if it is there, else the package's own copy. */
 const resolve = (p) => [path.join(CONFIG_DIR, p), path.join(REPO, p)].find((f) => fs.existsSync(f)) || null;
 
 test('the config this repository runs on itself loads', () => {
   // `status` is the cheapest command that builds the whole config: it validates every rule, both
   // role guards and every prompt path, and touches no tracker.
-  const r = spawnSync(process.execPath, [path.join(REPO, 'bin/issue-herd.mjs'), 'status'], {
-    cwd: REPO, encoding: 'utf8', env: { ...process.env, ISSUE_HERD_NO_UPDATE_CHECK: '1' },
+  const r = spawnSync(process.execPath, [path.join(REPO, 'bin/weawr.mjs'), 'status'], {
+    cwd: REPO, encoding: 'utf8', env: { ...process.env, WEAWR_NO_UPDATE_CHECK: '1' },
   });
   assert.equal(r.status, 0, `${r.stdout || ''}${r.stderr || ''}`);
 });

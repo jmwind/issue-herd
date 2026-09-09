@@ -1,4 +1,4 @@
-// Layering of .issue-herd/config.local.json over .issue-herd/config.json.
+// Layering of .weawr/config.local.json over .weawr/config.json.
 //
 // config.json is committed and shared; config.local.json is gitignored and per machine. The local
 // file has the same shape and overrides field by field:

@@ -2,9 +2,9 @@
 //
 // A tracker's token is looked up in this order (resolveCredential):
 //   1. the environment — the tracker's `auth.env` variables; .env.local / .env are loaded into it first
-//   2. ~/.config/issue-herd/credentials.json (mode 600), written by `issue-herd login`
+//   2. ~/.config/weawr/credentials.json (mode 600), written by `weawr login`
 //   3. the tracker's own fallback, e.g. GitHub reading `gh auth token`
-// `issue-herd login` runs the tracker's static login(ui) — a browser OAuth flow when the tracker
+// `weawr login` runs the tracker's static login(ui) — a browser OAuth flow when the tracker
 // has a client id, otherwise it opens the page where a token is made and asks for it — validates
 // the result and saves it. The flows here are generic; a tracker picks one in a few lines.
 
@@ -19,9 +19,9 @@ import { spawn } from 'node:child_process';
 // ---------------------------------------------------------------- store
 
 export function credentialsPath() {
-  if (process.env.ISSUE_HERD_CREDENTIALS) return process.env.ISSUE_HERD_CREDENTIALS;
+  if (process.env.WEAWR_CREDENTIALS) return process.env.WEAWR_CREDENTIALS;
   const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  return path.join(base, 'issue-herd', 'credentials.json');
+  return path.join(base, 'weawr', 'credentials.json');
 }
 
 /**
@@ -73,7 +73,7 @@ export function resolveCredential(Tracker, { env = process.env, file = credentia
 
 export function noCredentialError(Tracker) {
   const env = [].concat(Tracker.auth?.env || []);
-  return new Error(`no ${Tracker.label} credentials. Run \`issue-herd login ${Tracker.id}\`${env.length ? `, or put ${env[0]} in the repository's .env.local` : ''}${Tracker.auth?.hint ? ` (${Tracker.auth.hint})` : ''}`);
+  return new Error(`no ${Tracker.label} credentials. Run \`weawr login ${Tracker.id}\`${env.length ? `, or put ${env[0]} in the repository's .env.local` : ''}${Tracker.auth?.hint ? ` (${Tracker.auth.hint})` : ''}`);
 }
 
 // ---------------------------------------------------------------- talking to the person
@@ -133,12 +133,12 @@ export function pkce() {
   return { verifier, challenge, method: 'S256' };
 }
 
-export const OAUTH_PORT = Number(process.env.ISSUE_HERD_OAUTH_PORT) || 8497;
+export const OAUTH_PORT = Number(process.env.WEAWR_OAUTH_PORT) || 8497;
 
 /** Escaped: `msg` can carry an `error_description` the provider (or any page that can reach the
  *  loopback port while a sign-in is open) chose, and this is served as HTML on localhost. */
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const DONE_PAGE = (msg) => `<!doctype html><meta charset="utf-8"><title>issue-herd</title><body style="font:16px system-ui;padding:3rem"><h2>issue-herd</h2><p>${esc(msg)}</p></body>`;
+const DONE_PAGE = (msg) => `<!doctype html><meta charset="utf-8"><title>weawr</title><body style="font:16px system-ui;padding:3rem"><h2>weawr</h2><p>${esc(msg)}</p></body>`;
 
 /**
  * Authorization-code flow with a loopback redirect: start a local server on `port`, send the
@@ -173,7 +173,7 @@ export async function oauthCodeFlow({ authorizeUrl, tokenUrl, clientId, clientSe
       // the person declined does end it.
       const refuse = (msg) => { res.writeHead(400, { 'content-type': 'text/html' }); res.end(DONE_PAGE(msg)); };
       if (u.searchParams.get('error')) { const msg = `${u.searchParams.get('error')}: ${u.searchParams.get('error_description') || ''}`; refuse(msg); return finish(new Error(msg)); }
-      if (u.searchParams.get('state') !== state) return refuse('This is not the sign-in issue-herd is waiting for (state mismatch). Go back to the terminal and try again.');
+      if (u.searchParams.get('state') !== state) return refuse('This is not the sign-in weawr is waiting for (state mismatch). Go back to the terminal and try again.');
       const c = u.searchParams.get('code');
       if (!c) return refuse('No code in the redirect.');
       res.writeHead(200, { 'content-type': 'text/html' }); res.end(DONE_PAGE('Signed in. You can close this tab and go back to the terminal.'));
@@ -188,7 +188,7 @@ export async function oauthCodeFlow({ authorizeUrl, tokenUrl, clientId, clientSe
       // resolve "localhost" to either, so a squatter on the other address would receive the code.
       // A machine with no IPv6 at all (EADDRNOTAVAIL / EAFNOSUPPORT) is fine and common.
       s.on('error', (e) => {
-        if (host === '127.0.0.1' || e.code === 'EADDRINUSE') finish(new Error(`cannot listen on ${host === '::1' ? `[::1]:${port}` : redirectUri}: ${e.message}${e.code === 'EADDRINUSE' ? ' — something else is using that port; close it or set ISSUE_HERD_OAUTH_PORT' : ''}`));
+        if (host === '127.0.0.1' || e.code === 'EADDRINUSE') finish(new Error(`cannot listen on ${host === '::1' ? `[::1]:${port}` : redirectUri}: ${e.message}${e.code === 'EADDRINUSE' ? ' — something else is using that port; close it or set WEAWR_OAUTH_PORT' : ''}`));
       });
       s.listen(port, host, () => { if (++listening === 1) { ui.log(`Opening your browser to sign in (waiting on ${redirectUri})`); ui.open(url.toString()); } });
     }

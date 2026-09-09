@@ -13,7 +13,7 @@ const git = (args, cwd) => {
 
 /** A real repository with one commit, removed when the test ends. */
 function repo(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-wt-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-wt-'));
   t.after(() => {
     try { execFileSync('git', ['worktree', 'prune'], { cwd: dir, stdio: 'ignore' }); } catch { /* going away anyway */ }
     fs.rmSync(dir, { recursive: true, force: true });
@@ -31,14 +31,14 @@ test('the worktree exists on the branch we asked for, before anything else runs'
   const r = repo(t);
   const made = makeWorktree({ git, repo: r, slug: 'gh-7-fix-the-thing', branch: 'jml/gh-7-fix-the-thing' });
   assert.equal(made.created, true);
-  assert.equal(made.path, path.join(r, '.issue-herd/worktrees/gh-7-fix-the-thing'));
+  assert.equal(made.path, path.join(r, '.weawr/worktrees/gh-7-fix-the-thing'));
   assert.ok(fs.existsSync(made.path));
   assert.equal(branchAt(made.path), 'jml/gh-7-fix-the-thing');
   assert.equal(branchAt(r), 'main', 'the maintainer\'s own checkout is untouched');
 });
 
 test('a second run for the same issue reuses the directory instead of piling up', (t) => {
-  // `issue-herd reset <KEY>` then another pickup should land in the same place.
+  // `weawr reset <KEY>` then another pickup should land in the same place.
   const r = repo(t);
   const first = makeWorktree({ git, repo: r, slug: 'gh-7', branch: 'jml/gh-7' });
   fs.writeFileSync(path.join(first.path, 'scratch.txt'), 'work in progress');
@@ -80,7 +80,7 @@ test('a branch checked out somewhere else fails loudly rather than silently', (t
 
 test('a directory in the way that is not a worktree is an error, not a surprise', (t) => {
   const r = repo(t);
-  const inTheWay = path.join(r, '.issue-herd/worktrees/gh-4');
+  const inTheWay = path.join(r, '.weawr/worktrees/gh-4');
   fs.mkdirSync(inTheWay, { recursive: true });
   fs.writeFileSync(path.join(inTheWay, 'somebody-elses.txt'), 'x');
   assert.throws(() => makeWorktree({ git, repo: r, slug: 'gh-4', branch: 'herd/gh-4' }), /is not a worktree of this repository/);
@@ -88,10 +88,10 @@ test('a directory in the way that is not a worktree is an error, not a surprise'
 
 test('worktreeDir cannot point outside the repository', () => {
   // config.json is committed, so this is a path a repository you cloned would otherwise choose.
-  for (const bad of ['/tmp/anywhere', '../../elsewhere', '.issue-herd/../../up']) {
+  for (const bad of ['/tmp/anywhere', '../../elsewhere', '.weawr/../../up']) {
     assert.throws(() => worktreeRoot('/repo', bad), /must stay inside the repository/, bad);
   }
-  assert.equal(worktreeRoot('/repo', '.issue-herd/worktrees'), '/repo/.issue-herd/worktrees');
+  assert.equal(worktreeRoot('/repo', '.weawr/worktrees'), '/repo/.weawr/worktrees');
   assert.equal(worktreeRoot('/repo', 'wt'), '/repo/wt');
 });
 
@@ -110,14 +110,14 @@ test('a merged run\'s worktree is handed back, and the branch it was on survives
 });
 
 test('gitignored run state does not stop a worktree from being removed', (t) => {
-  // Every run writes brief.md and result.json into .issue-herd/state/ inside its own worktree.
+  // Every run writes brief.md and result.json into .weawr/state/ inside its own worktree.
   const r = repo(t);
-  fs.writeFileSync(path.join(r, '.gitignore'), '.issue-herd/state/\n.issue-herd/worktrees/\n');
+  fs.writeFileSync(path.join(r, '.gitignore'), '.weawr/state/\n.weawr/worktrees/\n');
   execFileSync('git', ['add', '.gitignore'], { cwd: r });
   execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'ignore state'], { cwd: r });
   const made = makeWorktree({ git, repo: r, slug: 'gh-22', branch: 'herd/gh-22' });
-  fs.mkdirSync(path.join(made.path, '.issue-herd/state/runs/GH-22'), { recursive: true });
-  fs.writeFileSync(path.join(made.path, '.issue-herd/state/runs/GH-22/result.json'), '{"status":"pr_open"}');
+  fs.mkdirSync(path.join(made.path, '.weawr/state/runs/GH-22'), { recursive: true });
+  fs.writeFileSync(path.join(made.path, '.weawr/state/runs/GH-22/result.json'), '{"status":"pr_open"}');
   assert.equal(removeWorktree({ git, repo: r, at: made.path }).removed, true);
 });
 
@@ -255,7 +255,7 @@ test('a worktree put back on an existing branch is not silently left behind', ()
 /** A clone with a real `origin` behind it. Both go away when the test ends. */
 function clone(t) {
   const origin = repo(t);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-clone-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-clone-'));
   t.after(() => {
     try { execFileSync('git', ['worktree', 'prune'], { cwd: dir, stdio: 'ignore' }); } catch { /* going away anyway */ }
     fs.rmSync(dir, { recursive: true, force: true });
