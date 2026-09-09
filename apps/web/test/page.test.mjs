@@ -49,19 +49,25 @@ test('a fixture host that speaks the protocol is all the page needs: the client 
   assert.equal(s.factories[0].name, 'app'); assert.equal(client.last.snapshot.factories[0].revision, 12);
 });
 
-test('two themes ship: the Factorio floor (the default, overriding nothing) and the clean weawr look, scoped to a body attribute', () => {
+test('six themes ship: Factorio (the default, overriding nothing) and five flat palettes, each scoped to its own body attribute', () => {
   const factorio = fs.readFileSync(path.join(SRC, 'themes', 'factorio.css'), 'utf8');
-  const clean = fs.readFileSync(path.join(SRC, 'themes', 'clean.css'), 'utf8');
   assert.ok(!/\{[^}]*:[^}]*\}/.test(factorio.replace(/\/\*[\s\S]*?\*\//g, '')), 'factorio.css declares nothing: the default look is app.css');
-  const rules = clean.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]+\{/g).map((r) => r.trim());
-  assert.ok(rules.length > 20);
-  for (const r of rules) if (!/^@media/.test(r)) assert.ok(r.split(',').every((sel) => /^\s*body\[data-theme="clean"\]/.test(sel)), `not scoped: ${r}`);
-  assert.match(clean, /--weawr|#104B32|#B5EB00|#F5F7EF/i, 'the brand palette');
+  const names = ['clean', 'linear', 'github', 'tokyo-night', 'solarized-light'];
+  for (const name of names) {
+    const css = fs.readFileSync(path.join(SRC, 'themes', `${name}.css`), 'utf8');
+    const rules = css.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]+\{/g).map((r) => r.trim());
+    assert.ok(rules.length >= 1, name);
+    for (const r of rules) if (!/^@media/.test(r)) assert.ok(r.split(',').every((sel) => new RegExp(`^\\s*body\\[data-theme="${name}"\\]`).test(sel)), `${name}: not scoped: ${r}`);
+    assert.match(css, /--ground:/, `${name} sets its palette`);
+    assert.ok(fs.existsSync(path.join(DIST, 'themes', `${name}.css`)), `${name} shipped`);
+  }
+  // the flat structure every non-Factorio theme shares lives in app.css, once
+  const app = fs.readFileSync(path.join(SRC, 'app.css'), 'utf8');
+  assert.match(app, /body\[data-theme\]:not\(\[data-theme="factorio"\]\) \.asm/);
   const js = fs.readFileSync(path.join(SRC, 'app.js'), 'utf8');
-  assert.match(js, /THEMES = \{ factorio: 'Factorio', clean: 'weawr clean' \}/);
+  assert.match(js, /var THEMES = \{ factorio: 'Factorio', clean: 'weawr clean', linear: 'Linear', github: 'GitHub', 'tokyo-night': 'Tokyo Night', 'solarized-light': 'Solarized Light' \}/);
   assert.match(js, /localStorage\.setItem\('weawr-theme'/);
   assert.match(js, /data-theme-pick=/);
   const html = fs.readFileSync(path.join(SRC, 'app.html'), 'utf8');
   assert.match(html, /id="theme-css"/); assert.match(html, /data-theme="\{\{theme\}\}"/);
-  for (const f of ['themes/factorio.css', 'themes/clean.css']) assert.ok(fs.existsSync(path.join(DIST, f)), f);
 });

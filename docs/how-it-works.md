@@ -228,11 +228,15 @@ the page never starts anything because you looked at it. Killing `weawr serve` s
 starting it again restores the view. When the page's link to weawr is down, the title bar says how
 old what you see is.
 
-Two looks ship. **Factorio** is the default — the floor as it has always been. **weawr clean** is
-the brand's own palette, flat and quiet, with the machinery gone and the facts kept, in light or
-dark with the system. Pick one from the factories sheet (the picker in the title bar); it is
-remembered per browser. `weawr console --theme clean` (or `WEAWR_CONSOLE_THEME`) sets what a
-browser gets before it has chosen, and `?theme=clean` on the URL picks one for that visit.
+Six looks ship. **Factorio** is the default — the floor as it has always been. The other five
+are flat: the machinery gone, the facts and the lights kept. **weawr clean** is the brand's own
+palette (light or dark with the system); **Linear** and **GitHub** borrow those apps' looks
+(Linear dark by default, GitHub light, each following the system); **Tokyo Night** and
+**Solarized Light** are the VS Code themes. Pick one from the factories sheet (the picker in the
+title bar); it is remembered per browser. `weawr console --theme <name>` (or
+`WEAWR_CONSOLE_THEME`) sets what a browser gets before it has chosen, and `?theme=<name>` on the
+URL picks one for that visit. A theme is one CSS file in `apps/web/src/themes/` that sets the
+palette; adding one is a file, a name in the page's list, and a name in `THEMES` in the transport.
 
 Every action is a command with a request id: a tap that loses its answer can be sent again
 without doing the thing twice, and a long action (Mark done shutting several agents down) comes

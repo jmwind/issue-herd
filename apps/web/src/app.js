@@ -13,8 +13,8 @@
   var client = new WeawrClient({ baseUrl: '' });
   // Themes: the Factorio floor (the default) or the clean weawr look. Chosen in the factories
   // sheet or with ?theme=, remembered per browser, served by the host as /themes/<name>.css.
-  var THEMES = { factorio: 'Factorio', clean: 'weawr clean' };
-  function themeOf() { try { var q = /[?&]theme=([a-z]+)/.exec(location.search); if (q && THEMES[q[1]]) return q[1]; var saved = localStorage.getItem('weawr-theme'); if (saved && THEMES[saved]) return saved; } catch (e) {} var d = document.body.dataset.theme; return THEMES[d] ? d : 'factorio'; }
+  var THEMES = { factorio: 'Factorio', clean: 'weawr clean', linear: 'Linear', github: 'GitHub', 'tokyo-night': 'Tokyo Night', 'solarized-light': 'Solarized Light' };
+  function themeOf() { try { var q = /[?&]theme=([a-z-]+)/.exec(location.search); if (q && THEMES[q[1]]) return q[1]; var saved = localStorage.getItem('weawr-theme'); if (saved && THEMES[saved]) return saved; } catch (e) {} var d = document.body.dataset.theme; return THEMES[d] ? d : 'factorio'; }
   function applyTheme(name) { if (!THEMES[name]) name = 'factorio'; document.body.dataset.theme = name; var css = document.getElementById('theme-css'); if (css && css.getAttribute('href') !== '/themes/' + name + '.css') css.setAttribute('href', '/themes/' + name + '.css'); try { localStorage.setItem('weawr-theme', name); } catch (e) {} }
   applyTheme(themeOf());
   // The stream's state: when it is down, everything shown is as old as receivedAt says.

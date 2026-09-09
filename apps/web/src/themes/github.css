@@ -1,0 +1,24 @@
+/* GitHub — Primer: white canvas and a subtle grey one, hairline borders, blue links and actions,
+   green success, red danger, yellow attention, 6px radii. Light by default (GitHub's default);
+   dark with the system. */
+body[data-theme="github"]{
+  --ground:#FFFFFF; --frame:#FFFFFF; --frame-2:#F6F8FA; --inset:#F6F8FA; --inset-2:#FFFFFF;
+  --hi:transparent; --lo:transparent; --edge:transparent; --rule:#D0D7DE; --radius:6px;
+  --text:#1F2328; --muted:#656D76; --dim:#8C959F; --heading:#1F2328;
+  --orange:#1F883D; --orange-2:#0969DA; --on-accent:#FFFFFF; --green:#1A7F37; --green-2:#1F883D; --red:#CF222E; --red-2:#A40E26; --yellow:#9A6700;
+  --led-g:#1A7F37; --led-r:#CF222E; --led-y:#BF8700; --led-x:#AFB8C1;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif;
+  color-scheme:light;background:var(--ground);color:var(--text);
+}
+@media (prefers-color-scheme:dark){
+  body[data-theme="github"]{
+    --ground:#0D1117; --frame:#0D1117; --frame-2:#161B22; --inset:#161B22; --inset-2:#0D1117; --rule:#30363D;
+    --text:#E6EDF3; --muted:#8B949E; --dim:#6E7681; --heading:#E6EDF3;
+    --orange:#238636; --orange-2:#2F81F7; --green:#3FB950; --green-2:#56D364; --red:#F85149; --red-2:#FF7B72; --yellow:#D29922;
+    --led-g:#3FB950; --led-r:#F85149; --led-y:#D29922; --led-x:#484F58; color-scheme:dark;
+  }
+}
+body[data-theme="github"] .titlebar{background:var(--frame-2)}
+body[data-theme="github"] .titlebar h1{font-weight:600;font-size:16px}
+body[data-theme="github"] .btn.confirm{background:var(--orange);border:1px solid rgba(31,35,40,.15)}
+body[data-theme="github"] .pill.hot{background:var(--red)}

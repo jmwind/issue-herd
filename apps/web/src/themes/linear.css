@@ -1,0 +1,23 @@
+/* Linear — the issue tracker's own look: near-black ground, quiet grey surfaces and hairline
+   borders, indigo as the one accent, Inter, small radii. Dark by default (Linear's default); light
+   with the system. */
+body[data-theme="linear"]{
+  --ground:#0F1011; --frame:#191A1C; --frame-2:#222326; --inset:#151618; --inset-2:#0F1011;
+  --hi:transparent; --lo:transparent; --edge:transparent; --rule:#26282D; --radius:6px;
+  --text:#F7F8F8; --muted:#8A8F98; --dim:#62666D; --heading:#F7F8F8;
+  --orange:#5E6AD2; --orange-2:#828FFF; --on-accent:#FFFFFF; --green:#4CB782; --green-2:#68D391; --red:#EB5757; --red-2:#F27878; --yellow:#F2C94C;
+  --led-g:#4CB782; --led-r:#EB5757; --led-y:#F2C94C; --led-x:#3A3D44;
+  --font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  color-scheme:dark;background:var(--ground);color:var(--text);letter-spacing:-.01em;
+}
+@media (prefers-color-scheme:light){
+  body[data-theme="linear"]{
+    --ground:#FFFFFF; --frame:#FFFFFF; --frame-2:#F7F8F8; --inset:#F7F8F8; --inset-2:#FFFFFF; --rule:#E6E6E9;
+    --text:#282A30; --muted:#6F6E77; --dim:#9E9EA5; --heading:#282A30;
+    --orange:#5E6AD2; --orange-2:#4C57C4; --green:#2F9E63; --green-2:#27875A; --red:#D93E3E; --red-2:#C23333; --yellow:#9A6D00;
+    --led-x:#D6D6DA; color-scheme:light;
+  }
+}
+body[data-theme="linear"] .titlebar h1{font-weight:600;font-size:15px}
+body[data-theme="linear"] .sub{font-weight:600;font-size:12px;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
+body[data-theme="linear"] .plant.working{box-shadow:0 0 0 1px var(--orange)}

@@ -6,7 +6,7 @@ import os from 'node:os';
 import { askSecret, credentialsPath, loadCredentials, saveCredential } from '@weawr/engine/adapters/auth.mjs';
 import * as _gate from './../transports/gate.mjs';
 import { FactoryHub } from '../transports/hub.js';
-import { createHandler, listen, tailscaleAddresses } from '../transports/http.js';
+import { THEMES, createHandler, listen, tailscaleAddresses } from '../transports/http.js';
 import type { Context } from '../context.js';
 const { Gate, hashPasscode, newDeviceToken } = _gate as Record<string, any>;
 
@@ -44,9 +44,9 @@ export async function serve(ctx: Context, args: string[], { asConsole = false } 
     if (sub === 'revoke') { if (!name || !devices[name]) throw new Error(`no device called ${name || '?'}`); delete devices[name]; saveCredential('console', { ...c, devices }, file); console.log(`device ${name} revoked`); return; }
     throw new Error('usage: weawr console device add <name> | list | revoke <name>');
   }
-  if (args[0] && !args[0].startsWith('--')) throw new Error(`usage: weawr ${asConsole ? 'console' : 'serve'} [--port N] [--host ADDR]... [--no-web] [--theme factorio|clean] | set-passcode | clear-passcode | device add|list|revoke`);
+  if (args[0] && !args[0].startsWith('--')) throw new Error(`usage: weawr ${asConsole ? 'console' : 'serve'} [--port N] [--host ADDR]... [--no-web] [--theme <name>] | set-passcode | clear-passcode | device add|list|revoke`);
   const themeArg = args.indexOf('--theme') >= 0 ? args[args.indexOf('--theme') + 1] : (process.env.WEAWR_CONSOLE_THEME || 'factorio');
-  if (!['factorio', 'clean'].includes(themeArg || '')) throw new Error('--theme is factorio or clean');
+  if (!(THEMES as readonly string[]).includes(themeArg || '')) throw new Error(`--theme is one of ${THEMES.join(', ')}`);
   // --host binds one more address by name (the Wi-Fi one, say, when there is no tailnet). Only
   // behind the gate: without a passcode the console is a local console and stays on loopback.
   const hosts = args.flatMap((a, i) => (a === '--host' ? [args[i + 1] ?? ''] : []));

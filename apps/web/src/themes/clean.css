@@ -1,53 +1,20 @@
 /* weawr clean — the brand's own palette (assets/brand/tokens.css), flat and quiet: chalk ground,
-   ink text, forest and lime accents. No bevels, no grid, no machinery; the lights keep their
-   meaning. Every rule here is scoped to body[data-theme="clean"] so the default is untouched. */
+   ink text, forest and lime accents; light or dark with the system. The flat structure every
+   non-Factorio theme shares lives in app.css; this file is the palette. */
 body[data-theme="clean"]{
   --ground:#F5F7EF; --frame:#FFFFFF; --frame-2:#EEF2E8; --inset:#F0F3EA; --inset-2:#F5F7EF;
-  --hi:transparent; --lo:transparent; --edge:transparent; --rule:#D8DED0;
+  --hi:transparent; --lo:transparent; --edge:transparent; --rule:#D8DED0; --radius:10px;
   --text:#10251B; --muted:#4E6157; --dim:#8A9A90; --heading:#104B32;
-  --orange:#104B32; --orange-2:#1E6B48; --green:#3E8E5A; --green-2:#2F7A4B; --red:#B23A3A; --red-2:#C24747; --yellow:#8A6A00;
+  --orange:#104B32; --orange-2:#1E6B48; --on-accent:#F5F7EF; --green:#3E8E5A; --green-2:#2F7A4B; --red:#B23A3A; --red-2:#C24747; --yellow:#8A6A00;
   --led-g:#4CAF50; --led-r:#E04848; --led-y:#E0B000; --led-x:#C4CCBE;
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
-  color-scheme:light;
-  background:var(--ground);background-image:none;color:var(--text);
+  color-scheme:light;background:var(--ground);color:var(--text);
 }
 @media (prefers-color-scheme:dark){
   body[data-theme="clean"]{
     --ground:#101812; --frame:#17221A; --frame-2:#1E2B22; --inset:#131C16; --inset-2:#101812; --rule:#2E3A31;
     --text:#EFEEE5; --muted:#ADB7A8; --dim:#6F7C72; --heading:#B5EB00;
-    --orange:#B5EB00; --orange-2:#C9F23A; --green:#72A98A; --green-2:#8FC7A6; --yellow:#E6C84F;
+    --orange:#B5EB00; --orange-2:#C9F23A; --on-accent:#10251B; --green:#72A98A; --green-2:#8FC7A6; --yellow:#E6C84F;
     --led-x:#3C463B; color-scheme:dark;
   }
 }
-/* frames become cards */
-body[data-theme="clean"] .screen{background:var(--ground);box-shadow:none}
-@media (min-width:760px){body[data-theme="clean"] .screen{box-shadow:0 0 0 1px var(--rule),0 8px 30px rgba(16,37,27,.08);border-radius:14px;overflow:hidden}}
-body[data-theme="clean"] .titlebar{background:var(--frame);box-shadow:inset 0 -1px 0 var(--rule)}
-body[data-theme="clean"] .drag{display:none}
-body[data-theme="clean"] .bevel,body[data-theme="clean"] .alert,body[data-theme="clean"] .row,body[data-theme="clean"] .btn,body[data-theme="clean"] .picker,body[data-theme="clean"] .opt,body[data-theme="clean"] .chip,body[data-theme="clean"] .sub .n,body[data-theme="clean"] .inset,body[data-theme="clean"] .alert pre,body[data-theme="clean"] .plant .lights{box-shadow:0 0 0 1px var(--rule);border-radius:10px}
-body[data-theme="clean"] .btn{border-radius:8px;background:var(--frame-2)}
-body[data-theme="clean"] .btn.confirm{background:var(--orange);color:#F5F7EF;box-shadow:none}
-body[data-theme="clean"] .btn.cancel{background:var(--red);color:#fff;box-shadow:none}
-body[data-theme="clean"] .tbtn.red{background:var(--red);border-radius:8px;color:#fff}
-body[data-theme="clean"] .chip{border-radius:999px}
-body[data-theme="clean"] .sub .n{border-radius:999px}
-body[data-theme="clean"] .pill{box-shadow:0 0 0 1px var(--rule);border-radius:999px;background:var(--frame-2)}
-body[data-theme="clean"] .pill.hot{background:var(--red);color:#fff}
-body[data-theme="clean"] .pill.stale{background:#FFF4D6;color:#7A5200;border-color:#F0D48A}
-/* the lights: still lights, without the glow */
-body[data-theme="clean"] .led{box-shadow:none}
-body[data-theme="clean"] .led.green,body[data-theme="clean"] .led.red,body[data-theme="clean"] .led.yellow{box-shadow:none;animation:none}
-/* the machinery goes; the facts stay */
-body[data-theme="clean"] .belt{height:1px;background:var(--rule);box-shadow:none;overflow:hidden}
-body[data-theme="clean"] .belt::before,body[data-theme="clean"] .belt .items,body[data-theme="clean"] .inserter,body[data-theme="clean"] .asm,body[data-theme="clean"] .plant .rivet,body[data-theme="clean"] .link,body[data-theme="clean"] .craft,body[data-theme="clean"] .cargo{display:none}
-body[data-theme="clean"] .gear{animation:none;display:none}
-body[data-theme="clean"] .plant{padding:14px;border-radius:12px;background:var(--frame);box-shadow:0 0 0 1px var(--rule);margin-bottom:10px;--cut:0}
-body[data-theme="clean"] .plant::before,body[data-theme="clean"] .plant::after{display:none}
-body[data-theme="clean"] .plant.working{filter:none;box-shadow:0 0 0 2px var(--orange)}
-body[data-theme="clean"] .plant.stale{filter:none;opacity:.7}
-body[data-theme="clean"] .plant .roof b,body[data-theme="clean"] .titlebar h1,body[data-theme="clean"] .alert .k b,body[data-theme="clean"] .sub{color:var(--heading)}
-body[data-theme="clean"] .row .t b,body[data-theme="clean"] .why li b,body[data-theme="clean"] .picker .chev,body[data-theme="clean"] .sub .more{color:var(--orange-2)}
-body[data-theme="clean"] .row{border-radius:10px;background:var(--frame)}
-body[data-theme="clean"] .alert{background:var(--frame)}
-body[data-theme="clean"] .titlebar .mark{filter:none}
-body[data-theme="clean"] .foot{color:var(--muted)}

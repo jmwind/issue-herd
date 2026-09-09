@@ -25,6 +25,8 @@ const COOKIE = 'weawr_console';
 export const DEFAULT_WEB_DIR = path.join(HERE, 'web');
 /** Where the mark in the title bar takes you: the project on GitHub, in a new tab. */
 export const REPO_URL = 'https://github.com/jmwind/weawr';
+/** The console themes that ship, by the name a browser asks for. */
+export const THEMES = ['factorio', 'clean', 'linear', 'github', 'tokyo-night', 'solarized-light'] as const;
 const ICONS: Record<string, [string, string]> = { '/favicon.svg': ['favicon.svg', 'image/svg+xml'], '/favicon.ico': ['favicon.ico', 'image/x-icon'], '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'] };
 
 /** Tailscale's IPv4 range is 100.64.0.0/10; the console binds there when it is gated. */

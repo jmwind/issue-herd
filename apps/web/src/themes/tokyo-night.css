@@ -1,0 +1,14 @@
+/* Tokyo Night — the VS Code theme: deep navy ground, slate surfaces, lavender text, the blue,
+   green, yellow and red of its syntax as the lights. Dark only, as the theme is. */
+body[data-theme="tokyo-night"]{
+  --ground:#1A1B26; --frame:#1F2335; --frame-2:#24283B; --inset:#16161E; --inset-2:#1A1B26;
+  --hi:transparent; --lo:transparent; --edge:transparent; --rule:#2F3549; --radius:8px;
+  --text:#C0CAF5; --muted:#7982A9; --dim:#565F89; --heading:#7AA2F7;
+  --orange:#7AA2F7; --orange-2:#BB9AF7; --on-accent:#1A1B26; --green:#9ECE6A; --green-2:#73DACA; --red:#F7768E; --red-2:#FF9E64; --yellow:#E0AF68;
+  --led-g:#9ECE6A; --led-r:#F7768E; --led-y:#E0AF68; --led-x:#414868;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  color-scheme:dark;background:var(--ground);color:var(--text);
+}
+body[data-theme="tokyo-night"] .alert pre,body[data-theme="tokyo-night"] .scrollback pre{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace;color:#A9B1D6}
+body[data-theme="tokyo-night"] .row .t b{color:#7DCFFF}
+body[data-theme="tokyo-night"] .plant.working{box-shadow:0 0 0 2px #7AA2F7,0 0 18px rgba(122,162,247,.25)}

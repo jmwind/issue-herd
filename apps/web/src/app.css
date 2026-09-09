@@ -277,3 +277,35 @@ button{font:inherit;color:inherit}
 /* a factory whose owner is not running, and a page whose link is down: shown, and said */
 .pill.stale { background: #3a2a10; color: var(--orange-2, #e39827); border-color: #6b4a14; }
 .tick em.stale { font-style: normal; opacity: .75; margin-left: .4em; }
+
+/* ------------------------------------------------------------------ flat themes
+   Every theme but Factorio is flat: cards instead of bevelled frames, a rule instead of an edge,
+   the machinery gone, the lights and the facts kept. A theme file sets the palette (and --radius);
+   this is the structure they all get. */
+body[data-theme]:not([data-theme="factorio"]){--radius:10px;--rule:#D8DED0;background-image:none}
+body[data-theme]:not([data-theme="factorio"]) .screen{background:var(--ground);box-shadow:none}
+@media (min-width:760px){body[data-theme]:not([data-theme="factorio"]) .screen{box-shadow:0 0 0 1px var(--rule),0 8px 30px rgba(0,0,0,.12);border-radius:calc(var(--radius) + 4px);overflow:hidden}}
+body[data-theme]:not([data-theme="factorio"]) .titlebar{background:var(--frame);box-shadow:inset 0 -1px 0 var(--rule)}
+body[data-theme]:not([data-theme="factorio"]) .drag{display:none}
+body[data-theme]:not([data-theme="factorio"]) .bevel,body[data-theme]:not([data-theme="factorio"]) .alert,body[data-theme]:not([data-theme="factorio"]) .row,body[data-theme]:not([data-theme="factorio"]) .btn,body[data-theme]:not([data-theme="factorio"]) .picker,body[data-theme]:not([data-theme="factorio"]) .opt,body[data-theme]:not([data-theme="factorio"]) .chip,body[data-theme]:not([data-theme="factorio"]) .sub .n,body[data-theme]:not([data-theme="factorio"]) .inset,body[data-theme]:not([data-theme="factorio"]) .alert pre,body[data-theme]:not([data-theme="factorio"]) .plant .lights{box-shadow:0 0 0 1px var(--rule);border-radius:var(--radius)}
+body[data-theme]:not([data-theme="factorio"]) .btn{border-radius:calc(var(--radius) - 2px);background:var(--frame-2)}
+body[data-theme]:not([data-theme="factorio"]) .btn.confirm{background:var(--orange);color:var(--on-accent,#fff);box-shadow:none}
+body[data-theme]:not([data-theme="factorio"]) .btn.cancel{background:var(--red);color:#fff;box-shadow:none}
+body[data-theme]:not([data-theme="factorio"]) .tbtn.red{background:var(--red);border-radius:calc(var(--radius) - 2px);color:#fff}
+body[data-theme]:not([data-theme="factorio"]) .chip,body[data-theme]:not([data-theme="factorio"]) .sub .n,body[data-theme]:not([data-theme="factorio"]) .pill{border-radius:999px}
+body[data-theme]:not([data-theme="factorio"]) .pill{box-shadow:0 0 0 1px var(--rule);background:var(--frame-2)}
+body[data-theme]:not([data-theme="factorio"]) .pill.hot{background:var(--red);color:#fff}
+body[data-theme]:not([data-theme="factorio"]) .pill.stale{background:var(--frame-2);color:var(--yellow);border-color:var(--rule)}
+body[data-theme]:not([data-theme="factorio"]) .led{box-shadow:none}
+body[data-theme]:not([data-theme="factorio"]) .led.green,body[data-theme]:not([data-theme="factorio"]) .led.red,body[data-theme]:not([data-theme="factorio"]) .led.yellow{box-shadow:none;animation:none}
+body[data-theme]:not([data-theme="factorio"]) .belt{height:1px;background:var(--rule);box-shadow:none;overflow:hidden}
+body[data-theme]:not([data-theme="factorio"]) .belt::before,body[data-theme]:not([data-theme="factorio"]) .belt .items,body[data-theme]:not([data-theme="factorio"]) .inserter,body[data-theme]:not([data-theme="factorio"]) .asm,body[data-theme]:not([data-theme="factorio"]) .plant .rivet,body[data-theme]:not([data-theme="factorio"]) .link,body[data-theme]:not([data-theme="factorio"]) .craft,body[data-theme]:not([data-theme="factorio"]) .cargo,body[data-theme]:not([data-theme="factorio"]) .gear{display:none}
+body[data-theme]:not([data-theme="factorio"]) .plant{padding:14px;border-radius:calc(var(--radius) + 2px);background:var(--frame);box-shadow:0 0 0 1px var(--rule);margin-bottom:10px;--cut:0}
+body[data-theme]:not([data-theme="factorio"]) .plant::before,body[data-theme]:not([data-theme="factorio"]) .plant::after{display:none}
+body[data-theme]:not([data-theme="factorio"]) .plant.working{filter:none;box-shadow:0 0 0 2px var(--orange)}
+body[data-theme]:not([data-theme="factorio"]) .plant.stale{filter:none;opacity:.7}
+body[data-theme]:not([data-theme="factorio"]) .plant .roof b,body[data-theme]:not([data-theme="factorio"]) .titlebar h1,body[data-theme]:not([data-theme="factorio"]) .alert .k b,body[data-theme]:not([data-theme="factorio"]) .sub{color:var(--heading)}
+body[data-theme]:not([data-theme="factorio"]) .row .t b,body[data-theme]:not([data-theme="factorio"]) .why li b,body[data-theme]:not([data-theme="factorio"]) .picker .chev,body[data-theme]:not([data-theme="factorio"]) .sub .more{color:var(--orange-2)}
+body[data-theme]:not([data-theme="factorio"]) .row,body[data-theme]:not([data-theme="factorio"]) .alert{background:var(--frame)}
+body[data-theme]:not([data-theme="factorio"]) .titlebar .mark{filter:none}
+body[data-theme]:not([data-theme="factorio"]) .foot{color:var(--muted)}

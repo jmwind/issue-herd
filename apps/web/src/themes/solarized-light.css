@@ -1,0 +1,15 @@
+/* Solarized Light — Ethan Schoonover's palette as VS Code ships it: base3 paper, base2 surfaces,
+   base00 text, base01 headings, the accents blue, green, yellow, red, and orange. Light only. */
+body[data-theme="solarized-light"]{
+  --ground:#FDF6E3; --frame:#FDF6E3; --frame-2:#EEE8D5; --inset:#EEE8D5; --inset-2:#FDF6E3;
+  --hi:transparent; --lo:transparent; --edge:transparent; --rule:#D3CBB7; --radius:6px;
+  --text:#657B83; --muted:#93A1A1; --dim:#93A1A1; --heading:#586E75;
+  --orange:#268BD2; --orange-2:#CB4B16; --on-accent:#FDF6E3; --green:#859900; --green-2:#719400; --red:#DC322F; --red-2:#CB4B16; --yellow:#B58900;
+  --led-g:#859900; --led-r:#DC322F; --led-y:#B58900; --led-x:#C9C1AD;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  color-scheme:light;background:var(--ground);color:var(--text);
+}
+body[data-theme="solarized-light"] .alert pre,body[data-theme="solarized-light"] .scrollback pre{font-family:ui-monospace,Menlo,monospace;color:#586E75;background:#EEE8D5}
+body[data-theme="solarized-light"] .row .t b{color:#268BD2}
+body[data-theme="solarized-light"] .titlebar h1,body[data-theme="solarized-light"] .sub{color:#586E75}
+body[data-theme="solarized-light"] .plant.working{box-shadow:0 0 0 2px #268BD2}
