@@ -12,19 +12,23 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const COOKIE = 'issue_herd_console';
+const COOKIE = 'weawr_console';
 
 function asset(name) { return fs.readFileSync(path.join(HERE, name), 'utf8'); }
 /** Where the mark in the title bar takes you: the project on GitHub, in a new tab. */
-export const REPO_URL = 'https://github.com/jmwind/issue-herd';
+export const REPO_URL = 'https://github.com/jmwind/weawr';
 
-/** The mark, inlined into the title bar as a link to the repository. Posts in paper on the console's dark ground, the arrow in ember, per assets/logo/README.md. */
+const ASSETS = path.join(HERE, '..', '..', 'assets');
+/** The mark, inlined into the title bar as a link to the repository: the reverse (dark-ground) symbol, per assets/logo/README.md. */
 function mark() {
   try {
-    const svg = fs.readFileSync(path.join(HERE, '..', '..', 'assets', 'logo', 'mark.svg'), 'utf8').replace(/<style>[\s\S]*?<\/style>/, '').replace('stroke="#141210"', 'stroke="#F6F2ED"').replace('width="96" height="96"', 'class="mark"').replace(' role="img" aria-label="issue-herd"', ' aria-hidden="true"');
-    return '<a class="home" href="' + REPO_URL + '" target="_blank" rel="noopener" title="issue-herd on GitHub" aria-label="issue-herd on GitHub">' + svg + '</a>';
+    const svg = fs.readFileSync(path.join(ASSETS, 'logo', 'weawr-mark-reverse.svg'), 'utf8').replace('<svg ', '<svg class="mark" ').replace(' role="img" aria-label="weawr"', ' aria-hidden="true"');
+    return '<a class="home" href="' + REPO_URL + '" target="_blank" rel="noopener" title="weawr on GitHub" aria-label="weawr on GitHub">' + svg + '</a>';
   } catch { return ''; }
 }
+/** The favicon set, served ungated (the lock page has a tab too): path → file under assets/icons and its type. */
+const ICONS = { '/favicon.svg': ['favicon.svg', 'image/svg+xml'], '/favicon.ico': ['favicon.ico', 'image/x-icon'], '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'] };
+function icon(file) { try { return fs.readFileSync(path.join(ASSETS, 'icons', file)); } catch { return null; } }
 
 /** Tailscale's IPv4 range is 100.64.0.0/10; the console binds there when it is gated. */
 export function tailscaleAddresses(ifaces = os.networkInterfaces()) {
@@ -66,6 +70,7 @@ export function createHandler({ gate, console: app, hostname = os.hostname(), lo
   const clients = new Set();
   const pages = { app: asset('app.html'), unlock: asset('unlock.html'), css: asset('app.css'), js: asset('app.js') };
   const logo = mark();
+  const icons = Object.fromEntries(Object.entries(ICONS).map(([p, [file, type]]) => [p, { body: icon(file), type }]));
   const html = (tpl) => tpl.replace(/\{\{hostname\}\}/g, hostname).replace(/\{\{gated\}\}/g, gate.enabled ? 'true' : 'false').replace(/\{\{mark\}\}/g, logo);
 
   const send = (res, code, body, type = 'application/json; charset=utf-8', extra = {}) => {
@@ -88,6 +93,7 @@ export function createHandler({ gate, console: app, hostname = os.hostname(), lo
     try {
       if (req.method === 'GET' && url.pathname === '/app.css') return send(res, 200, pages.css, 'text/css; charset=utf-8');
       if (req.method === 'GET' && url.pathname === '/app.js') return send(res, 200, pages.js, 'text/javascript; charset=utf-8');
+      if (req.method === 'GET' && icons[url.pathname]) { const { body, type } = icons[url.pathname]; return body ? send(res, 200, body, type, { 'cache-control': 'public, max-age=86400' }) : send(res, 404, { error: 'not found' }); }
       if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, gated: gate.enabled });
       if (req.method === 'POST' && url.pathname === '/unlock') {
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });

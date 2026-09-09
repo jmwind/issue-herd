@@ -45,7 +45,7 @@ the house style is worse than no review.
 3. Read the surrounding code, not just the diff. Most real findings live in what the diff assumes.
 4. Do not rewrite the code — if a fix is one obvious line, describe it rather than committing it.
 5. **Do not push, do not commit, do not merge, do not approve on GitHub.** Your output is the
-   result file and the comment issue-herd makes from it.
+   result file and the comment weawr makes from it.
 
 ## What to say
 

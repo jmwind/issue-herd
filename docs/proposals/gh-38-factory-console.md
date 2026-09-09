@@ -1,9 +1,9 @@
 # Factory console: proposal for #38
 
-> Superseded by the shipped console — see [How it works](../how-it-works.md#the-console-issue-herd-console).
+> Superseded by the shipped console — see [How it works](../how-it-works.md#the-console-weawr-console).
 > Kept for the reasoning behind the design; where the two disagree, the shipped console is right.
 
-A locally hosted, single-page console that shows every issue-herd factory running on this machine,
+A locally hosted, single-page console that shows every weawr factory running on this machine,
 what each agent is doing, what is waiting on you, and one click to the issue, the PR, or the herdr
 workspace. This is the plan the issue asked for before any implementation: the UX, the technical
 options with trade-offs, and the questions only the owner can answer.
@@ -18,11 +18,11 @@ Every number in the mockup maps to a source that is already there:
 
 | shown | source | cost |
 |---|---|---|
-| which factories exist | herdr workspaces labelled `<name>Watch` (`issue-herdWatch`, `gustkitWatch`) → pane cwd → `.issue-herd/config.json` | one `herdr api snapshot` |
+| which factories exist | herdr workspaces labelled `<name>Watch` (`weawrWatch`, `gustkitWatch`) → pane cwd → `.weawr/config.json` | one `herdr api snapshot` |
 | team, rules, roles, caps, guards | `config.json` layered with `config.local.json` (the same `loadConfig` the watcher uses) | file read |
-| runs, roles, pass, started/finished, branch, worktree, workspace, result, PR URL | `.issue-herd/state/state.json` (`runs` keyed by `GH-7@impl`) | file read, `fs.watch` |
+| runs, roles, pass, started/finished, branch, worktree, workspace, result, PR URL | `.weawr/state/state.json` (`runs` keyed by `GH-7@impl`) | file read, `fs.watch` |
 | live agent state (working / blocked / idle / done / gone), which pane, terminal title | `herdr agent list` or the snapshot; herdr also has a socket subscription `pane.agent_status_changed` | one call per refresh, or push |
-| "how often did it work on it" | `state/logs/issue-herd.log` transitions (`blocked`, `working again`, `idle`, `done`) plus `git log` on the run's branch | file read |
+| "how often did it work on it" | `state/logs/weawr.log` transitions (`blocked`, `working again`, `idle`, `done`) plus `git log` on the run's branch | file read |
 | task duration | `startedAt` → `finishedAt` per role; PR opened → merged from GitHub | free |
 | lines changed, files | `git diff --shortstat <base>...<branch>` in the worktree (instant, no API); PR `additions`/`deletions` as the fallback once the worktree is gone | local git |
 | waiting on you | agent `blocked`; run `stopped`/idle without a result; `result.status = needs_human`; PR approved and mergeable but not merged; a reviewer verdict comment on the issue | derived |
@@ -124,7 +124,7 @@ Ranked by value over effort, all of them layered on the same data model:
 
 ### A. Where the console lives
 
-| | 1. `issue-herd console` subcommand (recommended) | 2. separate package, framework front end | 3. each watcher serves its own page |
+| | 1. `weawr console` subcommand (recommended) | 2. separate package, framework front end | 3. each watcher serves its own page |
 |---|---|---|---|
 | dependencies | none: `node:http`, one HTML file, vanilla JS, SSE | Vite + React (or similar) | none |
 | reuses config, trackers, auth, herdr driver, pr.mjs | yes, direct import | no, duplicated or extracted into a shared package | yes |
@@ -152,7 +152,7 @@ knows which one is behind it.
 
 ### C. Finding factories
 
-| | herdr `*Watch` workspaces | a registry the watcher writes (`~/.config/issue-herd/factories.json`) | both |
+| | herdr `*Watch` workspaces | a registry the watcher writes (`~/.config/weawr/factories.json`) | both |
 |---|---|---|---|
 | works when herdr is running | yes | yes | yes |
 | works for a watcher run outside herdr | no | yes | yes |
@@ -189,8 +189,8 @@ Tailscale from a phone, so:
   interfaces at startup) on a port from config (`console.port`, default 8498, next to the OAuth
   port); never `0.0.0.0`. Tailscale is the network boundary, the passcode is the person boundary;
 - a passcode gate before any factory data: the passcode is set once with
-  `issue-herd console set-passcode` and stored as a salted scrypt hash in
-  `~/.config/issue-herd/credentials.json` (never in the repo); a correct entry sets an `HttpOnly`,
+  `weawr console set-passcode` and stored as a salted scrypt hash in
+  `~/.config/weawr/credentials.json` (never in the repo); a correct entry sets an `HttpOnly`,
   `SameSite=Strict` session cookie good for a configurable time; comparisons are constant-time;
   five wrong entries lock the gate for five minutes and are logged with the source address;
 - state-changing actions are `POST` with an `Origin` check; the browser confirms exit and clean-up
@@ -209,7 +209,7 @@ line in the rail.
 
 ## Phasing
 
-1. **Read-only console.** `issue-herd console`: factory tabs, rail, issue board with live agent
+1. **Read-only console.** `weawr console`: factory tabs, rail, issue board with live agent
    state, elapsed, activity, size from git, links to issue and PR, "waiting on you" from herdr
    state and results. SSE. Registry write in the watcher. Docs and tests for the data model.
 2. **Actions.** Open workspace (`herdr workspace focus`), exit agent, exit-and-clean-up, reply to

@@ -138,7 +138,7 @@ test('an unreadable or detached worktree names no branch at all', () => {
 });
 
 test('against real git: the rename happens and HEAD follows it', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-branch-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-branch-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const g = (args, cwd) => {
     try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }

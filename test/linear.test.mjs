@@ -73,7 +73,7 @@ test('a 401 with a refresh token in hand refreshes once and retries', async () =
 
 test('a plain 401 on an API key says where the key comes from', async () => {
   const t = new LinearTracker('lin_api_bad', { fetchImpl: fakeFetch(() => ({ status: 401, json: { errors: [{ message: 'Authentication required' }] } })) });
-  await assert.rejects(t.me(), /Linear HTTP 401: Authentication required — run `issue-herd login linear`/);
+  await assert.rejects(t.me(), /Linear HTTP 401: Authentication required — run `weawr login linear`/);
 });
 
 test('concurrent calls share one refresh, so a rotating refresh token is spent once', async () => {

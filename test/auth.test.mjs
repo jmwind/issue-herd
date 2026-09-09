@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { deviceFlow, loadCredentials, oauthCodeFlow, pkce, resolveCredential, saveCredential, deleteCredential, noCredentialError } from '../src/auth.mjs';
 
 const dirs = [];
-const tmpFile = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-auth-')); dirs.push(d); return path.join(d, 'creds', 'credentials.json'); };
+const tmpFile = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-auth-')); dirs.push(d); return path.join(d, 'creds', 'credentials.json'); };
 // these files hold (fake) tokens; do not leave them in $TMPDIR
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 const Fake = { id: 'fake', label: 'Fake', auth: { env: ['FAKE_TOKEN', 'FAKE_ALT'], hint: 'a fake token' }, fallback: () => ({ token: 'from-fallback', source: 'fake cli' }) };
@@ -39,7 +39,7 @@ test('resolution order: environment, then the saved credential, then the tracker
   assert.equal(fromFile.saved, true);
   assert.deepEqual(resolveCredential(Fake, { env: { FAKE_ALT: 'alt' }, file }), { credential: { kind: 'env', token: 'alt' }, source: 'FAKE_ALT' });
   assert.equal(resolveCredential({ ...Fake, fallback: undefined }, { env: {}, file: tmpFile() }), null);
-  assert.match(noCredentialError(Fake).message, /issue-herd login fake.*FAKE_TOKEN.*a fake token/);
+  assert.match(noCredentialError(Fake).message, /weawr login fake.*FAKE_TOKEN.*a fake token/);
 });
 
 test('a credentials file that exists but does not parse refuses to load', () => {

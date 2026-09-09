@@ -19,7 +19,7 @@ function fakeFetch(route) {
 }
 
 const node = {
-  id: 'I_1', number: 7, title: 'Map crashes when zooming past level 12', body: 'Steps to reproduce…', url: 'https://github.com/jmwind/issue-herd/issues/7',
+  id: 'I_1', number: 7, title: 'Map crashes when zooming past level 12', body: 'Steps to reproduce…', url: 'https://github.com/jmwind/weawr/issues/7',
   state: 'OPEN', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-04T00:00:00Z',
   labels: { nodes: [{ name: 'ai' }, { name: 'priority: high' }] },
   milestone: { number: 2, title: 'v1' },
@@ -28,7 +28,7 @@ const node = {
   comments: { nodes: [{ body: 'me too', createdAt: '2026-09-02T00:00:00Z', author: { login: 'alex' } }] },
 };
 const page = (nodes, hasNextPage = false) => ({ json: { data: { repository: { issues: { nodes, pageInfo: { hasNextPage, endCursor: hasNextPage ? 'c1' : null } } } } } });
-const tracker = (route, options = {}) => new GitHubTracker('ghp_test', { options: { repo: 'jmwind/issue-herd', ...options }, fetchImpl: fakeFetch(route) });
+const tracker = (route, options = {}) => new GitHubTracker('ghp_test', { options: { repo: 'jmwind/weawr', ...options }, fetchImpl: fakeFetch(route) });
 
 test('normalizes a GitHub issue into the shared shape', () => {
   const t = tracker(() => null);
@@ -42,7 +42,7 @@ test('normalizes a GitHub issue into the shared shape', () => {
   assert.equal(issue.branchName, '7-map-crashes-when-zooming-past-level-12');
   assert.deepEqual(issue.labels, ['ai', 'priority: high']);
   assert.deepEqual(issue.project, { id: '2', name: 'v1' });
-  assert.deepEqual(issue.team, { id: 'jmwind/issue-herd', key: 'issue-herd', name: 'jmwind/issue-herd' });
+  assert.deepEqual(issue.team, { id: 'jmwind/weawr', key: 'weawr', name: 'jmwind/weawr' });
   assert.equal(issue.assignee.login, 'jmwind');
   assert.equal(issue.assignee.displayName, 'jmwind');
   assert.equal(issue.creator.name, 'alex');
@@ -56,7 +56,7 @@ test('rules work on GitHub issues: labels, team, project, assignee:me by login',
   const issue = t.normalize(node);
   const ctx = { viewer: await t.me(), now: Date.parse('2026-09-05T00:00:00Z') };
   const m = (e) => compile(e).test(issue, ctx);
-  assert.ok(m('label:ai and team:issue-herd and project:v1'));
+  assert.ok(m('label:ai and team:weawr and project:v1'));
   assert.ok(m('assignee:me'));
   assert.ok(m('assignee:@jmwind and creator:alex'));
   assert.ok(m('priority<=2 and state:open and not state:started'));
@@ -88,13 +88,13 @@ test('a repository cannot redirect the token to another host', async () => {
   assert.equal(GitHubTracker.fallback({ host: 'evil.example.com' }), null, 'and borrows no token for it either');
   assert.doesNotThrow(make({ host: 'github.com' }), 'naming the default host is fine');
   // An enterprise host is opted into on the machine, by a variable a repo's .env cannot set.
-  process.env.ISSUE_HERD_GITHUB_HOST = 'ghe.corp.com';
+  process.env.WEAWR_GITHUB_HOST = 'ghe.corp.com';
   try {
     const t = new GitHubTracker('t', { options: { repo: 'x/y', host: 'ghe.corp.com' }, fetchImpl: fakeFetch(() => null) });
     assert.equal(t.api, 'https://ghe.corp.com/api/v3');
     assert.equal(t.graphql, 'https://ghe.corp.com/api/graphql');
     assert.throws(make({ host: 'github.com' }), /this machine trusts ghe\.corp\.com/);
-  } finally { delete process.env.ISSUE_HERD_GITHUB_HOST; }
+  } finally { delete process.env.WEAWR_GITHUB_HOST; }
 });
 
 test('config values that reach paths and branch names are validated', () => {
@@ -122,9 +122,9 @@ test('openIssues asks for open issues since a date and follows pages', async () 
   const first = t.fetch.calls[0];
   assert.equal(first.url, 'https://api.github.com/graphql');
   assert.equal(first.headers.authorization, 'Bearer ghp_test');
-  assert.equal(first.headers['user-agent'], 'issue-herd');
+  assert.equal(first.headers['user-agent'], 'weawr');
   assert.match(first.body.query, /states: OPEN/);
-  assert.deepEqual(first.body.variables, { owner: 'jmwind', name: 'issue-herd', first: 100, after: null, since: '2026-08-01T00:00:00Z' });
+  assert.deepEqual(first.body.variables, { owner: 'jmwind', name: 'weawr', first: 100, after: null, since: '2026-08-01T00:00:00Z' });
   assert.equal(t.fetch.calls[1].body.variables.after, 'c1');
 });
 
@@ -139,7 +139,7 @@ test('issueByKey accepts GH-7, #7 and 7', async () => {
 test('writes go through REST by issue number', async () => {
   const seen = [];
   const t = tracker(({ method, url }) => {
-    seen.push(`${method} ${url.replace('https://api.github.com/repos/jmwind/issue-herd', '')}`);
+    seen.push(`${method} ${url.replace('https://api.github.com/repos/jmwind/weawr', '')}`);
     if (method === 'GET' && url.endsWith('/labels/herdr')) return { status: 404, json: { message: 'Not Found' } };
     if (method === 'DELETE') return { status: 404, json: { message: 'Label does not exist' } };
     if (url.includes('/graphql')) return { json: { data: { viewer: { login: 'jmwind', name: 'JM' } } } };
@@ -172,7 +172,7 @@ test('writes go through REST by issue number', async () => {
 
 test('HTTP errors say what happened and, on 401, what to do', async () => {
   const t = tracker(() => ({ status: 401, json: { message: 'Bad credentials' } }));
-  await assert.rejects(t.me(), /GitHub HTTP 401: Bad credentials — run `issue-herd login github`/);
+  await assert.rejects(t.me(), /GitHub HTTP 401: Bad credentials — run `weawr login github`/);
 });
 
 test('a token borrowed from gh is re-read once on 401 rather than failing forever', async () => {
@@ -236,8 +236,8 @@ test('a label lookup that fails for any other reason is not swallowed', async ()
 });
 
 test('the repository comes from the origin remote in any of its spellings', () => {
-  for (const url of ['git@github.com:jmwind/issue-herd.git', 'https://github.com/jmwind/issue-herd', 'https://github.com/jmwind/issue-herd.git/', 'ssh://git@github.com/jmwind/issue-herd.git', 'git://github.com/jmwind/issue-herd.git', 'https://user@github.com/jmwind/issue-herd']) {
-    assert.equal(repoFromRemote(url), 'jmwind/issue-herd', url);
+  for (const url of ['git@github.com:jmwind/weawr.git', 'https://github.com/jmwind/weawr', 'https://github.com/jmwind/weawr.git/', 'ssh://git@github.com/jmwind/weawr.git', 'git://github.com/jmwind/weawr.git', 'https://user@github.com/jmwind/weawr']) {
+    assert.equal(repoFromRemote(url), 'jmwind/weawr', url);
   }
   assert.equal(repoFromRemote('git@gitlab.com:x/y.git'), null);
   assert.equal(repoFromRemote('git@ghe.corp.com:x/y.git', 'ghe.corp.com'), 'x/y');

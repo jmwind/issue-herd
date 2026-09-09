@@ -100,8 +100,8 @@ test('startAgent reports a name already in use as agent_name_taken', async () =>
 
 test('agentPlacement reads an existing agent as somewhere to work', () => {
   // The fields `agent get` really returns; foreground_cwd is where the agent moved to, cwd where it started.
-  const agent = { name: 'gh-19', agent_status: 'idle', pane_id: 'w1C:p1', tab_id: 'w1C:t1', workspace_id: 'w1C', cwd: '/repo', foreground_cwd: '/repo/.issue-herd/worktrees/gh-19' };
-  assert.deepEqual(agentPlacement(agent), { workspaceId: 'w1C', tabId: 'w1C:t1', paneId: 'w1C:p1', cwd: '/repo/.issue-herd/worktrees/gh-19' });
+  const agent = { name: 'gh-19', agent_status: 'idle', pane_id: 'w1C:p1', tab_id: 'w1C:t1', workspace_id: 'w1C', cwd: '/repo', foreground_cwd: '/repo/.weawr/worktrees/gh-19' };
+  assert.deepEqual(agentPlacement(agent), { workspaceId: 'w1C', tabId: 'w1C:t1', paneId: 'w1C:p1', cwd: '/repo/.weawr/worktrees/gh-19' });
   assert.equal(agentPlacement({ cwd: '/repo' }).cwd, '/repo');
   assert.equal(agentPlacement(null).cwd, null);
 });

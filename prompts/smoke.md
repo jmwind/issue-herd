@@ -1,4 +1,4 @@
-# issue-herd smoke test {{identifier}}
+# weawr smoke test {{identifier}}
 
 This is a plumbing test, not real work. Do not edit any files, do not run git commands, do not
 open a PR.

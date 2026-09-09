@@ -1,10 +1,10 @@
 // Linear. GraphQL, no dependencies. Auth: a personal API key (raw in the Authorization header) or an
-// OAuth token from `issue-herd login` (Bearer, refreshed here when it expires).
+// OAuth token from `weawr login` (Bearer, refreshed here when it expires).
 //
 // Browser sign-in needs an OAuth application in Linear (Settings → API → OAuth applications):
 // callback URL http://localhost:8497/callback, public client (PKCE, no secret). Put its client id
-// in LINEAR_CLIENT_ID below or in the ISSUE_HERD_LINEAR_CLIENT_ID environment variable. Without
-// one, `issue-herd login linear` opens the personal-API-keys page and asks for the key instead.
+// in LINEAR_CLIENT_ID below or in the WEAWR_LINEAR_CLIENT_ID environment variable. Without
+// one, `weawr login linear` opens the personal-API-keys page and asks for the key instead.
 
 import { slugify } from '../tracker.mjs';
 import { noCredentialError, oauthCodeFlow, postForm } from '../auth.mjs';
@@ -13,7 +13,7 @@ const ENDPOINT = 'https://api.linear.app/graphql';
 const AUTHORIZE_URL = 'https://linear.app/oauth/authorize';
 const TOKEN_URL = 'https://api.linear.app/oauth/token';
 const API_KEYS_PAGE = 'https://linear.app/settings/account/security';
-export const LINEAR_CLIENT_ID = process.env.ISSUE_HERD_LINEAR_CLIENT_ID || '';
+export const LINEAR_CLIENT_ID = process.env.WEAWR_LINEAR_CLIENT_ID || '';
 
 export class LinearTracker {
   static id = 'linear';
@@ -25,7 +25,7 @@ export class LinearTracker {
       const t = await oauthCodeFlow({ authorizeUrl: AUTHORIZE_URL, tokenUrl: TOKEN_URL, clientId, scope: 'read,write', extra: { prompt: 'consent' }, ui, fetchImpl });
       return { kind: 'oauth', token: t.access_token, refreshToken: t.refresh_token || null, expiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : null, clientId };
     }
-    ui.log('Create a personal API key named "issue-herd" on the page that opens and paste it here.');
+    ui.log('Create a personal API key named "weawr" on the page that opens and paste it here.');
     await ui.open(API_KEYS_PAGE);
     const token = (await ui.askSecret('Linear API key: ')).trim();
     if (!token) throw new Error('no key entered');
@@ -74,7 +74,7 @@ export class LinearTracker {
       const text = await res.text();
       let detail = text.slice(0, 200);
       try { const j = JSON.parse(text); if (j.errors?.length) detail = j.errors.map((e) => e.message).join('; '); } catch { /* keep text */ }
-      throw new Error(`Linear HTTP ${res.status}: ${detail}${res.status === 401 ? ' — run `issue-herd login linear` or check LINEAR_API_KEY in .env.local' : ''}`);
+      throw new Error(`Linear HTTP ${res.status}: ${detail}${res.status === 401 ? ' — run `weawr login linear` or check LINEAR_API_KEY in .env.local' : ''}`);
     }
     const json = await res.json();
     if (json.errors?.length) throw new Error(`Linear GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);

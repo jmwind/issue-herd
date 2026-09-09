@@ -2,20 +2,20 @@
 
 [← back to the README](../README.md)
 
-Everything issue-herd does in a repository is decided by two committed files:
-`.issue-herd/config.json` (the rules) and `.issue-herd/instructions.md` (what an agent must know
+Everything weawr does in a repository is decided by two committed files:
+`.weawr/config.json` (the rules) and `.weawr/instructions.md` (what an agent must know
 about the repo). This page is the reference for both, plus the rule language and per-machine
 overrides.
 
 ## Setting up a repository
 
-**It is project-local.** You run `issue-herd` from inside the repository it should work on. The
+**It is project-local.** You run `weawr` from inside the repository it should work on. The
 tracker, the rules and the repo-specific instructions for the agent all live in that repository, so
 they are reviewed and versioned with the code. Your token lives with you, not in the repo:
 
 ```
 your-repo/
-├── .issue-herd/
+├── .weawr/
 │   ├── .gitignore           ignores state/ and config.local.json    (committed)
 │   ├── config.json          rules and defaults                      (committed)
 │   ├── config.local.json    per-machine overrides of config.json    (gitignored)
@@ -25,38 +25,38 @@ your-repo/
 ├── .env.local               LINEAR_API_KEY=… or GITHUB_TOKEN=…, if you prefer a file (gitignored)
 └── .env.example             documents that variable                 (committed)
 
-~/.config/issue-herd/credentials.json   what `issue-herd login` saved, per user, mode 600
-~/.config/issue-herd/factories.json     which factories run on this machine, stamped by each watcher every poll
+~/.config/weawr/credentials.json   what `weawr login` saved, per user, mode 600
+~/.config/weawr/factories.json     which factories run on this machine, stamped by each watcher every poll
 ```
 
 ```bash
 cd ~/Code/your-repo
-issue-herd init
+weawr init
 ```
 
 `init` asks which tracker the repo uses (or take `--tracker linear` / `--tracker github`) and
-writes `.issue-herd/config.json` and `.issue-herd/instructions.md` from the examples, a
-`.issue-herd/.gitignore` that keeps `state/` and `config.local.json` out of git (your repo's own
+writes `.weawr/config.json` and `.weawr/instructions.md` from the examples, a
+`.weawr/.gitignore` that keeps `state/` and `config.local.json` out of git (your repo's own
 `.gitignore` is not touched), and documents the token variable in `.env.example`. It never
 overwrites a file that exists, so re-running it in a repo set up by an older version adds only the
 missing `.gitignore`. Then:
 
-1. `issue-herd login`. GitHub: if `gh` is logged in that token is used, otherwise a browser
+1. `weawr login`. GitHub: if `gh` is logged in that token is used, otherwise a browser
    sign-in. Linear: a browser sign-in when the tool has a Linear OAuth client id (see
    [Signing in](trackers.md#signing-in)), otherwise it opens the personal-API-keys page and asks you to paste
-   the key. Either way the token is saved in `~/.config/issue-herd/credentials.json`, once per
+   the key. Either way the token is saved in `~/.config/weawr/credentials.json`, once per
    machine, for every repo. Prefer a file? `LINEAR_API_KEY` / `GITHUB_TOKEN` in the repo's
    `.env.local` (or the process environment) wins over the saved token.
 2. Create the trigger label your rules use (e.g. `ai`). The claim label (`herdr` by default) is
    created for you the first time it is needed, on either tracker.
-3. Edit `.issue-herd/config.json` (the rules) and `.issue-herd/instructions.md` (what the agent
+3. Edit `.weawr/config.json` (the rules) and `.weawr/instructions.md` (what the agent
    must know about this repo: checks to run, things never to run, branch and PR conventions, when
    to stop and ask). Commit both.
 4. Smoke-test the herdr plumbing without touching the tracker (opens a workspace, starts Claude, has it
-   write the result file, finalizes): `issue-herd smoke`. Close the workspace it leaves open when
+   write the result file, finalizes): `weawr smoke`. Close the workspace it leaves open when
    you have looked at it.
-5. Optional: preview what the config's rules would pick up, with no side effects: `issue-herd dry-run`.
-   To try an expression before putting it in the config: `issue-herd match "label:ai and team:ENG"`.
+5. Optional: preview what the config's rules would pick up, with no side effects: `weawr dry-run`.
+   To try an expression before putting it in the config: `weawr match "label:ai and team:ENG"`.
 
 Unit tests for the tool itself: `npm test` in this repo — see [Maintainers](maintainers.md).
 
@@ -117,7 +117,7 @@ The same fields work on every tracker; what they map to on GitHub is in
                               // it off. See Roles, "Working together"
   "defaults": {               // every rule inherits these
     "worktree": "self",       // who creates the git worktree the run works in.
-                              // "self":  issue-herd does, with one `git worktree add` on the branch below.
+                              // "self":  weawr does, with one `git worktree add` on the branch below.
                               //          The directory and the branch are settled before the agent starts,
                               //          so nothing downstream has to discover or correct them.
                               // "herdr": herdr worktree create (herdr shows it as a worktree)
@@ -125,7 +125,7 @@ The same fields work on every tracker; what they map to on GitHub is in
                               //          watcher in, on whatever branch it is already on, and nothing is
                               //          ever renamed. If your Claude Code settings default to worktree
                               //          mode, Claude still makes one with a name of its own choosing.
-    "worktreeDir": ".issue-herd/worktrees",  // where "self" puts them, relative to the repo. Must stay
+    "worktreeDir": ".weawr/worktrees",  // where "self" puts them, relative to the repo. Must stay
                               // inside the repo, because config.json is committed and this is a path we
                               // create directories in. `init` gitignores it.
     "branch": "{{issueBranchName}}{{roleSuffix}}", // what the run's branch is called. The tracker's own branch
@@ -138,7 +138,7 @@ The same fields work on every tracker; what they map to on GitHub is in
                               // Ignored when "worktree" is "none" — that run works on the branch the repo
                               // is already on, and renaming it would move your checkout. Whatever happens,
                               // the brief, the pickup comment and result.json all quote the branch `git`
-                              // actually reports, never a name issue-herd hoped for.
+                              // actually reports, never a name weawr hoped for.
     "permissionMode": "auto",         // claude --permission-mode. auto = unattended (the point of a watcher);
                                       // acceptEdits still asks before every command; see `claude --help`
     "agentKind": "claude",    // which agent runs: passed to `herdr agent start --kind`
@@ -147,7 +147,7 @@ The same fields work on every tracker; what they map to on GitHub is in
     "agentArgs": [],          // extra flags, passed to the agent verbatim, after everything above
                               // ("claudeArgs" is the old name and still works). See A second opinion.
     "maxConcurrent": 2,       // per-rule cap
-    "prompt": "prompts/default.md",   // brief template: .issue-herd/prompts/default.md if present, else the built-in
+    "prompt": "prompts/default.md",   // brief template: .weawr/prompts/default.md if present, else the built-in
     "instructionsFile": "instructions.md",  // repo brief appended to the prompt; "instructions" (inline string) also works
     "claimLabel": "herdr",            // label added on pickup and checked before pickup; null disables
     "role": null,             // which claim this rule holds: null (the whole issue), or "impl" / "review" /
@@ -175,13 +175,13 @@ The same fields work on every tracker; what they map to on GitHub is in
 }
 ```
 
-The repository is always the one you run `issue-herd` in (its git top level); rules do not name
+The repository is always the one you run `weawr` in (its git top level); rules do not name
 a repo.
 
 ## Per-machine overrides: `config.local.json`
 
-Anything that should differ between the machines running issue-herd on the same repo goes in
-`.issue-herd/config.local.json`. It is gitignored, has the same shape as `config.json`, and is
+Anything that should differ between the machines running weawr on the same repo goes in
+`.weawr/config.local.json`. It is gitignored, has the same shape as `config.json`, and is
 layered over it: top-level keys replace, `defaults` merges key by key (its `on*` objects one level
 deeper), and `rules` merge by `name` (a name that is not in `config.json` is added). The watcher
 logs which keys are overridden at startup, and edits to it are picked up live like `config.json`.

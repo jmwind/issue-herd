@@ -59,7 +59,7 @@ taste, and a review that fights it is noise.
 4. Do not rewrite the docs — if a fix is one obvious sentence, write the sentence in your findings
    rather than committing it.
 5. **Do not push, do not commit, do not merge, do not approve on GitHub, do not touch labels.**
-   Your output is the result file and the comment issue-herd makes from it.
+   Your output is the result file and the comment weawr makes from it.
 
 ## What to say
 

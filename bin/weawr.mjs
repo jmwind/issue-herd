@@ -1,32 +1,32 @@
 #!/usr/bin/env node
-// issue-herd — watch an issue tracker (Linear or GitHub Issues); when an issue matches a rule, open
+// weawr — watch an issue tracker (Linear or GitHub Issues); when an issue matches a rule, open
 // a git worktree and a herdr workspace, start a coding agent in it, brief it, and report back.
 //
-//   issue-herd                 run the watcher (foreground; run it inside a herdr pane)
-//   issue-herd once            one poll, then exit
-//   issue-herd dry-run         show what would be picked up, touch nothing
-//   issue-herd match "<expr>"  evaluate an expression against live open issues
-//   issue-herd status          show tracked runs
-//   issue-herd reset <KEY>     forget a run so the issue can be picked up again
-//   issue-herd login [tracker] sign in (browser when possible) and save the token for this machine
-//   issue-herd logout [tracker] forget the saved token
-//   issue-herd smoke           end-to-end test against herdr with a fake issue (no tracker calls)
-//   issue-herd init [--tracker linear|github]   scaffold .issue-herd/ in this repo
-//   issue-herd console [--port N] [--host ADDR]  the factory floor: every factory on this machine, in a browser (phone first)
-//   issue-herd console set-passcode   set the passcode (digits) the console asks for; also serves it over Tailscale
-//   issue-herd console clear-passcode forget the passcode; the console goes back to loopback only
-//   issue-herd update          reinstall the latest version from GitHub
-//   issue-herd --version
+//   weawr                   run the watcher (foreground; run it inside a herdr pane)
+//   weawr once              one poll, then exit
+//   weawr dry-run           show what would be picked up, touch nothing
+//   weawr match "<expr>"    evaluate an expression against live open issues
+//   weawr status            show tracked runs
+//   weawr reset <KEY>       forget a run so the issue can be picked up again
+//   weawr login [tracker]   sign in (browser when possible) and save the token for this machine
+//   weawr logout [tracker]  forget the saved token
+//   weawr smoke             end-to-end test against herdr with a fake issue (no tracker calls)
+//   weawr init [--tracker linear|github]  scaffold .weawr/ in this repo
+//   weawr console [--port N] [--host ADDR]  the factory floor: every factory on this machine, in a browser (phone first)
+//   weawr console set-passcode  set the passcode (digits) the console asks for; also serves it over Tailscale
+//   weawr console clear-passcode  forget the passcode; the console goes back to loopback only
+//   weawr update            reinstall the latest version from GitHub
+//   weawr --version
 //
 // Run it from inside the git repository it should work on. Everything is project-local:
-//   <repo>/.issue-herd/config.json        which tracker, rules and defaults (committed)
-//   <repo>/.issue-herd/config.local.json  per-machine overrides of config.json, same shape (gitignored)
-//   <repo>/.issue-herd/instructions.md    repo brief appended to every agent prompt (committed)
-//   <repo>/.issue-herd/prompts/default.md optional override of the built-in prompt template
-//   <repo>/.issue-herd/state/             state.json, runs/<KEY>/, logs/ (gitignored)
-//   <repo>/.env, <repo>/.env.local         LINEAR_API_KEY / GITHUB_TOKEN (gitignored), if you prefer a file
-//   ~/.config/issue-herd/credentials.json tokens saved by `issue-herd login` (per user, mode 600)
-//   ~/.config/issue-herd/factories.json   which factories run on this machine, stamped by each watcher every poll (per user)
+//   <repo>/.weawr/config.json        which tracker, rules and defaults (committed)
+//   <repo>/.weawr/config.local.json  per-machine overrides of config.json, same shape (gitignored)
+//   <repo>/.weawr/instructions.md    repo brief appended to every agent prompt (committed)
+//   <repo>/.weawr/prompts/default.md optional override of the built-in prompt template
+//   <repo>/.weawr/state/             state.json, runs/<KEY>/, logs/ (gitignored)
+//   <repo>/.env, <repo>/.env.local   LINEAR_API_KEY / GITHUB_TOKEN (gitignored), if you prefer a file
+//   ~/.config/weawr/credentials.json tokens saved by `weawr login` (per user, mode 600)
+//   ~/.config/weawr/factories.json   which factories run on this machine, stamped by each watcher every poll (per user)
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -55,7 +55,7 @@ import { createHandler, listen, tailscaleAddresses } from '../src/console/server
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = findRepoRoot(process.cwd());
-const CONFIG_DIR = path.join(REPO, '.issue-herd');
+const CONFIG_DIR = path.join(REPO, '.weawr');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const LOCAL_CONFIG_PATH = path.join(CONFIG_DIR, 'config.local.json'); // per-machine overrides, gitignored
 const STATE_DIR = path.join(CONFIG_DIR, 'state');
@@ -83,7 +83,7 @@ function log(...a) {
   const line = `[${ts()}] ${a.join(' ')}`;
   if (liveLine && TTY) { process.stdout.write('\r\x1b[2K'); liveLine = false; }
   console.log(line);
-  try { fs.mkdirSync(LOG_DIR, { recursive: true }); fs.appendFileSync(path.join(LOG_DIR, 'issue-herd.log'), line + '\n'); } catch { /* ignore */ }
+  try { fs.mkdirSync(LOG_DIR, { recursive: true }); fs.appendFileSync(path.join(LOG_DIR, 'weawr.log'), line + '\n'); } catch { /* ignore */ }
 }
 /** The heartbeat: one line that is overwritten in place on a TTY, printed every 10th time otherwise. */
 let heartbeats = 0;
@@ -97,12 +97,12 @@ function writeJson(p, v) { fs.mkdirSync(path.dirname(p), { recursive: true }); f
 function loadEnv() {
   const refused = [];
   for (const file of ENV_FILES) if (fs.existsSync(file)) loadEnvFile(file, refused);
-  if (refused.length) console.error(`issue-herd: ignoring ${refused.join(', ')} from the repository's .env — issue-herd's own settings come from your shell, not from a repository`);
+  if (refused.length) console.error(`weawr: ignoring ${refused.join(', ')} from the repository's .env — weawr's own settings come from your shell, not from a repository`);
 }
 /**
  * A repository's .env may carry the tracker's token, because that is the documented way to keep one
- * per project. It may NOT carry issue-herd's own settings: ISSUE_HERD_CREDENTIALS would move where
- * tokens are written and read, and ISSUE_HERD_GITHUB_HOST where they are sent. A .env is committed,
+ * per project. It may NOT carry weawr's own settings: WEAWR_CREDENTIALS would move where
+ * tokens are written and read, and WEAWR_GITHUB_HOST where they are sent. A .env is committed,
  * so honouring those would let any repository you clone and run this in redirect your credentials.
  */
 function loadEnvFile(file, refused = []) {
@@ -111,7 +111,7 @@ function loadEnvFile(file, refused = []) {
     if (!line || line.startsWith('#')) continue;
     const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
     if (!m) continue;
-    if (/^ISSUE_HERD_/.test(m[1])) { refused.push(m[1]); continue; }
+    if (/^WEAWR_/.test(m[1])) { refused.push(m[1]); continue; }
     let v = m[2].trim();
     if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
     if (process.env[m[1]] === undefined) process.env[m[1]] = v;
@@ -120,13 +120,13 @@ function loadEnvFile(file, refused = []) {
 /** The sidebar label for the watcher's own herdr workspace. */
 function watchLabel(name) { return `${name}Watch`; }
 /**
- * Resolve a path named by config (`prompt`, `instructionsFile`): under <repo>/.issue-herd first,
+ * Resolve a path named by config (`prompt`, `instructionsFile`): under <repo>/.weawr first,
  * then the package's own prompts/.
  *
  * Confined on purpose. config.json is committed, so the repository you run in chooses these values,
  * and whatever they name is read and pasted into the brief an unattended agent is told to follow.
  * Were an absolute path or a leading ~ allowed, `"instructionsFile":
- * "~/.config/issue-herd/credentials.json"` would copy your tokens into a file inside the working
+ * "~/.config/weawr/credentials.json"` would copy your tokens into a file inside the working
  * tree that agent commits from.
  */
 function expand(p) {
@@ -173,13 +173,13 @@ const DEFAULTS = {
   // a person in. 0 turns it off. See src/nudge.mjs.
   maxNudges: DEFAULT_MAX_NUDGES,
   defaults: {
-    // Who creates the git worktree a run works in. "self" is issue-herd, with one `git worktree
+    // Who creates the git worktree a run works in. "self" is weawr, with one `git worktree
     // add` on the branch below, so the directory and the branch are both settled before the agent
     // starts and nothing downstream has to discover or correct them. "herdr" hands the job to
     // `herdr worktree create`. "none" runs in the checkout you started the watcher in, on whatever
     // branch it is already on, and never renames anything.
     worktree: 'self',
-    worktreeDir: '.issue-herd/worktrees',   // where "self" puts them, relative to the repo (gitignored)
+    worktreeDir: '.weawr/worktrees',   // where "self" puts them, relative to the repo (gitignored)
     // The branch a run works on, as a template over {{issueBranchName}} / {{slug}} / {{key}} / {{KEY}}.
     // The tracker's own branch name is the default (Linear's auto-links a PR back to the issue;
     // GitHub's is what its "create a branch" button would name). In "herdr" mode it is passed to
@@ -198,9 +198,9 @@ const DEFAULTS = {
     agentArgs: [],                  // extra flags, passed to the agent verbatim, after everything above
     claudeArgs: [],                 // the old name for agentArgs, still honoured
     maxConcurrent: 2,
-    prompt: 'prompts/default.md',   // repo override in .issue-herd/prompts/, else the package's
+    prompt: 'prompts/default.md',   // repo override in .weawr/prompts/, else the package's
     instructions: '',               // inline text appended to the brief …
-    instructionsFile: 'instructions.md', // … or a markdown file in .issue-herd/ (both are included if present)
+    instructionsFile: 'instructions.md', // … or a markdown file in .weawr/ (both are included if present)
     // Guards against double work. The claim label is added to the issue the moment it is picked up and
     // checked before pickup, so a restart, a lost state.json, or a second machine cannot take it again.
     claimLabel: 'herdr',
@@ -249,7 +249,7 @@ export function loadConfig() {
   const raw = mergeConfig(readConfigFile(CONFIG_PATH), local);
   const cfg = { ...DEFAULTS, ...raw, defaults: { ...DEFAULTS.defaults, ...(raw.defaults || {}) } };
   cfg.localOverrides = overridePaths(local);
-  cfg.name = String(cfg.name || path.basename(REPO)).trim() || 'issue-herd';
+  cfg.name = String(cfg.name || path.basename(REPO)).trim() || 'weawr';
   cfg.maxNudges = normalizeMaxNudges(cfg.maxNudges, path.relative(REPO, CONFIG_PATH));
   cfg.trackerSpec = trackerSpec(cfg.tracker);
   cfg.Tracker = trackerClass(cfg.trackerSpec);
@@ -263,7 +263,7 @@ export function loadConfig() {
     // Only "self" mode creates the worktree, so only "self" mode can decide where it starts.
     // Accepting it quietly elsewhere would give you a reviewer on the default branch and a config
     // that says otherwise.
-    if (rule.basedOn && rule.worktree !== 'self') throw new Error(`rule "${rule.name}": "basedOn" needs "worktree": "self" (issue-herd creates the worktree, so it can start it from another role's branch); this rule is ${JSON.stringify(rule.worktree)}`);
+    if (rule.basedOn && rule.worktree !== 'self') throw new Error(`rule "${rule.name}": "basedOn" needs "worktree": "self" (weawr creates the worktree, so it can start it from another role's branch); this rule is ${JSON.stringify(rule.worktree)}`);
     for (const k of EVENTS) {
       // `"onMerged": null` (or false) — in the rule or in the defaults — turns that step off
       // entirely, rather than falling back to the very defaults it is trying to switch off.
@@ -271,7 +271,7 @@ export function loadConfig() {
       rule[k] = !own ? {} : { ...(cfg.defaults[k] || {}), ...own };
     }
     if (!WORKTREE_MODES.has(rule.worktree)) {
-      throw new Error(`rule "${rule.name}": unknown worktree mode ${JSON.stringify(rule.worktree)} — use "self" (issue-herd creates it), "herdr", or "none"`);
+      throw new Error(`rule "${rule.name}": unknown worktree mode ${JSON.stringify(rule.worktree)} — use "self" (weawr creates it), "herdr", or "none"`);
     }
     try { rule.compiled = compile(rule.match); } catch (e) { throw new Error(`rule "${rule.name}": ${e.message}`); }
     rule.instructions = [rule.instructions, readInstructions(rule.instructionsFile)].filter(Boolean).join('\n\n');
@@ -406,7 +406,7 @@ function briefVars({ issue, rule, run, tracker, nudging = null }) {
 
 // ---------------------------------------------------------------- core
 
-export class IssueHerd {
+export class Weawr {
   constructor({ cfg, tracker, herdr, dry = false }) {
     this.cfg = cfg;
     this.tracker = tracker; // null in smoke mode
@@ -530,7 +530,7 @@ export class IssueHerd {
       this.freshenCheckout(key);
 
       // 1. An earlier attempt at this issue may have left its session running: a start that failed
-      //    after `agent start` succeeded, or an `issue-herd reset` followed by another pickup. herdr
+      //    after `agent start` succeeded, or an `weawr reset` followed by another pickup. herdr
       //    agent names are unique, so building a second workspace and starting a second agent under
       //    the same name cannot work — it is refused with `agent_name_taken`, and what it leaves
       //    behind is an empty workspace and a live session nobody is watching. That session is this
@@ -551,7 +551,7 @@ export class IssueHerd {
         log(`${key}: agent "${run.agentName}" is already running (${existing.agent_status}) in ${ws.cwd}; reusing that session`);
         // A reviewer's session that is still up is the common case for a later turn, and the whole
         // reason there is a later turn is that the implementer pushed something since. Its worktree
-        // has to move too, or it re-reads the code it already reviewed. Only a worktree issue-herd
+        // has to move too, or it re-reads the code it already reviewed. Only a worktree weawr
         // made for this role, and only while the agent is not typing in it.
         if (rule.worktree === 'self' && rule.basedOn && ws.cwd) {
           run.basedOn = this.baseBranchFor(issue, rule, key);
@@ -560,7 +560,7 @@ export class IssueHerd {
             const r = catchUp({ git, repo: rule.repo, at: ws.cwd, base: run.basedOn });
             log(`${key}: ${r.moved ? `caught up to ${run.basedOn} (${String(r.from).slice(0, 7)} → ${String(r.at).slice(0, 7)})` : `not moved onto ${run.basedOn}: ${r.reason}`}`);
           } else if (run.basedOn) {
-            log(`${key}: not catching ${ws.cwd} up to ${run.basedOn}: ${ours ? 'the agent is working in it' : 'it is not a worktree issue-herd made for this role'}`);
+            log(`${key}: not catching ${ws.cwd} up to ${run.basedOn}: ${ours ? 'the agent is working in it' : 'it is not a worktree weawr made for this role'}`);
           }
         }
       } else if (rule.worktree === 'herdr') {
@@ -607,7 +607,7 @@ export class IssueHerd {
       }
 
       // 4. brief — written INSIDE the working tree the agent actually uses, under the gitignored
-      // .issue-herd/state/, so reading and writing it needs no permission dialog. A path in the main
+      // .weawr/state/, so reading and writing it needs no permission dialog. A path in the main
       // checkout does not work from a worktree.
       let workDir = run.worktreePath;
       if (workDir) {
@@ -624,7 +624,7 @@ export class IssueHerd {
       run.workDir = workDir;
       // Settle the branch before the brief is rendered and before the tracker is told: both quote it.
       this.settleBranch(key, run, rule, workDir);
-      run.dir = path.join(workDir, '.issue-herd', 'state', 'runs', key);
+      run.dir = path.join(workDir, '.weawr', 'state', 'runs', key);
       run.resultPath = path.join(run.dir, 'result.json');
       fs.mkdirSync(run.dir, { recursive: true });
       // A further pass reuses the worktree, so the last pass's result.json is still sitting there.
@@ -668,12 +668,12 @@ export class IssueHerd {
         // a prefix either way, because alreadyTaken() greps for it.
         const how = nudges.length ? `${pickupMarker(rule.role)} again`
           : run.adopted ? pickupMarker(rule.role).replace('picked this up', 'took this back over') : pickupMarker(rule.role);
-        try { await this.tracker.comment(issue.id, `🐑 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`); }
+        try { await this.tracker.comment(issue.id, `🧵 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`); }
         catch (e) { log(`${key}: pickup comment failed: ${e.message}`); }
       }
       if (!sent) {
         run.notified.blocked = true; saveState(this.state);
-        await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is not taking input yet — answer whatever it is showing in herdr workspace \`${run.workspaceId}\` and issue-herd will send it the brief.${await this.tail(run.agentName, 12)}`, 'request');
+        await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is not taking input yet — answer whatever it is showing in herdr workspace \`${run.workspaceId}\` and weawr will send it the brief.${await this.tail(run.agentName, 12)}`, 'request');
       }
       if (this.tracker && rule.onPickup.assignToMe) { try { await this.tracker.assign(issue, await this.tracker.me()); } catch (e) { log(`${key}: assign failed: ${e.message}`); } }
       if (this.tracker && rule.onPickup.state) { try { await this.tracker.setState(issue, rule.onPickup.state); } catch (e) { log(`${key}: state failed: ${e.message}`); } }
@@ -682,7 +682,7 @@ export class IssueHerd {
     } catch (e) {
       run.status = 'failed'; run.error = e.message; run.finishedAt = new Date().toISOString(); saveState(this.state);
       if (this.tracker) {
-        try { await this.tracker.comment(issue.id, `⚠️ issue-herd failed to start a session: ${e.message}`); } catch { /* ignore */ }
+        try { await this.tracker.comment(issue.id, `⚠️ weawr failed to start a session: ${e.message}`); } catch { /* ignore */ }
         await this.releaseClaim(key, run);
       }
       throw e;
@@ -951,7 +951,7 @@ export class IssueHerd {
     } catch { /* best effort */ }
     const status = result.status || 'unknown';
     const icon = status === 'pr_open' ? '✅' : status === 'needs_human' ? '🙋' : status === 'nothing_to_do' ? '🤷' : '❌';
-    const lines = [`${icon} **issue-herd** finished ${run.issueKey || key}${run.role ? ` as \`${run.role}\`` : ''} with status \`${status}\`.`];
+    const lines = [`${icon} **weawr** finished ${run.issueKey || key}${run.role ? ` as \`${run.role}\`` : ''} with status \`${status}\`.`];
     if (result.prUrl) lines.push(`\nPR: ${result.prUrl}`);
     if (result.branch) lines.push(`Branch: \`${result.branch}\``);
     if (result.summary) lines.push(`\n${result.summary}`);
@@ -1054,7 +1054,7 @@ export class IssueHerd {
     for (const { targetKey, nudge } of plan.turns) await this.startNudgedTurn(targetKey, [nudge], key);
     if (plan.capped) {
       const issueKey = run.issueKey || issueKeyOf(key);
-      await this.report(key, rule, rule.onBlocked, `🙋 The agents on ${issueKey} have nudged each other ${this.cfg.maxNudges} times, which is the limit (\`maxNudges\`), and \`${run.role || rule.name}\` still needs \`${plan.capped.to}\` to act. A person needs to step in: read the reports on the issue and answer in the workspace of whichever agent should go next, or raise \`maxNudges\` in \`.issue-herd/config.local.json\` to let them carry on.`, 'request');
+      await this.report(key, rule, rule.onBlocked, `🙋 The agents on ${issueKey} have nudged each other ${this.cfg.maxNudges} times, which is the limit (\`maxNudges\`), and \`${run.role || rule.name}\` still needs \`${plan.capped.to}\` to act. A person needs to step in: read the reports on the issue and answer in the workspace of whichever agent should go next, or raise \`maxNudges\` in \`.weawr/config.local.json\` to let them carry on.`, 'request');
     }
   }
 
@@ -1266,7 +1266,7 @@ export class IssueHerd {
   async report(key, rule, policy, body, sound = 'none') {
     const run = this.state.runs[key];
     if (policy?.comment && this.tracker) { try { await this.tracker.comment(run.issueId, body); } catch (e) { log(`${key}: comment failed: ${e.message}`); } }
-    if (policy?.notify) await this.herdr.notify(`issue-herd ${key}`, body.split('\n')[0].replace(/[*`]/g, '').slice(0, 120), { sound });
+    if (policy?.notify) await this.herdr.notify(`weawr ${key}`, body.split('\n')[0].replace(/[*`]/g, '').slice(0, 120), { sound });
   }
 
   /** After a restart, re-attach to runs that were in flight. */
@@ -1308,11 +1308,11 @@ export class IssueHerd {
 
   /**
    * Tell the console this factory is alive: one small entry per repository in a per-user file,
-   * stamped every poll. `issue-herd console` lists the entries and marks one stale when its last
+   * stamped every poll. `weawr console` lists the entries and marks one stale when its last
    * poll is older than a few of its intervals. Best effort; never fails a poll.
    */
   register() {
-    stampFactory({ repo: REPO, name: this.cfg.name, tracker: this.cfg.Tracker.id, version: PKG.version, pollSeconds: this.cfg.pollSeconds, workspaceId: process.env.HERDR_WORKSPACE_ID || null, logPath: path.join(LOG_DIR, 'issue-herd.log') });
+    stampFactory({ repo: REPO, name: this.cfg.name, tracker: this.cfg.Tracker.id, version: PKG.version, pollSeconds: this.cfg.pollSeconds, workspaceId: process.env.HERDR_WORKSPACE_ID || null, logPath: path.join(LOG_DIR, 'weawr.log') });
   }
 
   /** Rename the herdr workspace this watcher runs in to "<name>Watch" so it is easy to find in the sidebar. */
@@ -1325,7 +1325,7 @@ export class IssueHerd {
   }
 
   /**
-   * Re-read .issue-herd/config.json (and the instructions files it names) if any of them changed
+   * Re-read .weawr/config.json (and the instructions files it names) if any of them changed
    * on disk since the config was last loaded. A config that fails to parse is reported and ignored:
    * the watcher keeps running on the last good one until the file is fixed. Runs already in flight
    * keep their rule by name; a rule that was removed falls back to the defaults for its reports.
@@ -1361,7 +1361,7 @@ export class IssueHerd {
   }
 
   async loop() {
-    log(`issue-herd ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
+    log(`weawr ${PKG.version} in ${REPO}: watching ${this.cfg.rules.filter((r) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
     this.logRules();
     const who = await this.tracker.me().then(userDisplay).catch((e) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
     log(`  ${trackerBanner(this.tracker)}: ${who} (token from ${this.tracker.source || '?'}) · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
@@ -1409,16 +1409,16 @@ function isOurAgent(agent, repo, previous) {
 
 // ---------------------------------------------------------------- commands
 
-const GITIGNORE = `# issue-herd. config.json, instructions.md and prompts/ are committed; these are not.
+const GITIGNORE = `# weawr. config.json, instructions.md and prompts/ are committed; these are not.
 # runtime state: state.json, runs/<KEY>/, logs/
 state/
 # per-machine overrides of config.json
 config.local.json
-# the git worktrees issue-herd creates for runs
+# the git worktrees weawr creates for runs
 worktrees/
 `;
 
-/** `issue-herd init [--tracker linear|github]`. Asks which tracker on a terminal when not told. */
+/** `weawr init [--tracker linear|github]`. Asks which tracker on a terminal when not told. */
 async function init(args = []) {
   const flag = args.indexOf('--tracker');
   if (flag >= 0 && !args[flag + 1]) throw new Error(`--tracker needs a name: ${Object.keys(TRACKERS).join(' | ')}`);
@@ -1436,25 +1436,25 @@ async function init(args = []) {
   example.tracker = Tracker.id;
   put(CONFIG_PATH, JSON.stringify(example, null, 2) + '\n');
   put(path.join(CONFIG_DIR, 'instructions.md'), fs.readFileSync(path.join(PKG_DIR, 'prompts', 'instructions.example.md'), 'utf8'));
-  // .issue-herd/ carries its own .gitignore so the repo's is left alone
+  // .weawr/ carries its own .gitignore so the repo's is left alone
   put(path.join(CONFIG_DIR, '.gitignore'), GITIGNORE);
-  // document the token variable, for people who prefer .env.local to `issue-herd login`
+  // document the token variable, for people who prefer .env.local to `weawr login`
   const envName = [].concat(Tracker.auth?.env || [])[0];
   const ex = path.join(REPO, '.env.example');
   const exText = fs.existsSync(ex) ? fs.readFileSync(ex, 'utf8') : '';
   if (envName && !new RegExp(`^${envName}=`, 'm').test(exText)) {
     const sep = exText ? (exText.endsWith('\n') ? '\n' : '\n\n') : '';
-    fs.appendFileSync(ex, `${sep}# issue-herd: ${Tracker.label} token — ${Tracker.auth.hint}.\n# Put the real value in .env.local, never here; or skip this and run \`issue-herd login\`.\n${envName}=\n`);
+    fs.appendFileSync(ex, `${sep}# weawr: ${Tracker.label} token — ${Tracker.auth.hint}.\n# Put the real value in .env.local, never here; or skip this and run \`weawr login\`.\n${envName}=\n`);
     made.push(`.env.example (+ ${envName})`);
   }
   // We just told them to put a live token in .env.local. Say so if git would commit it — this
   // directory's own .gitignore cannot cover a file at the repo root, and we do not edit theirs.
   if (envName && git(['check-ignore', '-q', '.env.local'], REPO) === null) {
-    console.log(`\n⚠ .env.local is not gitignored in this repository. Add it to ${path.join(REPO, '.gitignore')} before you put a token there, or use \`issue-herd login\` instead, which keeps the token outside the repo.`);
+    console.log(`\n⚠ .env.local is not gitignored in this repository. Add it to ${path.join(REPO, '.gitignore')} before you put a token there, or use \`weawr login\` instead, which keeps the token outside the repo.`);
   }
   console.log(made.length ? `wrote in ${REPO} for ${Tracker.label}:\n  ${made.join('\n  ')}` : `nothing to do; ${path.relative(REPO, CONFIG_DIR)} already initialised`);
-  console.log(`\nnext: \`issue-herd login\` (or put ${envName} in ${path.join(REPO, '.env.local')}), edit .issue-herd/config.json and instructions.md, then \`issue-herd match "label:ai"\``);
-  console.log(`per-machine settings (e.g. a claim label that names this machine) go in .issue-herd/config.local.json, which is gitignored`);
+  console.log(`\nnext: \`weawr login\` (or put ${envName} in ${path.join(REPO, '.env.local')}), edit .weawr/config.json and instructions.md, then \`weawr match "label:ai"\``);
+  console.log(`per-machine settings (e.g. a claim label that names this machine) go in .weawr/config.local.json, which is gitignored`);
 }
 
 /** The tracker config.json names, authenticated from the environment, the saved credential, or the tracker's own fallback. */
@@ -1476,12 +1476,12 @@ function trackerBanner(tracker) {
   return `${tracker.constructor.label}${what ? ` ${what}` : ''}`;
 }
 
-/** `issue-herd login [tracker] [--paste]` and `issue-herd logout [tracker]`. Works before `init` when the tracker is named. */
+/** `weawr login [tracker] [--paste]` and `weawr logout [tracker]`. Works before `init` when the tracker is named. */
 async function auth(cmd, args) {
   const paste = args.includes('--paste');
   const named = args.find((a) => !a.startsWith('--'));
   const configured = fs.existsSync(CONFIG_PATH) ? loadConfig().trackerSpec : null;
-  if (!named && !configured) throw new Error(`which tracker? issue-herd ${cmd} <${Object.keys(TRACKERS).join('|')}>`);
+  if (!named && !configured) throw new Error(`which tracker? weawr ${cmd} <${Object.keys(TRACKERS).join('|')}>`);
   // Naming the tracker must not throw away the config's options for it, or `login github` in a
   // GitHub Enterprise repo would sign in to github.com and save a token the watcher cannot use.
   const spec = mergeSpec(named ? trackerSpec(named) : null, configured);
@@ -1506,26 +1506,26 @@ async function auth(cmd, args) {
 }
 
 const PKG = readJson(path.join(PKG_DIR, 'package.json'), { version: '0.0.0', repository: {} });
-const INSTALL_SPEC = 'github:jmwind/issue-herd';
+const INSTALL_SPEC = 'github:jmwind/weawr';
 
 /** Print a one-line reminder if GitHub main has a newer version. Quiet otherwise. */
 async function updateReminder({ notify = false } = {}) {
   const latest = await newerVersion(PKG.version);
   if (!latest) return false;
-  log(`⬆ issue-herd ${latest} is available (you have ${PKG.version}) — run: issue-herd update`);
-  if (notify) await new Herdr().notify('issue-herd update available', `${PKG.version} → ${latest}: run issue-herd update`);
+  log(`⬆ weawr ${latest} is available (you have ${PKG.version}) — run: weawr update`);
+  if (notify) await new Herdr().notify('weawr update available', `${PKG.version} → ${latest}: run weawr update`);
   return true;
 }
 
 function update() {
-  console.log(`issue-herd ${PKG.version} → installing latest from ${INSTALL_SPEC} …`);
+  console.log(`weawr ${PKG.version} → installing latest from ${INSTALL_SPEC} …`);
   execFileSync('npm', ['install', '-g', INSTALL_SPEC], { stdio: 'inherit' });
-  const now = execFileSync('issue-herd', ['--version'], { encoding: 'utf8' }).trim();
+  const now = execFileSync('weawr', ['--version'], { encoding: 'utf8' }).trim();
   console.log(`now ${now}`);
 }
 
 /**
- * `issue-herd console [--port N]` serves the factory floor; `issue-herd console set-passcode` sets
+ * `weawr console [--port N]` serves the factory floor; `weawr console set-passcode` sets
  * the passcode it asks for. Without a passcode the console binds to loopback only and asks nothing:
  * a local console. With one it also binds to this machine's Tailscale address, so a phone on the
  * tailnet can open it, and everything is behind the gate.
@@ -1547,18 +1547,18 @@ async function consoleCommand(args) {
     console.log('✓ console passcode cleared · the console serves on loopback only');
     return;
   }
-  if (args[0] && args[0] !== '--port' && args[0] !== '--host') throw new Error('usage: issue-herd console [--port N] [--host ADDR]... | set-passcode | clear-passcode');
+  if (args[0] && args[0] !== '--port' && args[0] !== '--host') throw new Error('usage: weawr console [--port N] [--host ADDR]... | set-passcode | clear-passcode');
   // --host binds one more address by name (the Wi-Fi one, say, when there is no tailnet). Only
   // behind the gate: without a passcode the console is a local console and stays on loopback.
   const hosts = args.flatMap((a, i) => (a === '--host' ? [args[i + 1] ?? ''] : []));
-  if (hosts.some((h) => !h || h.startsWith('--'))) throw new Error('usage: issue-herd console --host <address>');
+  if (hosts.some((h) => !h || h.startsWith('--'))) throw new Error('usage: weawr console --host <address>');
   if (hosts.some((h) => h === '0.0.0.0' || h === '::')) throw new Error('--host names one address; the console never binds to every interface');
   const portArg = args.indexOf('--port') >= 0 ? (args[args.indexOf('--port') + 1] ?? '') : null;
-  const port = portArg === null ? Number(process.env.ISSUE_HERD_CONSOLE_PORT || 8498) : Number(portArg);
-  if (portArg === '' || !Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`usage: issue-herd console --port <number>${portArg ? ` (got ${JSON.stringify(portArg)})` : ''}`);
+  const port = portArg === null ? Number(process.env.WEAWR_CONSOLE_PORT || 8498) : Number(portArg);
+  if (portArg === '' || !Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`usage: weawr console --port <number>${portArg ? ` (got ${JSON.stringify(portArg)})` : ''}`);
   const gate = new Gate({ hash: loadCredentials(file).console?.passcode || null });
-  if (hosts.length && !gate.enabled) throw new Error('--host needs a passcode first (issue-herd console set-passcode); an ungated console stays on loopback');
-  const herdr = new Herdr({ log: (m) => process.env.ISSUE_HERD_DEBUG && log('  $', m) });
+  if (hosts.length && !gate.enabled) throw new Error('--host needs a passcode first (weawr console set-passcode); an ungated console stays on loopback');
+  const herdr = new Herdr({ log: (m) => process.env.WEAWR_DEBUG && log('  $', m) });
   const app = new FactoryConsole({ herdr, version: PKG.version, log: (m) => log(m) });
   const { handler, broadcast } = createHandler({ gate, console: app, log: (m) => log(m) });
   app.subscribe(() => broadcast());
@@ -1566,9 +1566,9 @@ async function consoleCommand(args) {
   try { bound = await listen({ handler, port, gated: gate.enabled, extraHosts: hosts }); }
   catch (e) { if (e.code === 'EADDRINUSE') throw new Error(`port ${port} is busy — a console is probably already open at http://127.0.0.1:${port}/ ; use --port N for a second one`); throw e; }
   app.start();
-  const where = !gate.enabled ? 'no passcode set (run `issue-herd console set-passcode`), serving on loopback only'
+  const where = !gate.enabled ? 'no passcode set (run `weawr console set-passcode`), serving on loopback only'
     : bound.urls.length > 1 ? `passcode set, serving on loopback${tailscaleAddresses().length ? ' and Tailscale' : ''}${hosts.length ? ` and ${hosts.join(', ')}` : ''}` : 'passcode set · no Tailscale address on this machine, so loopback only';
-  log(`issue-herd ${PKG.version} console · ${where}`);
+  log(`weawr ${PKG.version} console · ${where}`);
   for (const u of bound.urls) log(`  ${u}`);
   log(`  herdr: ${await herdr.serverRunning() ? 'connected' : 'NOT RUNNING — agent state will show as gone until it is'}`);
   process.on('uncaughtException', (e) => log(`unexpected error (kept running): ${e.stack || e.message}`));
@@ -1585,10 +1585,10 @@ async function main(argv) {
   const cmd = argv[0] || 'run';
   if (cmd === 'login' || cmd === 'logout') return auth(cmd, argv.slice(1));
   if (cmd === 'console') return consoleCommand(argv.slice(1));
-  if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no ${path.relative(process.cwd(), CONFIG_PATH) || CONFIG_PATH} — cd into the repo you want to work on and run \`issue-herd init\``);
+  if (!fs.existsSync(CONFIG_PATH)) throw new Error(`no ${path.relative(process.cwd(), CONFIG_PATH) || CONFIG_PATH} — cd into the repo you want to work on and run \`weawr init\``);
   const cfg = loadConfig();
   if (cmd !== 'smoke') await updateReminder();
-  const herdr = new Herdr({ log: (m) => process.env.ISSUE_HERD_DEBUG && log('  $', m) });
+  const herdr = new Herdr({ log: (m) => process.env.WEAWR_DEBUG && log('  $', m) });
 
   if (cmd === 'status') {
     const s = loadState();
@@ -1610,7 +1610,7 @@ async function main(argv) {
     return;
   }
   if (cmd === 'reset') {
-    const key = argv[1]; if (!key) throw new Error('usage: issue-herd reset <KEY>');
+    const key = argv[1]; if (!key) throw new Error('usage: weawr reset <KEY>');
     // Naming the issue forgets every role's run on it (GH-7 clears GH-7, GH-7.impl, GH-7.review);
     // naming one run key forgets only that one.
     const s = loadState();
@@ -1627,7 +1627,7 @@ async function main(argv) {
   const tracker = makeTracker(cfg);
 
   if (cmd === 'match') {
-    const expr = argv.slice(1).join(' '); if (!expr) throw new Error('usage: issue-herd match "<expr>"');
+    const expr = argv.slice(1).join(' '); if (!expr) throw new Error('usage: weawr match "<expr>"');
     const rule = compile(expr);
     const viewer = await tracker.me();
     const issues = await tracker.openIssues({ sinceIso: new Date(Date.now() - cfg.lookbackDays * 86400e3).toISOString() });
@@ -1638,7 +1638,7 @@ async function main(argv) {
   }
 
   if (!(await herdr.serverRunning())) throw new Error('herdr server is not running (start herdr first)');
-  const app = new IssueHerd({ cfg, tracker, herdr, dry: cmd === 'dry-run' });
+  const app = new Weawr({ cfg, tracker, herdr, dry: cmd === 'dry-run' });
 
   if (cmd === 'dry-run' || cmd === 'once') {
     if (cmd === 'once') await app.resume();
@@ -1662,7 +1662,7 @@ async function smoke({ cfg, herdr, argv }) {
   const rule = {
     ...cfg.defaults, name: 'smoke', repo: REPO, worktree: argv.includes('--worktree') ? cfg.defaults.worktree : 'none',
     // Relative, so expand() finds the package's own copy; an absolute path is refused, since a
-    // repository must not be able to name a file outside .issue-herd/ for the brief.
+    // repository must not be able to name a file outside .weawr/ for the brief.
     prompt: 'prompts/smoke.md', instructions: '',
     onPickup: { comment: false }, onDone: { comment: false, notify: true, closeWorkspace: false },
     onBlocked: { comment: false, notify: true }, onIdle: { comment: false, notify: true },
@@ -1675,14 +1675,14 @@ async function smoke({ cfg, herdr, argv }) {
   const key = keyFlag !== -1 && argv[keyFlag + 1] ? argv[keyFlag + 1] : `SMOKE-${Date.now().toString().slice(-4)}`;
   const nowIso = new Date().toISOString();
   const issue = {
-    id: 'fake', identifier: key, ref: key, title: 'issue-herd smoke test', description: 'Prove the herdr pipeline works end to end.',
+    id: 'fake', identifier: key, ref: key, title: 'weawr smoke test', description: 'Prove the herdr pipeline works end to end.',
     url: 'https://linear.app/example', priority: 3, priorityLabel: 'Medium', labels: ['ai'], project: null,
     team: { id: 't', key: 'SMK', name: 'Smoke' }, assignee: null, creator: null, state: { name: 'Todo', type: 'unstarted' },
     cycle: null, comments: [], createdAt: nowIso, updatedAt: nowIso,
   };
   // The repository's own rules ride along behind the smoke rule: a smoke result that nudges another
   // role needs that role's rule to give it a turn, and the brief lists the roles the project runs.
-  const app = new IssueHerd({ cfg: { ...cfg, rules: [rule, ...cfg.rules] }, tracker: null, herdr });
+  const app = new Weawr({ cfg: { ...cfg, rules: [rule, ...cfg.rules] }, tracker: null, herdr });
   await app.pickUp(issue, rule);
   // The run is filed under its run key, which carries the rule's role — `defaults.role` in
   // config.json reaches the smoke rule like any other default, so this is not always the issue key.
@@ -1693,7 +1693,7 @@ async function smoke({ cfg, herdr, argv }) {
   while (app.supervising.size) await sleep(500);
   const run = app.state.runs[runKey];
   log(`smoke: ${run.status} ${JSON.stringify(run.result || run.error || '')}`);
-  console.log(`\nSmoke run ${runKey}: ${run.status}. herdr workspace ${run.workspaceId} left open; clean up with:\n  herdr workspace close ${run.workspaceId}\n  issue-herd reset ${runKey}`);
+  console.log(`\nSmoke run ${runKey}: ${run.status}. herdr workspace ${run.workspaceId} left open; clean up with:\n  herdr workspace close ${run.workspaceId}\n  weawr reset ${runKey}`);
   process.exit(run.status === 'done' ? 0 : 1);
 }
 
@@ -1702,4 +1702,4 @@ async function smoke({ cfg, herdr, argv }) {
 // the repository it means to work on before it imports.
 // (`npm install -g` runs it through a symlink, so it is the real path that has to match.)
 const isMain = (() => { try { return fs.realpathSync(process.argv[1] || '') === fileURLToPath(import.meta.url); } catch { return false; } })();
-if (isMain) main(process.argv.slice(2)).catch((e) => { console.error(`issue-herd: ${e.message}`); process.exit(1); });
+if (isMain) main(process.argv.slice(2)).catch((e) => { console.error(`weawr: ${e.message}`); process.exit(1); });

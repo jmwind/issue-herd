@@ -2,7 +2,7 @@
 //
 // herdr can start twenty-odd agents (`herdr agent start --kind`), and it is the one that knows how
 // to detect them in a pane. What it does not do is translate: everything after `--` is the agent's
-// own command line, and issue-herd used to write Claude Code's dialect there unconditionally. So
+// own command line, and weawr used to write Claude Code's dialect there unconditionally. So
 // `"agentKind": "codex"` started codex and immediately handed it `--name` and `--permission-mode`,
 // which are Claude Code flags, and the pane died at the prompt.
 //
@@ -11,7 +11,7 @@
 // implementer: a second set of eyes is only worth having if it is not the same eyes.
 //
 // Anything without a profile still runs. It gets the generic one (`--model`, and whatever the rule
-// puts in `agentArgs`), because issue-herd knowing every agent's flags is not a thing to depend on
+// puts in `agentArgs`), because weawr knowing every agent's flags is not a thing to depend on
 // — and herdr, not this file, is the authority on which kinds exist.
 
 /**

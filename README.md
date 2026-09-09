@@ -1,18 +1,20 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/png/lockup-dark.png">
-    <img src="assets/logo/png/lockup.png" alt="issue-herd" width="330">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/weawr-logo-reverse.svg">
+    <img src="assets/logo/weawr-logo.svg" alt="weawr" width="360">
   </picture>
+  <br><sub>pronounced <i>weaver</i></sub>
 </p>
 
 <p align="center">
-  <b>Label an issue. Get a pull request.</b><br>
-  A software factory that runs on your own machine, out of your own repo, with your own agents.
+  <b>Give your agents a game plan.</b><br>
+  Label an issue. Get a pull request. A software factory that runs on your own machine, out of your
+  own repo, with your own agents.
 </p>
 
 ---
 
-issue-herd watches **Linear** or **GitHub Issues**. When an issue matches one of your rules it cuts
+weawr watches **Linear** or **GitHub Issues**. When an issue matches one of your rules it cuts
 a git worktree, opens a **herdr** workspace, starts a **coding agent** in it (Claude Code by
 default; codex, gemini, cursor — whatever herdr can start, per rule), hands it a written brief made
 from the issue and your repo's own instructions, and then reports back on the issue: picked up →
@@ -36,7 +38,7 @@ One line per thing that happened, and one live line at the bottom rewritten afte
 ## Why you'd want it
 
 - **It is your repo's factory, not a service.** The tracker, the rules and the agent's briefing all
-  live in `.issue-herd/` inside the repository, committed and reviewed like code. Your token stays
+  live in `.weawr/` inside the repository, committed and reviewed like code. Your token stays
   on your machine. Nothing about your codebase leaves your laptop that you did not already send to
   your agent.
 - **It never double-works an issue.** Three independent guards — a real claim label written to the
@@ -62,27 +64,27 @@ One line per thing that happened, and one live line at the bottom rewritten afte
 ## Install
 
 ```bash
-npm install -g github:jmwind/issue-herd
+npm install -g github:jmwind/weawr
 ```
 
 You need **Node 22+**, the `herdr` CLI with its server running,
 an agent on your PATH and logged in (`claude`, `codex`, …), and `gh` logged in so agents can open
-pull requests. Update with `issue-herd update`; the watcher tells you when there is a new version.
+pull requests. Update with `weawr update`; the watcher tells you when there is a new version.
 
 ## Set up a repository
 
 ```bash
 cd ~/Code/your-repo
-issue-herd init          # writes .issue-herd/, gitignores the right things
-issue-herd login         # once per machine, for every repo (uses `gh auth token` if you have it)
-issue-herd smoke         # end-to-end test against herdr with a fake issue, no tracker calls
-issue-herd dry-run       # what your rules would pick up right now, touching nothing
+weawr init          # writes .weawr/, gitignores the right things
+weawr login         # once per machine, for every repo (uses `gh auth token` if you have it)
+weawr smoke         # end-to-end test against herdr with a fake issue, no tracker calls
+weawr dry-run       # what your rules would pick up right now, touching nothing
 ```
 
 Then edit the two files `init` wrote, and commit them:
 
-- **`.issue-herd/config.json`** — the rules. What to pick up, how many at a time, which agent.
-- **`.issue-herd/instructions.md`** — how to work in *this* repo. The checks to run before a PR,
+- **`.weawr/config.json`** — the rules. What to pick up, how many at a time, which agent.
+- **`.weawr/instructions.md`** — how to work in *this* repo. The checks to run before a PR,
   the things never to do, your branch and PR conventions, when to stop and ask a human. Every
   agent gets it appended to its brief. This file is most of the difference between a factory that
   produces work and one that produces cleanup.
@@ -92,8 +94,8 @@ Create the label your rules trigger on (`ai`, say). The claim label is created f
 Now run the watcher, inside herdr, from the repo:
 
 ```bash
-herdr tab create --label issue-herd --cwd "$PWD" --no-focus
-herdr pane run <pane-id> "issue-herd"
+herdr tab create --label weawr --cwd "$PWD" --no-focus
+herdr pane run <pane-id> "weawr"
 ```
 
 One watcher per repository. Leave the pane alone — herdr keeps it alive when you detach.
@@ -101,7 +103,7 @@ One watcher per repository. Leave the pane alone — herdr keeps it alive when y
 ## Example factories
 
 Four configurations, from a one-line factory to a two-shift line. Copy one into
-`.issue-herd/config.json` — it is strict JSON, no comments — and every rule inherits `defaults`.
+`.weawr/config.json` — it is strict JSON, no comments — and every rule inherits `defaults`.
 Every key is explained in the [configuration reference](docs/configuration.md).
 
 ### One agent, one label
@@ -169,7 +171,7 @@ falls through to the general rule.
 
 ### The night shift, on one machine only
 
-`.issue-herd/config.local.json` is gitignored, has the same shape, and is layered over
+`.weawr/config.local.json` is gitignored, has the same shape, and is layered over
 `config.json`: top-level keys replace, `defaults` merge key by key, rules merge by `name`. This is
 where "my laptop runs it differently" goes without touching what the team committed.
 
@@ -203,7 +205,7 @@ insensitive), combined with `and` `or` `not` and parentheses. Two terms side by 
 Try one before you commit it:
 
 ```bash
-issue-herd match "label:ai and team:ENG"
+weawr match "label:ai and team:ENG"
 ```
 
 The same fields work on every tracker — the full table, and what each one maps to on GitHub, is in
@@ -213,18 +215,18 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 
 | command | what it does |
 |---|---|
-| `issue-herd` | **the watcher.** Evaluates your rules every `pollSeconds`, picks up matches, supervises them. Config edits are picked up live, no restart. |
-| `issue-herd once` | one poll, then exit (stays up while it supervises what it took) |
-| `issue-herd dry-run` | print what would be picked up, change nothing |
-| `issue-herd match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing |
-| `issue-herd status` | tracked runs, their outcome, and each live agent's state |
-| `issue-herd console` | **the factory floor**: every factory on this machine, in a browser, phone first — what needs you, what is assembling, today's output |
-| `issue-herd reset <KEY>` | forget a run so the issue can be picked up again |
-| `issue-herd login [linear\|github] [--paste]` | sign in and save the token for this machine |
-| `issue-herd logout [linear\|github]` | forget the saved token |
-| `issue-herd smoke` | end-to-end herdr test with a fake issue, no tracker calls |
-| `issue-herd init [--tracker linear\|github]` | scaffold `.issue-herd/` in the current repo |
-| `issue-herd update` | reinstall from GitHub; prints the old and new version |
+| `weawr` | **the watcher.** Evaluates your rules every `pollSeconds`, picks up matches, supervises them. Config edits are picked up live, no restart. |
+| `weawr once` | one poll, then exit (stays up while it supervises what it took) |
+| `weawr dry-run` | print what would be picked up, change nothing |
+| `weawr match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing |
+| `weawr status` | tracked runs, their outcome, and each live agent's state |
+| `weawr console` | **the factory floor**: every factory on this machine, in a browser, phone first — what needs you, what is assembling, today's output |
+| `weawr reset <KEY>` | forget a run so the issue can be picked up again |
+| `weawr login [linear\|github] [--paste]` | sign in and save the token for this machine |
+| `weawr logout [linear\|github]` | forget the saved token |
+| `weawr smoke` | end-to-end herdr test with a fake issue, no tracker calls |
+| `weawr init [--tracker linear\|github]` | scaffold `.weawr/` in the current repo |
+| `weawr update` | reinstall from GitHub; prints the old and new version |
 
 ## Docs
 
@@ -235,6 +237,7 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 | [Roles](docs/roles.md) | several agents on one issue, a reviewer on another provider, `basedOn`, `passes`, nudges between roles |
 | [How it works](docs/how-it-works.md) | the guards, a run start to finish, what happens when the PR merges, the console, troubleshooting |
 | [Maintainers](docs/maintainers.md) | cutting a release, hacking on the tool |
+| [Migrating from issue-herd](docs/migrating.md) | the rename: what changed name, and the order to move an install and its repositories over |
 | [The mark](assets/logo/README.md) | the logo, and the rules for using it |
 
 ## License
