@@ -34,8 +34,15 @@ try {
     if (/package\/apps\/cli\/src\//.test(listing)) fail('the tarball includes apps/cli/src');
   }
   // npm 11 runs a git dependency's prepare script only when allowed by name; older npm ignores the flag.
-  sh('npm', ['install', '-g', '--prefix', prefix, '--allow-scripts=weawr', spec], { cwd: tmp, env, stdio: ['ignore', 'pipe', 'inherit'] });
+  console.log(`npm ${sh('npm', ['--version'], { env }).trim()} on node ${process.version} (${process.platform})`);
+  sh('npm', ['install', '-g', '--prefix', prefix, '--allow-scripts=weawr', '--loglevel=notice', spec], { cwd: tmp, env, stdio: ['ignore', 'inherit', 'inherit'] });
   const bin = path.join(prefix, process.platform === 'win32' ? '' : 'bin', 'weawr');
+  if (!fs.existsSync(bin)) {
+    // Say what npm did install, so a missing artifact can be told from a missing link.
+    const installed = path.join(prefix, process.platform === 'win32' ? 'node_modules' : 'lib/node_modules', 'weawr');
+    const tree = (dir, depth) => { try { return fs.readdirSync(dir).flatMap((n) => { const p = path.join(dir, n); return depth > 0 && fs.statSync(p).isDirectory() ? [p, ...tree(p, depth - 1)] : [p]; }); } catch (e) { return [`${dir}: ${e.message}`]; } };
+    fail(`npm exited 0 but ${bin} does not exist. Under ${prefix}:\n${tree(prefix, 3).map((p) => path.relative(prefix, p)).join('\n')}\napps/cli/dist: ${tree(path.join(installed, 'apps/cli/dist'), 1).map((p) => path.relative(installed, p)).join(', ')}`);
+  }
   const version = sh(bin, ['--version'], { env }).trim();
   const expected = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
   if (version !== expected) fail(`installed weawr reports ${version}, expected ${expected}`);
