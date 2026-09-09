@@ -1,7 +1,7 @@
 // @weawr/engine — the factory: lifecycle, commands and observations, with injected dependencies.
-export { FactoryEngine, defaultGit, trackerBanner, watchLabel } from './factory.js';
+export { FactoryEngine, PINNED_POLICY, defaultGit, policyOf, trackerBanner, watchLabel } from './factory.js';
 export type { EngineOptions, EngineHooks, GitRunner, RegistrationTarget } from './factory.js';
-export { DEFAULTS, EVENTS, configStamp, expandConfigPath, loadConfig, loadEnvFiles } from './config.js';
+export { DEFAULTS, EVENTS, configStamp, expandConfigPath, loadConfig, loadEnvFiles, templateOrigin } from './config.js';
 export type { ConfigSources, FactoryConfig, Rule } from './config.js';
 export { briefVars, passLine, renderBrief } from './brief.js';
 export { factoryPaths, findRepoRoot, shortHash, userDir } from './paths.js';

@@ -164,6 +164,31 @@ export function conflictPrompt({ prUrl, branch, baseRef, briefPath }) {
 }
 
 /**
+ * Merge one pull request, and only while its head is `sha`: GitHub refuses the merge (HTTP 409)
+ * when the head has moved since the caller looked, which is exactly the check a verdict about one
+ * commit needs. Repository protections (required reviews, checks) are enforced by GitHub too — a
+ * 405 here is the branch protection saying no. Returns { merged, sha, message }.
+ */
+export async function mergePr(url, { token, host = 'github.com', method = 'squash', sha, fetchImpl = fetch } = {}) {
+  const pr = parsePrUrl(url);
+  if (!pr) throw new Error(`not a pull request URL: ${url}`);
+  if (pr.host !== host) throw new Error(`${pr.host} is not the GitHub host this machine trusts (${host}); not merging ${url}`);
+  if (!token) throw new Error('no GitHub token on this machine; a merge needs one');
+  if (!sha) throw new Error('a merge names the head it approves; none given');
+  const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'weawr', authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const res = await fetchImpl(`${apiBase(host)}/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/merge`, { method: 'PUT', headers, body: JSON.stringify({ merge_method: method, sha }) });
+  const text = await res.text();
+  let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
+  if (!res.ok) {
+    const why = res.status === 409 ? 'the head moved since it was reviewed' : res.status === 405 ? 'GitHub refused it (branch protection, or not mergeable)' : `HTTP ${res.status}`;
+    const e = new Error(`GitHub did not merge ${url}: ${why}${json?.message ? ` — ${json.message}` : ''}`);
+    e.status = res.status;
+    throw e;
+  }
+  return { merged: !!json?.merged, sha: json?.sha || sha, message: json?.message || '' };
+}
+
+/**
  * The pull request whose head is `branch` in `repo` ("owner/name"), or null. Every run has a
  * branch, so this finds the PR even when the run never recorded one (an older result, a PR
  * opened by hand, a result written after the watcher stopped reading it). Newest first, so a

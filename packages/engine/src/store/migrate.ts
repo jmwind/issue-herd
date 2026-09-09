@@ -101,6 +101,8 @@ export function migrateLegacyState(opts: MigrationOptions): MigrationResult {
       store.appendEvent('factory.migrated', { data: { from: 'state.json', runs: Object.keys(runs).length, backupDir } }, now());
       store.setMeta('migrated_at', now().toISOString());
       store.setMeta('migrated_from', paths.statePath);
+      // What this factory was running: the original briefs. An upgrade is a decision, not a side effect.
+      store.setMeta('recipe_revision', '1');
     });
     // The JSON file steps aside only after the store has it. Not deleted: it is the rollback.
     fs.renameSync(paths.statePath, `${paths.statePath}.migrated`);

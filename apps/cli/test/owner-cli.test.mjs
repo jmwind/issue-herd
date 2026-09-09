@@ -15,6 +15,7 @@ function runsIn(dir) { const v = readFactoryState(factoryPaths(dir)); const runs
 const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
 const ENGINE = fileURLToPath(new URL('../../../packages/engine/dist/index.js', import.meta.url));
 const IPC = fileURLToPath(new URL('../build/transports/ipc.js', import.meta.url));
+const PROMPTS = fileURLToPath(new URL('../../../packages/recipes/prompts', import.meta.url));
 
 function repo(t, runs) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-owner-')));
@@ -37,14 +38,17 @@ function owner(t, dir, { serve }) {
     const r = acquireOwnership({ lockPath: paths.lockPath, ownerPath: paths.ownerPath, card: { factoryId: 'f', hostId: 'h', startedAt: 'now', version: 'test', socketPath: ${serve ? 'paths.socketPath' : 'null'} } });
     if (!r.ok) { process.stdout.write('busy\\n'); process.exit(2); }
     if (${serve}) {
-      const engine = new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: '/nonexistent' }), tracker: null, herdr: { async agentGet() { return null; } }, paths, promptsRoot: '/nonexistent', ids: { hostId: 'h', factoryId: 'f' }, log: () => {} });
+      const engine = new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: ${JSON.stringify(PROMPTS)} }), tracker: null, herdr: { async agentGet() { return null; } }, paths, promptsRoot: ${JSON.stringify(PROMPTS)}, ids: { hostId: 'h', factoryId: 'f' }, log: () => {} });
       await serveIpc(createApplication(engine), paths.socketPath);
     }
     process.stdout.write('ready\\n');
     setInterval(() => {}, 1000);
   `], { stdio: ['ignore', 'pipe', 'inherit'] });
   t.after(() => child.kill('SIGKILL'));
-  return new Promise((resolve, reject) => { child.stdout.on('data', (d) => { if (String(d).includes('ready')) resolve(child); if (String(d).includes('busy')) reject(new Error('fixture could not take the lock')); }); });
+  return new Promise((resolve, reject) => {
+    child.stdout.on('data', (d) => { if (String(d).includes('ready')) resolve(child); if (String(d).includes('busy')) reject(new Error('fixture could not take the lock')); });
+    child.on('exit', (code) => reject(new Error(`the owner fixture exited with ${code}`)));
+  });
 }
 
 test('with a running owner, status and reset are answered by it, and the file it wrote agrees', async (t) => {

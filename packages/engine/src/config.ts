@@ -8,6 +8,7 @@ import { mergeConfig, overridePaths } from './config-merge.mjs';
 import { applyRoles, checkBasedOn, checkRoleBranches, normalizePasses, normalizeRole } from './claim.mjs';
 import { DEFAULT_MAX_NUDGES, normalizeMaxNudges } from './nudge.mjs';
 import { trackerClass, trackerSpec } from './adapters/trackers/index.mjs';
+import { LATEST_REVISION, validateTemplate } from '@weawr/recipes';
 import type { FactoryPaths } from './paths.js';
 
 export type EventPolicy = Record<string, any>;
@@ -79,6 +80,11 @@ export const DEFAULTS = {
   pullBase: true,
   // How many times, per issue, one role may nudge another before the watcher asks a person in. 0 turns it off.
   maxNudges: DEFAULT_MAX_NUDGES,
+  // The label on an issue that authorises `weawr merge` (recipe revision 2 and later): a person
+  // puts it there, weawr checks it is still there when the merge is asked for.
+  mergeLabel: 'auto-merge',
+  // How `weawr merge` merges: "squash" | "merge" | "rebase". Repository protections still apply.
+  mergeMethod: 'squash',
   defaults: {
     worktree: 'self',                 // who creates the worktree: "self" (weawr), "herdr", or "none" (run in this checkout)
     worktreeDir: '.weawr/worktrees',  // where "self" puts them, relative to the repo (gitignored)
@@ -113,8 +119,10 @@ export const EVENTS = ['onPickup', 'onDone', 'onBlocked', 'onIdle', 'onMerged'] 
 
 export interface ConfigSources {
   paths: FactoryPaths;
-  /** Where the bundled prompts live (the CLI's own prompts/ directory). */
+  /** Where the bundled prompts live (the CLI's own prompts/ directory, with one subdirectory per recipe revision). */
   promptsRoot: string;
+  /** The recipe revision this factory is pinned to; the latest bundled one when not given. */
+  recipeRevision?: number;
 }
 
 /**
@@ -124,18 +132,29 @@ export interface ConfigSources {
  * agent follows. An absolute path or a leading ~ would let a repository copy your credentials file
  * into the working tree the agent commits from.
  */
-export function expandConfigPath(sources: ConfigSources, p: string): string {
+export function expandConfigPath(sources: ConfigSources, p: string, revision: number = sources.recipeRevision ?? LATEST_REVISION): string {
   const { configDir, repo } = sources.paths;
   const inRepo = path.resolve(configDir, p);
   if (inRepo !== configDir && !inRepo.startsWith(configDir + path.sep)) {
     throw new Error(`config path "${p}" must stay inside ${path.relative(repo, configDir)}/`);
   }
   if (fs.existsSync(inRepo)) return inRepo;
-  // Bundled prompts are addressed as "prompts/<file>", the package layout they have always had.
+  // Bundled prompts are addressed as "prompts/<file>", the layout they have always had; on disk
+  // every recipe revision is kept, and the factory's pinned one is the one that answers.
   const rel = p.replace(/^prompts[\\/]/, '');
-  const inPkg = path.resolve(sources.promptsRoot, rel);
+  const inPkg = path.resolve(sources.promptsRoot, String(revision), rel);
   if (inPkg.startsWith(sources.promptsRoot + path.sep) && fs.existsSync(inPkg)) return inPkg;
+  // Files that are not per-revision (the scaffold instructions) live at the root of the bundle.
+  const atRoot = path.resolve(sources.promptsRoot, rel);
+  if (atRoot.startsWith(sources.promptsRoot + path.sep) && fs.existsSync(atRoot)) return atRoot;
   return inRepo;
+}
+
+/** Whether a rule's template comes from the repository (custom) or the bundled recipe. */
+export function templateOrigin(sources: ConfigSources, p: string): 'repository' | 'bundled' | 'missing' {
+  const inRepo = path.resolve(sources.paths.configDir, p);
+  if (fs.existsSync(inRepo)) return 'repository';
+  return fs.existsSync(expandConfigPath(sources, p)) ? 'bundled' : 'missing';
 }
 
 function readInstructions(sources: ConfigSources, file: string | null): string {
@@ -175,8 +194,19 @@ export function loadConfig(sources: ConfigSources): FactoryConfig {
     }
     try { rule.compiled = compile(rule.match); } catch (e: any) { throw new Error(`rule "${rule.name}": ${e.message}`); }
     rule.instructions = [rule.instructions, readInstructions(sources, rule.instructionsFile)].filter(Boolean).join('\n\n');
+    // The template is checked here, where the fix is one file away, not at 3am when a brief
+    // renders with a hole in it. A disabled rule's template is still checked: it is still a rule.
+    if (rule.prompt) {
+      const origin = templateOrigin(sources, rule.prompt);
+      if (origin === 'missing') throw new Error(`rule "${rule.name}": prompt ${JSON.stringify(rule.prompt)} is not a file in ${path.relative(paths.repo, paths.configDir)}/ or in the bundled recipe`);
+      const check = validateTemplate(fs.readFileSync(expandConfigPath(sources, rule.prompt), 'utf8'));
+      if (!check.ok) throw new Error(`rule "${rule.name}": prompt ${JSON.stringify(rule.prompt)}${origin === 'repository' ? '' : ' (bundled)'}: ${check.problems.join('; ')}`);
+      rule.templateOrigin = origin; rule.templateProtocol = check.protocol;
+    }
     return rule as Rule;
   });
+  cfg.mergeLabel = String(cfg.mergeLabel || '').trim() || null;
+  if (!['squash', 'merge', 'rebase'].includes(cfg.mergeMethod)) throw new Error(`"mergeMethod" must be "squash", "merge" or "rebase", not ${JSON.stringify(cfg.mergeMethod)}`);
   checkBasedOn(checkRoleBranches(applyRoles(cfg.rules, cfg.roles)));
   cfg.stamp = configStamp(sources, cfg);
   return cfg as FactoryConfig;

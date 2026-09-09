@@ -28,7 +28,7 @@ const { agentPlacement, isBlocked, isNameTaken } = _herdr as Record<string, any>
 const { desiredBranch, reconcileBranch } = _branch as Record<string, any>;
 const { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } = _worktree as Record<string, any>;
 const { agentArgv, describeAgent, exitCommandFor } = _agents as Record<string, any>;
-const { conflictPrompt, keepMergeable, parsePrUrl, prState, watchesMerge } = _pr as Record<string, any>;
+const { conflictPrompt, keepMergeable, mergePr, parsePrUrl, prState, watchesMerge } = _pr as Record<string, any>;
 const { nudgedByLabel, nudgesIn, nudgesLeft, nudgesSent, planNudge } = _nudge as Record<string, any>;
 const { GitHubTracker } = _github as Record<string, any>;
 import { briefVars, renderBrief } from './brief.js';
@@ -43,7 +43,8 @@ import { JsonStateStore, readJson } from './state.js';
 import { isDurable } from './store/index.js';
 import type { PendingAction } from './store/sqlite.js';
 import { attemptId, roleRunId, taskId, trackerScope } from './identity.js';
-import { contentHash } from '@weawr/recipes';
+import { LATEST_REVISION, RECIPE_ID, contentHash, diffTemplates, revision as recipeRevisionInfo } from '@weawr/recipes';
+import { describeIssues, validateResult, verdictOf } from '@weawr/protocol';
 import type { FactoryState, StateStore } from './state.js';
 import type { Ownership } from './ownership.js';
 
@@ -82,6 +83,8 @@ export interface EngineOptions {
   live?: (text: string) => void;
   hooks?: EngineHooks;
   registration?: RegistrationTarget | null;
+  /** For pull-request calls to GitHub; a test hands in its own. */
+  fetchImpl?: typeof fetch;
 }
 
 /** How long one `herdr agent wait` may block before the supervisor re-reads result.json. */
@@ -115,16 +118,19 @@ export class FactoryEngine {
   readonly git: GitRunner;
   readonly clock: () => Date;
   readonly hooks: EngineHooks;
+  readonly fetchImpl: typeof fetch;
   private readonly logger: (line: string) => void;
   /** Where the process announces itself on this machine; null for an engine that should not (a test, a dry run). */
   registration: RegistrationTarget | null;
   /** Set by stop(): the loop finishes its poll, checkpoints, and returns. Agents are left exactly as they are. */
   stopping = false;
+  /** The recipe revision this factory renders new work with. Pinned in the store; changed only by upgradeRecipe(). */
+  recipeRevision: number;
   private wake: (() => void) | null = null;
   /** How many times a pending external action is tried before it is left for a person. */
   static readonly MAX_PENDING_ATTEMPTS = 3;
 
-  constructor({ cfg, tracker, herdr, dry = false, paths, promptsRoot, store, ids, version = '0.0.0', git = defaultGit, clock = () => new Date(), log, live, hooks = {}, registration = null }: EngineOptions) {
+  constructor({ cfg, tracker, herdr, dry = false, paths, promptsRoot, store, ids, version = '0.0.0', git = defaultGit, clock = () => new Date(), log, live, hooks = {}, registration = null, fetchImpl = fetch }: EngineOptions) {
     this.cfg = cfg;
     this.tracker = tracker; // null in smoke mode
     this.herdr = herdr;
@@ -137,9 +143,161 @@ export class FactoryEngine {
     this.git = git;
     this.clock = clock;
     this.hooks = { live: live ?? (() => {}), ...hooks };
+    this.fetchImpl = fetchImpl;
     this.logger = log ?? ((line?: any) => console.log(line));
     this.registration = registration;
     this.state = this.store.load();
+    // A factory keeps the recipe it was set up with until told otherwise. A brand-new store takes
+    // the latest bundled one and remembers it; a migrated one was pinned by the migration.
+    let pinned = isDurable(this.store) ? Number(this.store.meta('recipe_revision')) || 0 : 0;
+    if (!pinned) { pinned = LATEST_REVISION; if (isDurable(this.store) && !this.store.readOnly) this.store.setMeta('recipe_revision', String(pinned)); }
+    this.recipeRevision = pinned;
+    this.sources.recipeRevision = pinned;
+  }
+
+  /**
+   * The rule a run lives under, for lifecycle decisions: the live rule with the policy the run was
+   * started under laid over it. A rule that was edited does not change a running attempt's
+   * cleanup, agent or merge policy; a rule that was removed leaves the run its saved policy rather
+   * than today's defaults. Scheduling limits (maxConcurrent, enabled) stay live. `weawr task
+   * reconfigure` is the explicit way to move an active run onto the current policy.
+   */
+  ruleFor(run: any): any {
+    const live = this.cfg.rules.find((r: any) => r.name === run.rule) || null;
+    const pinned = run.policy && typeof run.policy === 'object' ? run.policy : {};
+    if (!live) return { ...this.cfg.defaults, ...pinned, name: run.rule, repo: this.paths.repo, role: run.role ?? null, maxConcurrent: this.cfg.defaults.maxConcurrent };
+    return { ...live, ...pinned, maxConcurrent: live.maxConcurrent, enabled: live.enabled };
+  }
+
+  /** Move an active run onto the current config's policy for its rule: explicit, logged, evented. */
+  reconfigure(key: string): { policy: Record<string, unknown>; changed: string[] } {
+    const run = this.state.runs[key];
+    if (!run) throw new Error(`no run ${key}`);
+    const live = this.cfg.rules.find((r: any) => r.name === run.rule);
+    if (!live) throw new Error(`run ${key}: its rule "${run.rule}" is not in the config any more, so there is no current policy to move it onto`);
+    const next = policyOf(live);
+    const before = run.policy || {};
+    const changed = Object.keys(next).filter((k) => JSON.stringify((before as any)[k]) !== JSON.stringify(next[k]));
+    run.policy = next;
+    this.commit(() => { this.saveState(); this.emit('run.reconfigured', key, { changed }); });
+    this.log(`${key}: policy moved onto the current config (${changed.length ? changed.join(', ') : 'nothing changed'})`);
+    return { policy: next, changed };
+  }
+
+  /**
+   * Read a run's result file. null when there is none (or it is half-written and does not parse
+   * yet); { invalid } when it parses but does not check — which is reported once per distinct
+   * content and never finalized, so a person can have the agent fix it.
+   */
+  async readResult(key: string, run: any, rule: any): Promise<{ result: any } | { invalid: true } | null> {
+    if (!run.resultPath || !fs.existsSync(run.resultPath)) return null;
+    const raw = readJson(run.resultPath, undefined);
+    if (raw === undefined) return null;
+    const checked = validateResult(raw);
+    if (checked.ok) { if (run.invalidResult) { delete run.invalidResult; this.saveState(); } return { result: checked.value }; }
+    const why = describeIssues(checked.issues);
+    const hash = contentHash(JSON.stringify(raw));
+    if (run.invalidResult?.hash !== hash) {
+      run.invalidResult = { hash, at: this.clock().toISOString(), issues: checked.issues };
+      this.commit(() => { this.saveState(); this.emit('run.result_invalid', key, { issues: checked.issues }); });
+      this.log(`${key}: result.json does not check and will not finish the turn: ${why}`);
+      await this.report(key, rule, rule.onBlocked, `⚠️ The result file for ${key} was written but does not check, so the turn is not finished: ${why}. Ask the agent in herdr workspace \`${run.workspaceId}\` to rewrite \`${run.resultPath}\` (whole, via a temporary file renamed into place).`, 'request');
+    }
+    return { invalid: true };
+  }
+
+  /**
+   * Accept a result on the agent's behalf: checked here, written whole (temporary file, then
+   * rename) where the supervisor reads it. What `weawr result` hands in.
+   */
+  submitResult(key: string, result: unknown): { accepted: true; path: string } {
+    const run = this.state.runs[key];
+    if (!run) throw new Error(`no run ${key}`);
+    if (run.status !== 'running' && run.status !== 'starting') throw new Error(`run ${key} is ${run.status}; a result is only taken from a running turn`);
+    const checked = validateResult(result);
+    if (!checked.ok) throw new Error(`the result does not check: ${describeIssues(checked.issues)}`);
+    fs.mkdirSync(path.dirname(run.resultPath), { recursive: true });
+    const tmp = `${run.resultPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(checked.value, null, 2) + '\n');
+    fs.renameSync(tmp, run.resultPath);
+    this.emit('run.result_submitted', key, { status: checked.value.status });
+    this.log(`${key}: result submitted through weawr (${checked.value.status})`);
+    return { accepted: true, path: run.resultPath };
+  }
+
+  /**
+   * Merge a run's pull request — the one deterministic route to an unattended merge. Every check
+   * is against what is true now: the merge label on the issue, every reviewing role's structured
+   * verdict for the PR's current head, the PR open and mergeable. GitHub enforces branch
+   * protection on top, and refuses when the head moves between the check and the merge.
+   */
+  async mergeRun(key: string, { requestedBy = 'cli' }: { requestedBy?: string } = {}): Promise<{ merged: boolean; reason: string | null; checks: Array<{ check: string; ok: boolean; detail: string }>; prUrl: string | null; headSha: string | null }> {
+    const run = this.state.runs[key];
+    const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
+    const refuse = (reason: string) => ({ merged: false, reason, checks, prUrl: run?.prUrl || null, headSha: null as string | null });
+    if (!run) return refuse(`no run ${key}`);
+    const prUrl = parsePrUrl(run.prUrl) ? run.prUrl : parsePrUrl(run.result?.prUrl) ? run.result.prUrl : null;
+    if (!prUrl) return refuse(`${key} has no pull request to merge`);
+    if (!this.tracker) return refuse('no tracker: the merge label cannot be checked');
+    if (!this.cfg.mergeLabel) return refuse('no mergeLabel is configured for this factory, so nothing can authorise an unattended merge');
+    const issueKey = run.issueKey || issueKeyOf(key);
+    // 1. authorisation: the label, on the issue, now
+    let fresh: any = null;
+    try { fresh = await this.tracker.issueByKey(issueKey); } catch (e: any) { return refuse(`could not read ${issueKey} to check the merge label: ${e.message}`); }
+    const labelled = !!fresh?.labels?.some((l: string) => l.toLowerCase() === this.cfg.mergeLabel.toLowerCase());
+    checks.push({ check: 'authorised', ok: labelled, detail: labelled ? `${issueKey} carries the ${this.cfg.mergeLabel} label` : `${issueKey} does not carry the ${this.cfg.mergeLabel} label (or could not be read)` });
+    // 2. the pull request, now
+    let pr: any;
+    try { pr = await this.askPr(prUrl); } catch (e: any) { return refuse(`could not read ${prUrl}: ${e.message}`); }
+    checks.push({ check: 'pr_open', ok: pr.state === 'open', detail: `${prUrl} is ${pr.state}` });
+    checks.push({ check: 'pr_mergeable', ok: pr.conflicts !== true, detail: pr.conflicts === true ? 'GitHub reports conflicts with the base' : pr.conflicts === null ? 'GitHub has not computed mergeability yet' : 'no conflicts' });
+    const head: string | null = pr.headSha || null;
+    // 3. every reviewing role's verdict, for this head
+    const reviewers = [...new Set(this.cfg.rules.filter((r: any) => r.enabled !== false && r.role && r.role !== run.role).map((r: any) => r.role as string))];
+    if (!reviewers.length) checks.push({ check: 'verdicts', ok: false, detail: 'this factory runs no reviewing role, so nothing can approve the head' });
+    for (const role of reviewers) {
+      const rr = this.state.runs[runKeyFor(issueKey, role)];
+      const v = verdictOf(rr?.result || null);
+      const sameHead = !!(head && v.headSha && (head.startsWith(v.headSha) || v.headSha.startsWith(head)));
+      const ok = v.source === 'structured' && v.verdict === 'approved' && sameHead;
+      checks.push({ check: `verdict:${role}`, ok, detail: !rr?.result ? `${role} has not reported` : v.source === 'legacy' ? `${role} gave a prose verdict (${v.verdict}) that names no head, so it cannot approve ${head?.slice(0, 7)}` : v.verdict !== 'approved' ? `${role}: ${v.verdict}` : !sameHead ? `${role} approved ${v.headSha?.slice(0, 7) || 'an unnamed head'}, but the PR is now at ${head?.slice(0, 7)}` : `${role} approved ${head?.slice(0, 7)}` });
+    }
+    const failed = checks.filter((c) => !c.ok);
+    if (failed.length) { this.emit('run.merge_refused', key, { checks }); return { merged: false, reason: failed.map((c) => c.detail).join('; '), checks, prUrl, headSha: head }; }
+    // 4. merge, guarded by the head we checked
+    let outcome: any;
+    try { outcome = await mergePr(prUrl, { token: this.pr?.token, host: this.pr?.host, method: this.cfg.mergeMethod, sha: head, fetchImpl: this.fetchImpl }); }
+    catch (e: any) { this.emit('run.merge_refused', key, { checks, error: e.message }); return { merged: false, reason: e.message, checks, prUrl, headSha: head }; }
+    this.commit(() => { run.mergeRequestedAt = this.clock().toISOString(); run.mergedBy = requestedBy; this.saveState(); this.emit('run.merge_requested', key, { prUrl, headSha: head, by: requestedBy, method: this.cfg.mergeMethod }); });
+    this.log(`${key}: ${prUrl} merged (${this.cfg.mergeMethod}) at ${head?.slice(0, 7)} — ${this.cfg.mergeLabel} on ${issueKey}, ${reviewers.join(', ')} approved`);
+    const body = `🔀 **weawr** merged ${prUrl} (${this.cfg.mergeMethod}) at \`${head?.slice(0, 7)}\`: the issue carries \`${this.cfg.mergeLabel}\` and ${reviewers.map((r) => `\`${r}\``).join(', ')} approved that head.`;
+    await this.performOwed([{ id: this.owe('tracker.comment', { issueId: run.issueId, issueKey, body }, key), kind: 'tracker.comment', data: { issueId: run.issueId, issueKey, body }, runKey: key }]);
+    return { merged: !!outcome.merged, reason: null, checks, prUrl, headSha: head };
+  }
+
+  /**
+   * What an upgrade to `to` would change, per bundled template, and — unless `dryRun` — do it.
+   * Affects new work only: every run keeps the revision its turns were started with.
+   */
+  upgradeRecipe(to: number = LATEST_REVISION, { dryRun = false } = {}): { from: number; to: number; applied: boolean; templates: Array<{ name: string; origin: 'bundled' | 'repository'; diff: string | null }>; changes: string[] } {
+    const from = this.recipeRevision;
+    const target = recipeRevisionInfo(to);
+    if (!target) throw new Error(`recipe revision ${to} is not bundled with this weawr (latest: ${LATEST_REVISION})`);
+    const templates: Array<{ name: string; origin: 'bundled' | 'repository'; diff: string | null }> = [];
+    for (const name of target.templates) {
+      const inRepo = path.join(this.paths.configDir, 'prompts', name);
+      if (fs.existsSync(inRepo)) { templates.push({ name, origin: 'repository', diff: null }); continue; }
+      const read = (rev: number) => { try { return fs.readFileSync(path.join(this.sources.promptsRoot, String(rev), name), 'utf8'); } catch { return ''; } };
+      const before = read(from), after = read(to);
+      templates.push({ name, origin: 'bundled', diff: before === after ? '' : diffTemplates(before, after) });
+    }
+    const changes = [...target.changes];
+    if (!dryRun && to !== from) {
+      this.recipeRevision = to; this.sources.recipeRevision = to;
+      this.commit(() => { if (isDurable(this.store)) this.store.setMeta('recipe_revision', String(to)); this.emit('factory.recipe_upgraded', null, { from, to }); });
+      this.log(`recipe: revision ${from} → ${to}; runs already started keep revision ${from}`);
+    }
+    return { from, to, applied: !dryRun && to !== from, templates, changes };
   }
 
   /** An event: its own line, on screen (through the injected logger) and in the factory's log file. */
@@ -257,7 +415,7 @@ export class FactoryEngine {
   stop(): void { this.stopping = true; this.wake?.(); }
 
   /** The template a rule names, read from the repository's .weawr/ or the bundled prompts. */
-  readTemplate(name: string): string { return fs.readFileSync(expandConfigPath(this.sources, name), 'utf8'); }
+  readTemplate(name: string, revision: number = this.recipeRevision): string { return fs.readFileSync(expandConfigPath(this.sources, name, revision), 'utf8'); }
 
   /**
    * How many runs occupy a slot: running, starting, and the runs reserved for a nudged turn that has
@@ -355,6 +513,10 @@ export class FactoryEngine {
       // watch on it must not be lost to a result that forgot to repeat the URL.
       nudges: nudges.length ? nudges : undefined,
       prUrl: previous?.prUrl || undefined,
+      // The recipe a task started under is the recipe its later turns get; an upgrade is for new tasks.
+      recipeRevision: previous?.recipeRevision ?? this.recipeRevision,
+      // The policy this attempt runs under, as resolved now; ruleFor() lays it over the live rule.
+      policy: policyOf(rule),
     };
     run.ids = this.idsFor(issue, rule, key, run);
     this.state.runs[key] = run;
@@ -496,7 +658,7 @@ export class FactoryEngine {
         try { fs.renameSync(run.resultPath, run.previousResultPath); }
         catch (e: any) { this.log(`${key}: could not set the previous result aside (${e.message}); removing it instead`); fs.rmSync(run.resultPath, { force: true }); run.previousResultPath = null; }
       }
-      const brief = renderBrief(this.readTemplate(rule.prompt), briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, nudging: this.nudging(issue.identifier) }));
+      const brief = renderBrief(this.readTemplate(rule.prompt, run.recipeRevision), briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, nudging: this.nudging(issue.identifier), runKey: key, mergeLabel: this.cfg.mergeLabel }));
       run.briefPath = path.join(run.dir, 'brief.md');
       fs.writeFileSync(run.briefPath, brief);
       // The attempt's immutable record: which words it was given and under which policy. Written
@@ -738,7 +900,7 @@ export class FactoryEngine {
 
   async superviseLoop(key?: any) {
     const run = this.state.runs[key];
-    const rule = this.cfg.rules.find((r?: any) => r.name === run.rule) || this.cfg.defaults;
+    const rule = this.ruleFor(run);
     const name = run.agentName;
     while (run.status === 'running') {
       // A brief herdr would not take at pickup is owed to the agent; give it the moment it will.
@@ -749,8 +911,8 @@ export class FactoryEngine {
       // stops. Otherwise the handoff its result was meant to make would wait on the reviews it
       // is waiting for. A `timeout` answer just comes back round.
       const st = await this.herdr.waitAgent(name, { timeoutMs: RESULT_CHECK_MS });
-      const result = readJson(run.resultPath, null);
-      if (result) { await this.finalize(key, result, rule); return; }
+      const read = await this.readResult(key, run, rule);
+      if (read && 'result' in read) { await this.finalize(key, read.result, rule); return; }
       if (st === 'gone') {
         run.status = 'stopped'; run.finishedAt = this.clock().toISOString(); this.commit(() => { this.saveState(); this.emit('run.stopped', key, { why: 'agent exited without a result' }); });
         this.log(`${key}: agent exited without a result`);
@@ -1033,7 +1195,7 @@ export class FactoryEngine {
     for (const [key, run] of Object.entries(this.state.runs)) {
       if (run.status !== 'awaiting_merge' || !run.prUrl) continue;
       if (run.prCheckedAt && this.clock().getTime() - Date.parse(run.prCheckedAt) < PR_POLL_MS) continue;
-      const rule: any = this.cfg.rules.find((r?: any) => r.name === run.rule) || { ...this.cfg.defaults, repo: this.paths.repo };
+      const rule: any = this.ruleFor(run);
       let pr = null;
       try { pr = await this.askPr(run.prUrl); }
       catch (e: any) { this.warnOnce(`pr:${key}:${e.message}`, `${key}: cannot read ${run.prUrl}, so a merge cannot be seen: ${e.message}`); }
@@ -1145,7 +1307,7 @@ export class FactoryEngine {
       this.pr = { host: GitHubTracker.host(options), token };
       this.log(`  pull requests: ${this.pr.host}${token ? '' : ' (no GitHub token on this machine; only public repositories will answer)'}`);
     }
-    return prState(url, this.pr);
+    return prState(url, { ...this.pr, fetchImpl: this.fetchImpl });
   }
 
   /**
@@ -1181,9 +1343,9 @@ export class FactoryEngine {
       // A nudge held for a run that finished while the watcher was down is still owed.
       if (run.queuedNudges?.length && run.status !== 'running' && run.status !== 'starting') { await this.deliverQueuedNudges(key); continue; }
       if (run.status !== 'running' && run.status !== 'starting') continue;
-      const rule = this.cfg.rules.find((r?: any) => r.name === run.rule) || this.cfg.defaults;
-      const result = run.resultPath ? readJson(run.resultPath, null) : null;
-      if (result) { await this.finalize(key, result, rule); continue; }
+      const rule = this.ruleFor(run);
+      const read = await this.readResult(key, run, rule);
+      if (read && 'result' in read) { await this.finalize(key, read.result, rule); continue; }
       let agent;
       try { agent = await this.herdr.agentGet(run.agentName); }
       catch (e: any) { this.log(`${key}: could not check agent ${run.agentName}, leaving the run as ${run.status}: ${e.message}`); continue; }
@@ -1326,17 +1488,16 @@ export class FactoryEngine {
    */
   attemptSpec(issue: any, rule: any, run: any, brief: string, key: string) {
     let templateHash: string | null = null; let instructionsHash: string | null = null;
-    try { templateHash = contentHash(this.readTemplate(rule.prompt)); } catch { /* unknown */ }
+    try { templateHash = contentHash(this.readTemplate(rule.prompt, run.recipeRevision)); } catch { /* unknown */ }
     if (rule.instructions) instructionsHash = contentHash(rule.instructions);
-    const policy: Record<string, unknown> = {};
-    for (const k of ['worktree', 'worktreeDir', 'branch', 'permissionMode', 'agentKind', 'model', 'effort', 'agentArgs', 'claudeArgs', 'maxConcurrent', 'prompt', 'instructionsFile', 'claimLabel', 'role', 'passes', 'basedOn', 'skipIfAssignedToOthers', 'onPickup', 'onDone', 'onBlocked', 'onIdle', 'onMerged']) policy[k] = rule[k] ?? null;
+    const policy: Record<string, unknown> = { ...policyOf(rule), maxConcurrent: rule.maxConcurrent ?? null, instructionsFile: rule.instructionsFile ?? null, mergeLabel: this.cfg.mergeLabel, mergeMethod: this.cfg.mergeMethod };
     const head = this.git(['rev-parse', 'HEAD'], run.workDir || this.paths.repo);
     return {
       id: run.ids?.attemptId || attemptId(key, run.pass || 1, run.startedAt),
       runKey: key, issueKey: issue.identifier, pass: run.pass || 1, startedAt: run.startedAt,
       spec: {
         provenance: 'recorded', ids: run.ids || null,
-        recipe: { template: rule.prompt, templateHash, instructionsHash, briefHash: contentHash(brief), briefPath: run.briefPath },
+        recipe: { id: RECIPE_ID, revision: run.recipeRevision ?? this.recipeRevision, template: rule.prompt, templateOrigin: rule.templateOrigin || null, templateHash, instructionsHash, briefHash: contentHash(brief), briefPath: run.briefPath, resultSchema: 1 },
         briefHash: contentHash(brief),
         rule: rule.name, role: rule.role || null, policy,
         agent: { kind: rule.agentKind || 'claude', model: rule.model || null, effort: rule.effort || null, permissionMode: rule.permissionMode || null, args: [...(rule.agentArgs || []), ...(rule.claudeArgs || [])].map(String), name: run.agentName },
@@ -1371,4 +1532,12 @@ function slimIssue(issue: any) {
   if (!issue || typeof issue !== 'object') return issue;
   const { id, identifier, ref, url, team, project, state, assignee, assignees, labels } = issue;
   return { id, identifier, ref, url, team, project, state, assignee, assignees, labels };
+}
+
+/** The lifecycle policy a rule resolves to: what an attempt is pinned to. Scheduling limits are not policy. */
+export const PINNED_POLICY = ['worktree', 'worktreeDir', 'branch', 'permissionMode', 'agentKind', 'model', 'effort', 'agentArgs', 'claudeArgs', 'prompt', 'claimLabel', 'role', 'passes', 'basedOn', 'skipIfAssignedToOthers', 'onPickup', 'onDone', 'onBlocked', 'onIdle', 'onMerged'] as const;
+export function policyOf(rule: any): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of PINNED_POLICY) out[k] = rule?.[k] === undefined ? null : JSON.parse(JSON.stringify(rule[k]));
+  return out;
 }

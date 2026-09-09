@@ -121,6 +121,51 @@ There is no dual write: after migration the JSON file is a backup. Rollback (mov
 `factory.sqlite*`) is only sound before new work has started; afterwards the store is the truth.
 `packages/engine/src/store/migrate.ts`.
 
+## Recipes, results and the merge
+
+The effective prompt setup of a factory is a **recipe revision**: a set of templates and the
+result/nudge protocol they teach. Revisions are bundled side by side
+(`packages/recipes/prompts/<revision>/`) and kept: a factory is pinned to one (`recipe_revision`
+in its store — revision 1 for a migrated factory, the latest for a new one), and a task keeps the
+revision it started under for every later turn, nudged or not, while still getting the issue as it
+is now. `weawr recipe upgrade --dry-run` shows the difference per template; `weawr recipe upgrade`
+moves *new* tasks to it. A repository's own template in `.weawr/prompts/` is the repository's and
+is not touched by an upgrade. `packages/recipes/src/manifest.ts`, `FactoryEngine.upgradeRecipe`.
+
+| Revision | Verdicts | Merge |
+| --- | --- | --- |
+| 1 | prose first line (`OK TO MERGE TO MAIN`, `USABILITY: OK`, …) | the implementer merges itself when the issue's text grants it |
+| 2 | `review: { verdict, prUrl, headSha }` in the result, as well as the words | only `weawr merge <run key>`, when the issue carries the merge label |
+
+Every template is checked at config load (`validateTemplate`): unknown placeholders, a missing
+`{{resultPath}}`, or a declared protocol newer than this weawr are errors that name the file. A
+custom template without a declaration is a legacy template: accepted as protocol 1, never handed
+obligations it did not sign up for.
+
+Every attempt records what it was given: recipe id and revision, template origin and hash, the
+rendered brief's hash, the rule's resolved policy, agent/model/args, the weawr version, the
+repository head (`weawr task attempts <run key>`). A run keeps that policy for its lifecycle
+decisions (`FactoryEngine.ruleFor`): editing its rule's cleanup, agent or merge settings does not
+reach a running attempt, and removing the rule leaves the run its saved policy rather than today's
+defaults. Scheduling limits (`maxConcurrent`, `pollSeconds`, `lookbackDays`, `maxNudges`,
+`enabled`, `roles`) apply live. `weawr task reconfigure <run key>` is the explicit move onto the
+current policy, recorded as an event.
+
+A **result file** is checked against `packages/protocol/src/result.ts` before it finishes anything:
+a file that parses but does not check is reported to the owner once per distinct content and the
+turn stays open; a half-written file is simply not there yet; a `schemaVersion` newer than this
+weawr is refused, not guessed at. Agents write the file whole (temporary name, then rename), or hand
+it in with `weawr result <run key> --file …`, which checks it and writes it the same way.
+
+The **merge** (`weawr merge <run key>`, `FactoryEngine.mergeRun`) is the one route to an unattended
+merge and checks, at the moment it is asked: the issue carries the configured `mergeLabel` now;
+every reviewing role's latest result carries a *structured* `approved` verdict for the PR's
+*current* head (a prose verdict names no head and authorises nothing; an approval of head A never
+merges head B); the PR is open with no conflicts. Then it asks GitHub to merge *that* head
+(`sha` in the request, so a push in between is refused by GitHub itself), with the repository's
+branch protection enforced on top, and says on the issue what allowed it. Nothing in a brief
+claims to enforce this; the command does.
+
 ## Identities
 
 Records are keyed by stable ids; `GH-7` and role names stay what a person reads.

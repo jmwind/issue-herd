@@ -14,7 +14,8 @@ const CONFIG_DIR = path.join(REPO, '.weawr');
 const cfg = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'config.json'), 'utf8'));
 
 /** What the CLI's expand() does: `.weawr/<p>` if it is there, else the package's own copy. */
-const resolve = (p) => [path.join(CONFIG_DIR, p), path.join(REPO, 'packages/recipes', p)].find((f) => fs.existsSync(f)) || null;
+// Bundled prompts live one directory per recipe revision; the latest is what a fresh factory gets.
+const resolve = (p) => [path.join(CONFIG_DIR, p), path.join(REPO, 'packages/recipes/prompts/2', path.basename(p))].find((f) => fs.existsSync(f)) || null;
 
 test('the config this repository runs on itself loads', () => {
   // `status` is the cheapest command that builds the whole config: it validates every rule, both

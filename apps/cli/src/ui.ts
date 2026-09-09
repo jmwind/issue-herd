@@ -17,6 +17,10 @@ a git worktree and a herdr workspace, start a coding agent in it, brief it, and 
   weawr console set-passcode  set the passcode (digits) the console asks for; also serves it over Tailscale
   weawr console clear-passcode  forget the passcode; the console goes back to loopback only
   weawr migrate [--dry-run] move a factory's state.json into the durable store (the watcher does this on start)
+  weawr recipe [show|upgrade [--to N] [--dry-run]]  which briefs agents get; move to a newer bundled revision (new tasks only)
+  weawr merge <run-key>   merge a run's PR if the issue carries the merge label and every reviewer approved its current head
+  weawr result <run-key> --file F | --json J  hand in an agent's result through weawr (checked, written whole)
+  weawr task reconfigure <run-key>  move an active run onto the current policy; weawr task attempts <run-key> shows its record
   weawr update            reinstall the latest version from GitHub
   weawr --version
 

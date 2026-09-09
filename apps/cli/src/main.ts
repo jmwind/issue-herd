@@ -15,6 +15,8 @@ import { smoke } from './commands/smoke.js';
 import { consoleCommand } from './commands/console.js';
 import { update, updateReminder } from './commands/update.js';
 import { migrate } from './commands/migrate.js';
+import { recipe } from './commands/recipe.js';
+import { merge, submitResult, task } from './commands/task.js';
 
 // node:sqlite is what the durable store is built on; on Node 22 it still announces itself as
 // experimental on every start. That line belongs to nobody's terminal or JSON stream.
@@ -38,6 +40,10 @@ export async function main(argv: string[]): Promise<void> {
   if (cmd === 'reset') return reset(ctx, argv[1]);
   if (cmd === 'smoke') return smoke(ctx, argv);
   if (cmd === 'migrate') return migrate(ctx, argv.slice(1));
+  if (cmd === 'recipe') return recipe(ctx, argv.slice(1));
+  if (cmd === 'merge') return merge(ctx, argv.slice(1));
+  if (cmd === 'result') return submitResult(ctx, argv.slice(1));
+  if (cmd === 'task') return task(ctx, argv.slice(1));
   const tracker = makeTracker(ctx, cfg);
   if (cmd === 'match') return match(ctx, tracker, argv.slice(1));
   if (cmd === 'dry-run' || cmd === 'once' || cmd === 'run') return watch(ctx, tracker, cmd);

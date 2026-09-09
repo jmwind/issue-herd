@@ -43,7 +43,7 @@ ${nudgeQuote(run.nudges)}
 
 export interface Nudging { role: string | null; roles: string[]; left: number; max: number }
 
-export function briefVars({ issue, rule, run, tracker, nudging = null, now = new Date() }: { issue: any; rule: Rule; run: any; tracker: string; nudging?: Omit<Nudging, 'role'> | null; now?: Date }): Record<string, string> {
+export function briefVars({ issue, rule, run, tracker, nudging = null, now = new Date(), runKey = '', mergeLabel = null }: { issue: any; rule: Rule; run: any; tracker: string; nudging?: Omit<Nudging, 'role'> | null; now?: Date; runKey?: string; mergeLabel?: string | null }): Record<string, string> {
   const comments = issue.comments?.length
     ? issue.comments.map((c: any) => `- **${c.author}** (${c.createdAt.slice(0, 10)}): ${c.body.replace(/\r?\n/g, '\n  ')}`).join('\n')
     : '_none_';
@@ -93,6 +93,9 @@ export function briefVars({ issue, rule, run, tracker, nudging = null, now = new
       : '',
     instructions: rule.instructions || '',
     date: now.toISOString().slice(0, 10),
+    runKey,
+    // No label configured: the brief names one that no issue carries, so the route stays closed.
+    mergeLabel: mergeLabel || '(no merge label is configured; merging is not available)',
   };
   // One block, not three placeholders: an ordinary run has nothing to say about roles, turns or a
   // base branch, and three empty substitutions leave three blank lines in the middle of the brief.

@@ -15,6 +15,12 @@ export type Command =
   | { type: 'run.reset'; key: string; requestId?: string }
   | { type: 'agent.tail'; runKey: string; lines?: number }
   | { type: 'operation.show'; id: string }
+  | { type: 'run.merge'; key: string; requestId?: string; requestedBy?: string }
+  | { type: 'run.submitResult'; key: string; result: unknown; requestId?: string }
+  | { type: 'run.reconfigure'; key: string }
+  | { type: 'recipe.show' }
+  | { type: 'recipe.upgrade'; to?: number; dryRun?: boolean }
+  | { type: 'attempt.list'; key: string }
   | { type: 'events.after'; cursor: number; limit?: number }
   | { type: 'ping' };
 
@@ -89,6 +95,21 @@ export function createApplication(engine: FactoryEngine): Application {
         return { forgot: gone };
       })).then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
     },
+    async 'run.merge'({ key, requestId, requestedBy = 'cli' }) {
+      return serialized(issueKeyOf(key), () => operation(`factory:${engine.ids.factoryId}`, requestId, 'run.merge', { key }, () => engine.mergeRun(key, { requestedBy })))
+        .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
+    },
+    async 'run.submitResult'({ key, result, requestId }) {
+      return serialized(issueKeyOf(key), () => operation(`factory:${engine.ids.factoryId}`, requestId, 'run.submitResult', { key, result }, async () => engine.submitResult(key, result)))
+        .then(({ result: r, operation: op, replayed }) => ({ ...(r as object), operationId: op?.id ?? null, replayed }));
+    },
+    async 'run.reconfigure'({ key }) { return serialized(issueKeyOf(key), async () => engine.reconfigure(key)); },
+    async 'recipe.show'() {
+      const durable = isDurable(engine.store);
+      return { id: 'weawr-default', revision: engine.recipeRevision, latest: engine.upgradeRecipe(undefined, { dryRun: true }).to, pinnedIn: durable ? 'store' : 'memory', rules: engine.cfg.rules.map((r: any) => ({ name: r.name, role: r.role, prompt: r.prompt, origin: r.templateOrigin || null, protocol: r.templateProtocol || null })) };
+    },
+    async 'recipe.upgrade'({ to, dryRun = false }) { return engine.upgradeRecipe(to, { dryRun }); },
+    async 'attempt.list'({ key }) { return { attempts: isDurable(engine.store) ? engine.store.attempts(key) : [] }; },
     async 'operation.show'({ id }) {
       if (!isDurable(engine.store)) throw new ApplicationError('not_tracked', 'this factory has no durable store, so operations are not tracked');
       const op = engine.store.operation(id);
