@@ -32,9 +32,19 @@ export function serveIpc(app: Application, socketPath: string, log: (m: string) 
       sock.on('error', (e) => log(`ipc: ${e.message}`));
     });
     server.on('error', reject);
-    server.listen(socketPath, () => {
-      try { if (process.platform !== 'win32') fs.chmodSync(socketPath, 0o600); } catch { /* best effort */ }
-      resolve({ path: socketPath, close: () => new Promise((r) => { server.close(() => { try { fs.rmSync(socketPath, { force: true }); } catch { /* gone */ } r(); }); }) });
+    // Node unlinks the name a Unix socket server was bound to when that server closes. A restart
+    // hands over by binding the same path before the old server has closed, so each server binds
+    // a name of its own and renames it into place: closing then unlinks only that private name,
+    // and the socket file at `socketPath` is removed only while it is still ours.
+    const own = process.platform === 'win32' ? socketPath : `${socketPath}.${process.pid}`;
+    try { if (own !== socketPath) fs.rmSync(own, { force: true }); } catch { /* not there */ }
+    server.listen(own, () => {
+      let ino: number | null = null;
+      try {
+        if (own !== socketPath) { fs.chmodSync(own, 0o600); fs.renameSync(own, socketPath); ino = fs.statSync(socketPath).ino; }
+      } catch (e: any) { server.close(); reject(new Error(`could not place the owner's socket at ${socketPath}: ${e.message}`)); return; }
+      const removeOwn = () => { try { if (ino !== null && fs.statSync(socketPath).ino === ino) fs.rmSync(socketPath, { force: true }); } catch { /* gone */ } };
+      resolve({ path: socketPath, close: () => new Promise((r) => { server.close(() => { removeOwn(); r(); }); }) });
     });
   });
 }

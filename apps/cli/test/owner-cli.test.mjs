@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { callOwner, OWNER_OFFLINE } from '../build/transports/ipc.js';
+import { callOwner, serveIpc, OWNER_OFFLINE } from '../build/transports/ipc.js';
 import { factoryPaths, readFactoryState } from '@weawr/engine';
 function runsIn(dir) { const v = readFactoryState(factoryPaths(dir)); const runs = v.state.runs; v.store?.close(); return runs; }
 
@@ -80,6 +80,21 @@ test('a transport failure is its own error, distinguishable from an agent being 
   const r = await callOwner(path.join(os.tmpdir(), `weawr-nobody-${process.pid}.sock`), { type: 'ping' });
   assert.equal(r.ok, false);
   assert.equal(r.error.code, OWNER_OFFLINE);
+});
+
+test('a successor on the same socket path is not unplugged when its predecessor closes', async (t) => {
+  // A restart hands over this way: the new owner binds the path before the old one has finished
+  // closing. The old close removes only the socket it made, so the new owner stays reachable.
+  const sock = path.join(os.tmpdir(), `weawr-handover-${process.pid}.sock`);
+  const app = (name) => ({ async dispatch() { return { ok: true, result: name }; } });
+  const first = await serveIpc(app('first'), sock);
+  const second = await serveIpc(app('second'), sock);
+  t.after(() => second.close());
+  await first.close();
+  assert.ok(fs.existsSync(sock), 'the socket file is still there');
+  const r = await callOwner(sock, { type: 'ping' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.result, 'second');
 });
 
 test('with no owner, reset takes the lock for the write and gives it back', (t) => {

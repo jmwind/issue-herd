@@ -7,8 +7,9 @@
 //   weawr               the watcher, on the factory in WEAWR_DEV_FACTORY (default: the current
 //                       directory when it has a .weawr/config.json, else this repository's own)
 //
-// — and restart both whenever a package's compiled output changes. A restart is safe by design:
-// the watcher's pending work is durable and its agents are never touched. WEAWR_DEV_PORT moves the
+// — and restart both whenever a package's compiled output changes, the old pair stopped and gone
+// before the new one binds the same socket and port. A restart is safe by design: the watcher's
+// pending work is durable and its agents are never touched. WEAWR_DEV_PORT moves the
 // console; WEAWR_DEV_WATCHER=0 runs the server alone.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,8 +54,15 @@ const factory = process.env.WEAWR_DEV_FACTORY || (fs.existsSync(path.join(cwd, '
 const withWatcher = process.env.WEAWR_DEV_WATCHER !== '0';
 
 let serve = null, watcher = null;
-function start() {
-  for (const c of [serve, watcher]) if (c) c.kill();
+/** Stop a child and wait for it to be gone: the successor binds the same socket and port. */
+const stopped = (c) => new Promise((r) => {
+  if (!c || c.exitCode !== null || c.signalCode !== null) return r();
+  const t = setTimeout(() => c.kill('SIGKILL'), 5000);
+  c.once('exit', () => { clearTimeout(t); r(); });
+  c.kill();
+});
+async function start() {
+  await Promise.all([stopped(serve), stopped(watcher)]);
   log(`serve: weawr serve --dev --port ${port}`);
   serve = run('serve', [main, 'serve', '--dev', '--port', port], { env, cwd: root });
   if (withWatcher) {
@@ -63,9 +71,9 @@ function start() {
     watcher.on('exit', (code) => { if (code !== null && code !== 0) log(`the watcher exited with ${code} (a factory already watched, herdr down, or no config?); it starts again on the next change`); });
   }
 }
-start();
-let timer = null;
-const restart = (why) => { clearTimeout(timer); timer = setTimeout(() => { log(`restart: ${why}`); start(); }, 800); };
+await start();
+let timer = null, starting = Promise.resolve();
+const restart = (why) => { clearTimeout(timer); timer = setTimeout(() => { log(`restart: ${why}`); starting = starting.then(start); }, 800); };
 for (const dir of ['packages/protocol/dist', 'packages/recipes/dist', 'packages/engine/dist', 'apps/cli/build']) {
   fs.watch(path.join(root, dir), { recursive: true }, (_ev, file) => { if (file && /\.m?js$/.test(file)) restart(`${dir}/${file}`); });
 }

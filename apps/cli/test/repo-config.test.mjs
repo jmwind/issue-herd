@@ -18,9 +18,10 @@ const cfg = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'config.json'), 'ut
 const resolve = (p) => [path.join(CONFIG_DIR, p), path.join(REPO, 'packages/recipes/prompts/2', path.basename(p))].find((f) => fs.existsSync(f)) || null;
 
 test('the config this repository runs on itself loads', () => {
-  // `status` is the cheapest command that builds the whole config: it validates every rule, both
-  // role guards and every prompt path, and touches no tracker.
-  const r = spawnSync(process.execPath, [path.join(REPO, 'apps/cli/dist/weawr.mjs'), 'status'], {
+  // `plugins` is the cheapest command that builds the whole config — every rule, both role guards,
+  // every prompt path — and talks to nothing: not the tracker, and not a watcher that may be
+  // running on this repository (`status` would go to that watcher, and answer for it instead).
+  const r = spawnSync(process.execPath, [path.join(REPO, 'apps/cli/dist/weawr.mjs'), 'plugins'], {
     cwd: REPO, encoding: 'utf8', env: { ...process.env, WEAWR_NO_UPDATE_CHECK: '1' },
   });
   assert.equal(r.status, 0, `${r.stdout || ''}${r.stderr || ''}`);
