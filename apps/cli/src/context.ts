@@ -5,9 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  FactoryEngine, acquireOwnership, createApplication, currentOwner, describeHolder, factoryId, factoryPaths, findRepoRoot, hostId, loadConfig, loadEnvFiles, registrationsDir, userDir,
+  FactoryEngine, JsonStateStore, acquireOwnership, createApplication, currentOwner, describeHolder, factoryId, factoryPaths, findRepoRoot, hostId, loadConfig, loadEnvFiles, migrateLegacyState, openOwnerStore, readFactoryState, registrationsDir, storeStatus, userDir,
 } from '@weawr/engine';
-import type { Application, CommandResult, ConfigSources, FactoryConfig, FactoryPaths, Identities, Ownership } from '@weawr/engine';
+import type { Application, CommandResult, ConfigSources, FactoryConfig, FactoryPaths, Identities, Ownership, StateStore } from '@weawr/engine';
+import { consoleNotesPath } from './commands/migrate.js';
 import { Herdr } from '@weawr/engine/adapters/herdr.mjs';
 import { resolveCredential, saveCredential, noCredentialError } from '@weawr/engine/adapters/auth.mjs';
 import type { Command } from '@weawr/engine';
@@ -81,10 +82,31 @@ export function makeTracker(ctx: Context, cfg: FactoryConfig): any {
 
 export interface EngineBuild { cfg: FactoryConfig; tracker: any; dry?: boolean; ownership?: Ownership | null; register?: boolean }
 
+/**
+ * The store an engine uses. An owner gets the durable store — after migrating a legacy state.json
+ * under its lock, once — and a reader gets a read-only view of whatever is there. A legacy file
+ * that does not parse stops an owner with the reason, never as an empty factory.
+ */
+export function storeFor(ctx: Context, ownership: Ownership | null): StateStore {
+  const st = storeStatus(ctx.paths);
+  if (ownership) {
+    if (st.needsMigration) {
+      const r = migrateLegacyState({ paths: ctx.paths, consoleNotesPath: consoleNotesPath() });
+      if (r.migrated) ctx.ui.log(`migrated ${r.runs} run(s) and ${r.nudges} nudge record(s) from state.json into the durable store${r.backupDir ? ` (backup: ${r.backupDir})` : ''}`);
+    }
+    return openOwnerStore(ctx.paths);
+  }
+  const view = readFactoryState(ctx.paths);
+  if (view.corrupt) throw new Error(`${ctx.paths.statePath} is not valid JSON (${view.corrupt}); refusing to read it as an empty factory`);
+  if (view.store) return view.store;
+  return new JsonStateStore(ctx.paths.statePath);
+}
+
 /** An engine for this repository, logging through the terminal, registered on this machine when it owns the factory. */
 export function makeEngine(ctx: Context, { cfg, tracker, dry = false, ownership = null, register = false }: EngineBuild): FactoryEngine {
   return new FactoryEngine({
     cfg, tracker, herdr: ctx.herdr, dry, paths: ctx.paths, promptsRoot: ctx.promptsRoot, ids: ctx.ids, version: ctx.version,
+    store: storeFor(ctx, ownership),
     log: (line) => ctx.ui.print(line), live: (text) => ctx.ui.live(text),
     registration: register ? { dir: registrationsDir(ctx.userDir), socketPath: ctx.paths.socketPath, ownership } : null,
   });

@@ -2,15 +2,20 @@
 // one dispatcher behind it. Human commands and machine transports both come through here, so there
 // is one implementation of each lifecycle action and the terminal's text is a rendering of its
 // result. Grows with the versioned CLI interface; this is the seam.
+import crypto from 'node:crypto';
 import type { FactoryEngine } from './factory.js';
+import { isDurable } from './store/index.js';
+import type { OperationRecord } from './store/sqlite.js';
 import * as _claim from './claim.mjs';
 const { issueKeyOf } = _claim as Record<string, any>;
 
 export type Command =
   | { type: 'factory.status' }
   | { type: 'runs.list' }
-  | { type: 'run.reset'; key: string }
+  | { type: 'run.reset'; key: string; requestId?: string }
   | { type: 'agent.tail'; runKey: string; lines?: number }
+  | { type: 'operation.show'; id: string }
+  | { type: 'events.after'; cursor: number; limit?: number }
   | { type: 'ping' };
 
 export type CommandResult<T = unknown> = { ok: true; result: T } | { ok: false; error: { code: string; message: string } };
@@ -33,6 +38,28 @@ export function resetTargets(runs: Record<string, unknown>, key: string): string
  * owner's lock because the engine only exists inside one.
  */
 export function createApplication(engine: FactoryEngine): Application {
+  const locks = new Map<string, Promise<unknown>>();
+  /** Conflicting commands about one task run one at a time, in the order they arrived. */
+  const serialized = async <T>(scope: string, fn: () => Promise<T>): Promise<T> => {
+    const prev = locks.get(scope) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    locks.set(scope, next.catch(() => {}));
+    try { return await next; } finally { if (locks.get(scope) === next.catch(() => {})) locks.delete(scope); }
+  };
+  /**
+   * A tracked operation: accepted once per (scope, requestId), run, and recorded with its outcome.
+   * Repeating a request returns the original operation's result; a request id reused for different
+   * input is refused. Without a durable store the work simply runs.
+   */
+  const operation = async <T>(scope: string, requestId: string | undefined, kind: string, input: unknown, fn: () => Promise<T>): Promise<{ operation: OperationRecord | null; result: T | null; replayed: boolean }> => {
+    if (!isDurable(engine.store) || !requestId) return { operation: null, result: await fn(), replayed: false };
+    const store = engine.store;
+    const { op, fresh } = store.beginOperation({ id: crypto.randomUUID(), scope, requestId, kind, input }, engine.clock());
+    if (!fresh) return { operation: op, result: op.result as T, replayed: true };
+    store.updateOperation(op.id, { status: 'running' }, engine.clock());
+    try { const result = await fn(); store.updateOperation(op.id, { status: 'completed', result }, engine.clock()); return { operation: store.operation(op.id), result, replayed: false }; }
+    catch (e: any) { store.updateOperation(op.id, { status: 'failed', error: e.message }, engine.clock()); throw e; }
+  };
   const handlers: { [K in Command['type']]: (cmd: Extract<Command, { type: K }>) => Promise<unknown> } = {
     async ping() { return { pong: true, factoryId: engine.ids.factoryId, version: engine.version }; },
     async 'factory.status'() {
@@ -45,16 +72,36 @@ export function createApplication(engine: FactoryEngine): Application {
       return { factoryId: engine.ids.factoryId, name: engine.cfg.name, repo: engine.paths.repo, runs: engine.state.runs, nudges: engine.state.nudges, maxNudges: engine.cfg.maxNudges, agentStatus: running };
     },
     async 'runs.list'() { return { runs: engine.state.runs }; },
-    async 'run.reset'({ key }) {
+    async 'run.reset'({ key, requestId }) {
       // Naming the issue forgets every role's run on it (GH-7 clears GH-7, GH-7@impl, GH-7@review);
       // naming one run key forgets only that one. The nudges are the issue's, not one role's:
       // forgetting the issue hands the budget back too.
-      const gone = resetTargets(engine.state.runs, key);
-      for (const k of gone) delete engine.state.runs[k];
-      if (engine.state.nudges?.[key]) delete engine.state.nudges[key];
-      engine.saveState();
-      if (gone.length) engine.log(`reset: forgot ${gone.join(', ')}`);
-      return { forgot: gone };
+      // Request ids are scoped to the factory (and, over a transport, to the caller): one id names one action here.
+      return serialized(issueKeyOf(key), () => operation(`factory:${engine.ids.factoryId}`, requestId, 'run.reset', { key }, async () => {
+        const gone = resetTargets(engine.state.runs, key);
+        engine.commit(() => {
+          for (const k of gone) delete engine.state.runs[k];
+          if (engine.state.nudges?.[key]) delete engine.state.nudges[key];
+          engine.saveState();
+          engine.emit('run.reset', null, { key, forgot: gone });
+        });
+        if (gone.length) engine.log(`reset: forgot ${gone.join(', ')}`);
+        return { forgot: gone };
+      })).then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
+    },
+    async 'operation.show'({ id }) {
+      if (!isDurable(engine.store)) throw new ApplicationError('not_tracked', 'this factory has no durable store, so operations are not tracked');
+      const op = engine.store.operation(id);
+      if (!op) throw new ApplicationError('no_such_operation', `no operation ${id}`);
+      return op;
+    },
+    async 'events.after'({ cursor, limit = 200 }) {
+      if (!isDurable(engine.store)) return { events: [], cursor, expired: false };
+      const first = engine.store.firstEventSeq();
+      // A cursor from before the oldest kept event cannot be resumed from; the client must resnapshot.
+      if (cursor > 0 && first > 0 && cursor < first - 1) return { events: [], cursor, expired: true };
+      const events = engine.store.eventsAfter(cursor, limit);
+      return { events, cursor: events.length ? events[events.length - 1].seq : cursor, expired: false };
     },
     async 'agent.tail'({ runKey, lines = 100 }) {
       const run = engine.state.runs[runKey];

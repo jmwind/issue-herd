@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { factoryPaths, readFactoryState } from '@weawr/engine';
 
 const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
 
@@ -222,7 +223,8 @@ function seedImplRun(dir, key) {
   };
   const statePath = path.join(dir, '.weawr', 'state', 'state.json');
   fs.writeFileSync(statePath, JSON.stringify({ runs: { [`${key}@impl`]: run } }));
-  return { runDir, state: () => JSON.parse(fs.readFileSync(statePath, 'utf8')) };
+  // After the smoke run the factory has a durable store; read whatever is there.
+  return { runDir, state: () => { const v = readFactoryState(factoryPaths(dir)); v.store?.close(); return v.state; } };
 }
 
 /** The reviewer-and-implementer pair this repository runs, in "none" worktree mode so no commits are needed. */

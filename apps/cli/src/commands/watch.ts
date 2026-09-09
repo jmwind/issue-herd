@@ -30,5 +30,12 @@ export async function watch(ctx: Context, tracker: any, mode: 'run' | 'once' | '
   // handlers is logged and the loop carries on. Fix the config or the issue and it is retried.
   process.on('uncaughtException', (e: any) => ctx.ui.log(`unexpected error (kept running): ${e.stack || e.message}`));
   process.on('unhandledRejection', (e: any) => ctx.ui.log(`unexpected error (kept running): ${e?.stack || e?.message || e}`));
+  // A signal stops scheduling and checkpoints; the agents stay up for their owner to inspect. A
+  // second signal exits at once.
+  let signalled = false;
+  const onSignal = () => { if (signalled) process.exit(130); signalled = true; ctx.ui.log('stopping after this poll (again to exit at once); agents are left running'); engine.stop(); };
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) { process.removeAllListeners(sig); process.on(sig, onSignal); }
   await engine.loop();
+  await ipc.close();
+  ownership.release();
 }

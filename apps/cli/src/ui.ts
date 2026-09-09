@@ -16,6 +16,7 @@ a git worktree and a herdr workspace, start a coding agent in it, brief it, and 
   weawr console [--port N] [--host ADDR]  the factory floor: every factory on this machine, in a browser (phone first)
   weawr console set-passcode  set the passcode (digits) the console asks for; also serves it over Tailscale
   weawr console clear-passcode  forget the passcode; the console goes back to loopback only
+  weawr migrate [--dry-run] move a factory's state.json into the durable store (the watcher does this on start)
   weawr update            reinstall the latest version from GitHub
   weawr --version
 

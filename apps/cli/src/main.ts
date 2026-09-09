@@ -14,6 +14,12 @@ import { watch } from './commands/watch.js';
 import { smoke } from './commands/smoke.js';
 import { consoleCommand } from './commands/console.js';
 import { update, updateReminder } from './commands/update.js';
+import { migrate } from './commands/migrate.js';
+
+// node:sqlite is what the durable store is built on; on Node 22 it still announces itself as
+// experimental on every start. That line belongs to nobody's terminal or JSON stream.
+process.removeAllListeners('warning');
+process.on('warning', (w) => { if (w.name === 'ExperimentalWarning' && /SQLite/.test(w.message)) return; console.error(`${w.name}: ${w.message}`); });
 
 export async function main(argv: string[]): Promise<void> {
   const ctx = createContext({ ui: terminal() });
@@ -31,6 +37,7 @@ export async function main(argv: string[]): Promise<void> {
   if (cmd === 'status') return status(ctx);
   if (cmd === 'reset') return reset(ctx, argv[1]);
   if (cmd === 'smoke') return smoke(ctx, argv);
+  if (cmd === 'migrate') return migrate(ctx, argv.slice(1));
   const tracker = makeTracker(ctx, cfg);
   if (cmd === 'match') return match(ctx, tracker, argv.slice(1));
   if (cmd === 'dry-run' || cmd === 'once' || cmd === 'run') return watch(ctx, tracker, cmd);

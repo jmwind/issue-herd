@@ -9,6 +9,8 @@ import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { callOwner, OWNER_OFFLINE } from '../build/transports/ipc.js';
+import { factoryPaths, readFactoryState } from '@weawr/engine';
+function runsIn(dir) { const v = readFactoryState(factoryPaths(dir)); const runs = v.state.runs; v.store?.close(); return runs; }
 
 const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
 const ENGINE = fileURLToPath(new URL('../../../packages/engine/dist/index.js', import.meta.url));
@@ -54,7 +56,7 @@ test('with a running owner, status and reset are answered by it, and the file it
   const rs = run(dir, ['reset', 'GH-7']);
   assert.equal(rs.status, 0, rs.out);
   assert.match(rs.out, /forgot GH-7/);
-  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(dir, '.weawr/state/state.json'), 'utf8')).runs), ['GH-8']);
+  assert.deepEqual(Object.keys(runsIn(dir)), ['GH-8']);
 });
 
 test('a factory held by an owner that is not answering is not mutated behind its back', async (t) => {
@@ -63,7 +65,7 @@ test('a factory held by an owner that is not answering is not mutated behind its
   const rs = run(dir, ['reset', 'GH-7']);
   assert.equal(rs.status, 1);
   assert.match(rs.out, /already being watched|not answering/);
-  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(dir, '.weawr/state/state.json'), 'utf8')).runs).sort(), ['GH-7', 'GH-8'], 'nothing was forgotten');
+  assert.deepEqual(Object.keys(runsIn(dir)).sort(), ['GH-7', 'GH-8'], 'nothing was forgotten');
   // A second watcher is refused too, and told who has it.
   const once = run(dir, ['smoke']);
   assert.equal(once.status, 1);

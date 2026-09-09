@@ -40,6 +40,10 @@ import type { FactoryPaths } from './paths.js';
 import { writeRegistration } from './registration.js';
 import type { Registration } from './registration.js';
 import { JsonStateStore, readJson } from './state.js';
+import { isDurable } from './store/index.js';
+import type { PendingAction } from './store/sqlite.js';
+import { attemptId, roleRunId, taskId, trackerScope } from './identity.js';
+import { contentHash } from '@weawr/recipes';
 import type { FactoryState, StateStore } from './state.js';
 import type { Ownership } from './ownership.js';
 
@@ -114,6 +118,11 @@ export class FactoryEngine {
   private readonly logger: (line: string) => void;
   /** Where the process announces itself on this machine; null for an engine that should not (a test, a dry run). */
   registration: RegistrationTarget | null;
+  /** Set by stop(): the loop finishes its poll, checkpoints, and returns. Agents are left exactly as they are. */
+  stopping = false;
+  private wake: (() => void) | null = null;
+  /** How many times a pending external action is tried before it is left for a person. */
+  static readonly MAX_PENDING_ATTEMPTS = 3;
 
   constructor({ cfg, tracker, herdr, dry = false, paths, promptsRoot, store, ids, version = '0.0.0', git = defaultGit, clock = () => new Date(), log, live, hooks = {}, registration = null }: EngineOptions) {
     this.cfg = cfg;
@@ -142,15 +151,137 @@ export class FactoryEngine {
 
   saveState(): void { this.store.save(this.state); }
 
+  /**
+   * Commit a transition: the state, its event(s) and the external work it owes, in one transaction
+   * when the store can do that (the durable one), else simply in sequence. Returns what `fn` returns.
+   */
+  commit<T>(fn: () => T): T {
+    return isDurable(this.store) ? this.store.transaction(fn) : fn();
+  }
+
+  /** A structured event about a run (or the factory). What projections and histories are built from. */
+  emit(kind: string, runKey: string | null = null, data: Record<string, unknown> = {}): void {
+    if (!isDurable(this.store)) return;
+    const run = runKey ? this.state.runs[runKey] : null;
+    try { this.store.appendEvent(kind, { runKey, issueKey: run?.issueKey ?? (runKey ? issueKeyOf(runKey) : null), data }, this.clock()); } catch (e: any) { this.logger(`event ${kind} not recorded: ${e.message}`); }
+  }
+
+  /**
+   * Record external work owed by a committed transition. Performed after the commit by
+   * performPending(); an owner that dies in between finds it on resume. Without a durable store
+   * the work is simply done now.
+   */
+  owe(kind: string, data: Record<string, unknown>, runKey: string | null = null): number | null {
+    if (!isDurable(this.store)) return null;
+    return this.store.addPending(kind, data, runKey, this.clock());
+  }
+
+  /** Do the pending actions with these ids now (or, with no durable store, the same work directly). */
+  async performOwed(owed: Array<{ id: number | null; kind: string; data: Record<string, unknown>; runKey: string | null }>): Promise<void> {
+    for (const o of owed) {
+      if (o.id === null) { try { await this.performAction(o.kind, o.data, o.runKey); } catch (e: any) { this.log(`${o.runKey || 'factory'}: ${o.kind} failed: ${e.message}`); } continue; }
+      await this.performPending({ id: o.id, kind: o.kind, data: o.data, runKey: o.runKey, attempts: 0, lastError: null, createdAt: '', doneAt: null, outcome: null });
+    }
+  }
+
+  /** One try at a pending action, recorded either way. Never throws. */
+  async performPending(a: PendingAction): Promise<boolean> {
+    try {
+      const outcome = await this.performAction(a.kind, a.data, a.runKey);
+      if (isDurable(this.store)) this.store.settlePending(a.id, { done: true, outcome: outcome ?? 'done' }, this.clock());
+      return true;
+    } catch (e: any) {
+      if (isDurable(this.store)) this.store.settlePending(a.id, { done: false, error: e.message }, this.clock());
+      this.log(`${a.runKey || 'factory'}: ${a.kind} failed (${e.message}); ${a.attempts + 1 < FactoryEngine.MAX_PENDING_ATTEMPTS ? 'will try again' : 'giving up after ' + (a.attempts + 1) + ' tries'}`);
+      return false;
+    }
+  }
+
+  /**
+   * The external side effects a transition can owe. Each is safe to try again: herdr and the
+   * tracker are asked what is already true before anything irreversible is repeated.
+   */
+  async performAction(kind: string, d: Record<string, any>, runKey: string | null): Promise<string | null> {
+    switch (kind) {
+      case 'tracker.comment': {
+        if (!this.tracker) return 'no tracker';
+        await this.tracker.comment(d.issueId, d.body);
+        return 'commented';
+      }
+      case 'tracker.setState': { if (!this.tracker) return 'no tracker'; await this.tracker.setState(d.issue, d.state); return `state ${d.state}`; }
+      case 'tracker.assign': { if (!this.tracker) return 'no tracker'; await this.tracker.assign(d.issue, await this.tracker.me()); return 'assigned'; }
+      case 'tracker.removeLabel': { if (!this.tracker) return 'no tracker'; await this.tracker.removeLabel(d.issueId, d.label); return `removed ${d.label}`; }
+      case 'herdr.notify': { await this.herdr.notify(d.title, d.body, { sound: d.sound || 'none' }); return 'notified'; }
+      case 'herdr.closeWorkspace': {
+        try { await this.herdr.closeWorkspace(d.workspaceId); return 'closed'; }
+        catch (e: any) { if (/not_found/.test(e?.code || '')) return 'was already closed'; throw e; }
+      }
+      case 'herdr.stopAgent': {
+        // stopAgent asks herdr whether the agent is still there before it types anything, so a retry
+        // after an uncertain outcome does not send /exit into a session that already left.
+        const how = await this.herdr.stopAgent(d.agentName, { exitCommand: d.exitCommand });
+        if (how === 'is still running') throw new Error(`agent ${d.agentName} is still running`);
+        return how;
+      }
+      case 'worktree.remove': {
+        const r = removeWorktree({ git: this.git, repo: d.repo, at: d.at });
+        return r.removed ? 'removed' : `kept: ${r.reason}`;
+      }
+      default: throw new Error(`unknown pending action ${kind}`);
+    }
+  }
+
+  /**
+   * Retry what earlier owners (or earlier polls) left undone. A comment is reconciled first: if the
+   * issue already carries it, the retry is recorded as delivered rather than posted twice.
+   */
+  async drainPending(): Promise<void> {
+    if (!isDurable(this.store)) return;
+    for (const a of this.store.pending()) {
+      if (a.attempts >= FactoryEngine.MAX_PENDING_ATTEMPTS) continue;
+      if (a.kind === 'tracker.comment' && a.attempts > 0 && this.tracker && a.data.issueKey) {
+        try {
+          const fresh = await this.tracker.issueByKey(a.data.issueKey);
+          const first = String(a.data.body).split('\n')[0];
+          if (fresh?.comments?.some((c: any) => c.body.split('\n')[0] === first && Date.parse(c.createdAt) >= Date.parse(a.createdAt) - 60_000)) {
+            this.store.settlePending(a.id, { done: true, outcome: 'already on the issue' }, this.clock());
+            continue;
+          }
+        } catch { /* cannot tell; try the send */ }
+      }
+      await this.performPending(a);
+    }
+  }
+
+  /** Stop scheduling, checkpoint, return from loop(). Nothing is done to agents: they are the owner's to inspect. */
+  stop(): void { this.stopping = true; this.wake?.(); }
+
   /** The template a rule names, read from the repository's .weawr/ or the bundled prompts. */
   readTemplate(name: string): string { return fs.readFileSync(expandConfigPath(this.sources, name), 'utf8'); }
 
-  runningCount(ruleName?: any) {
-    return Object.values(this.state.runs).filter((r?: any) => r.status === 'running' && (!ruleName || r.rule === ruleName)).length;
+  /**
+   * How many runs occupy a slot: running, starting, and the runs reserved for a nudged turn that has
+   * not started yet. `except` leaves one key out — the run whose own admission is being decided.
+   */
+  runningCount(ruleName?: string | null, except: string | null = null) {
+    let n = 0;
+    for (const [key, r] of Object.entries<any>(this.state.runs)) {
+      if (key === except) continue;
+      if (ruleName && r.rule !== ruleName) continue;
+      if (r.status === 'running' || r.status === 'starting' || this.reserved.has(key)) n++;
+    }
+    return n;
+  }
+
+  /** Would starting a turn for `rule` on `key` exceed the global or the rule's cap? */
+  atCapacity(rule: any, key: string): string | null {
+    if (this.runningCount(null, key) >= this.cfg.maxConcurrent) return `global cap ${this.cfg.maxConcurrent} reached`;
+    if (this.runningCount(rule.name, key) >= rule.maxConcurrent) return `rule ${rule.name} cap ${rule.maxConcurrent} reached`;
+    return null;
   }
 
   async pollOnce() {
-    if (!this.dry) await this.checkMerges();
+    if (!this.dry) { await this.drainPending(); await this.checkMerges(); await this.deliverHeldNudges(); }
     const since = new Date(this.clock().getTime() - this.cfg.lookbackDays * 86400e3).toISOString();
     const viewer = await this.tracker.me();
     const issues = await this.tracker.openIssues({ sinceIso: since });
@@ -225,7 +356,9 @@ export class FactoryEngine {
       nudges: nudges.length ? nudges : undefined,
       prUrl: previous?.prUrl || undefined,
     };
-    this.state.runs[key] = run; this.saveState();
+    run.ids = this.idsFor(issue, rule, key, run);
+    this.state.runs[key] = run;
+    this.commit(() => { this.saveState(); this.emit('run.picking_up', key, { pass, nudgedBy: nudges.map((n: any) => n.from) }); });
     const turn = nudges.length ? `, turn ${pass}, nudged by ${nudgedByLabel(nudges)}` : pass > 1 ? `, pass ${pass} of ${passLimit(rule)}` : '';
     this.log(`picking up ${key} "${issue.title}" (rule ${rule.name}${rule.role ? `, role ${rule.role}` : ''}${turn})`);
 
@@ -244,10 +377,10 @@ export class FactoryEngine {
         if (why) throw new Error(`skipped, ${why}`);
         await this.tracker.addLabel(issue.id, claimLabel);
       } catch (e: any) {
-        delete this.state.runs[key]; this.saveState();
+        this.commit(() => { delete this.state.runs[key]; this.saveState(); this.emit('run.skipped', null, { key, why: e.message }); });
         throw e;
       }
-      run.claimed = claimLabel; this.saveState();
+      run.claimed = claimLabel; this.commit(() => { this.saveState(); this.emit('run.claimed', key, { label: claimLabel }); });
     }
 
     try {
@@ -366,7 +499,11 @@ export class FactoryEngine {
       const brief = renderBrief(this.readTemplate(rule.prompt), briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, nudging: this.nudging(issue.identifier) }));
       run.briefPath = path.join(run.dir, 'brief.md');
       fs.writeFileSync(run.briefPath, brief);
-      this.saveState();
+      // The attempt's immutable record: which words it was given and under which policy. Written
+      // once, never updated; later facts are events.
+      const attempt = this.attemptSpec(issue, rule, run, brief, key);
+      run.attemptId = attempt.id;
+      this.commit(() => { this.saveState(); if (isDurable(this.store)) this.store.recordAttempt(attempt); this.emit('run.briefed', key, { attemptId: attempt.id, briefHash: attempt.spec.briefHash }); });
       this.log(`${key}: working tree ${workDir}`);
 
       // 5. prompt. The session is up and briefed, so from here on the run is the supervisor's:
@@ -375,7 +512,7 @@ export class FactoryEngine {
       // never been told what to do, and then collide with it on the retry.
       run.promptText = `You are working ${this.cfg.Tracker.label} issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`;
       run.pendingPrompt = true;
-      run.status = 'running'; this.saveState();
+      run.status = 'running'; this.commit(() => { this.saveState(); this.emit('run.running', key, {}); });
       const sent = await this.deliverPrompt(key, run);
       if (sent) {
         const st = await this.herdr.waitAgent(run.agentName, { until: ['working'], timeoutMs: 30_000 });
@@ -395,21 +532,25 @@ export class FactoryEngine {
         // a prefix either way, because alreadyTaken() greps for it.
         const how = nudges.length ? `${pickupMarker(rule.role)} again`
           : run.adopted ? pickupMarker(rule.role).replace('picked this up', 'took this back over') : pickupMarker(rule.role);
-        try { await this.tracker.comment(issue.id, `🧵 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`); }
-        catch (e: any) { this.log(`${key}: pickup comment failed: ${e.message}`); }
+        const body = `🧵 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`;
+        await this.performOwed([{ id: this.owe('tracker.comment', { issueId: issue.id, issueKey: issue.identifier, body }, key), kind: 'tracker.comment', data: { issueId: issue.id, issueKey: issue.identifier, body }, runKey: key }]);
       }
       if (!sent) {
         run.notified.blocked = true; this.saveState();
         await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is not taking input yet — answer whatever it is showing in herdr workspace \`${run.workspaceId}\` and weawr will send it the brief.${await this.tail(run.agentName, 12)}`, 'request');
       }
-      if (this.tracker && rule.onPickup.assignToMe) { try { await this.tracker.assign(issue, await this.tracker.me()); } catch (e: any) { this.log(`${key}: assign failed: ${e.message}`); } }
-      if (this.tracker && rule.onPickup.state) { try { await this.tracker.setState(issue, rule.onPickup.state); } catch (e: any) { this.log(`${key}: state failed: ${e.message}`); } }
+      const owed: Array<{ id: number | null; kind: string; data: Record<string, unknown>; runKey: string | null }> = [];
+      if (this.tracker && rule.onPickup.assignToMe) owed.push({ id: this.owe('tracker.assign', { issue: slimIssue(issue) }, key), kind: 'tracker.assign', data: { issue: slimIssue(issue) }, runKey: key });
+      if (this.tracker && rule.onPickup.state) owed.push({ id: this.owe('tracker.setState', { issue: slimIssue(issue), state: rule.onPickup.state }, key), kind: 'tracker.setState', data: { issue: slimIssue(issue), state: rule.onPickup.state }, runKey: key });
+      await this.performOwed(owed);
 
       this.supervise(key);
     } catch (e: any) {
-      run.status = 'failed'; run.error = e.message; run.finishedAt = this.clock().toISOString(); this.saveState();
+      run.status = 'failed'; run.error = e.message; run.finishedAt = this.clock().toISOString();
+      this.commit(() => { this.saveState(); this.emit('run.failed', key, { error: e.message }); });
       if (this.tracker) {
-        try { await this.tracker.comment(issue.id, `⚠️ weawr failed to start a session: ${e.message}`); } catch { /* ignore */ }
+        const body = `⚠️ weawr failed to start a session: ${e.message}`;
+        await this.performOwed([{ id: this.owe('tracker.comment', { issueId: issue.id, issueKey: issue.identifier, body }, key), kind: 'tracker.comment', data: { issueId: issue.id, issueKey: issue.identifier, body }, runKey: key }]);
         await this.releaseClaim(key, run);
       }
       throw e;
@@ -424,8 +565,8 @@ export class FactoryEngine {
   async releaseClaim(key?: any, run?: any) {
     if (!this.tracker) return;
     if (run.claimed) {
-      try { await this.tracker.removeLabel(run.issueId, run.claimed); this.log(`${key}: removed the '${run.claimed}' claim label`); }
-      catch (e: any) { this.log(`${key}: could not remove the '${run.claimed}' claim label: ${e.message}`); }
+      const data = { issueId: run.issueId, label: run.claimed };
+      await this.performOwed([{ id: this.owe('tracker.removeLabel', data, key), kind: 'tracker.removeLabel', data, runKey: key }]);
     }
     try { run.issueUpdatedAt = (await this.tracker.issueByKey(run.issueKey || issueKeyOf(key)))?.updatedAt || null; } catch { /* finishedAt is the fallback */ }
     this.saveState();
@@ -573,7 +714,7 @@ export class FactoryEngine {
     if (!run.pendingPrompt) return true;
     try {
       await this.herdr.prompt(run.agentName, run.promptText);
-      run.pendingPrompt = false; this.saveState();
+      run.pendingPrompt = false; this.commit(() => { this.saveState(); this.emit('run.prompted', key, {}); });
       this.log(`${key}: briefed`);
       return true;
     } catch (e: any) {
@@ -611,7 +752,7 @@ export class FactoryEngine {
       const result = readJson(run.resultPath, null);
       if (result) { await this.finalize(key, result, rule); return; }
       if (st === 'gone') {
-        run.status = 'stopped'; run.finishedAt = this.clock().toISOString(); this.saveState();
+        run.status = 'stopped'; run.finishedAt = this.clock().toISOString(); this.commit(() => { this.saveState(); this.emit('run.stopped', key, { why: 'agent exited without a result' }); });
         this.log(`${key}: agent exited without a result`);
         await this.report(key, rule, rule.onIdle, `🛑 The agent session for ${key} ended without writing a result. Workspace \`${run.workspaceId}\` is still open for inspection.`);
         // Stamp for the same reason finalize does, and here it matters more: a rule with turns left
@@ -626,6 +767,7 @@ export class FactoryEngine {
       if (st === 'timeout') continue;
       if (st === 'blocked') {
         this.log(`${key}: blocked — waiting for approval or input in ${run.workspaceId}`);
+        this.emit('run.blocked', key, { workspaceId: run.workspaceId });
         if (!run.notified.blocked) {
           run.notified.blocked = true; this.saveState();
           const tail = await this.tail(name, 12);
@@ -633,12 +775,14 @@ export class FactoryEngine {
         }
         const next = await this.herdr.waitAgent(name, { until: ['working', 'idle', 'done'], timeoutMs: 6 * 3600e3 });
         this.log(`${key}: unblocked → ${next}`);
+        this.emit('run.working', key, { after: 'blocked' });
         run.notified.blocked = false;
         continue;
       }
       if (st === 'idle' || st === 'done' || st === 'unknown') {
         // Claude finished a turn without writing result.json — probably asked a question in chat.
         this.log(`${key}: ${st} without a result — probably asking a question in ${run.workspaceId}`);
+        this.emit('run.question', key, { workspaceId: run.workspaceId });
         if (!run.notified.idle) {
           run.notified.idle = true; this.saveState();
           const tail = await this.tail(name, 15);
@@ -646,6 +790,7 @@ export class FactoryEngine {
         }
         await this.herdr.waitAgent(name, { until: ['working'], timeoutMs: 6 * 3600e3 });
         this.log(`${key}: working again`);
+        this.emit('run.working', key, { after: 'question' });
         run.notified.idle = false;
         continue;
       }
@@ -663,7 +808,8 @@ export class FactoryEngine {
 
   async finalize(key?: any, result?: any, rule?: any) {
     const run = this.state.runs[key];
-    run.status = 'done'; run.result = result; run.finishedAt = this.clock().toISOString(); this.saveState();
+    run.status = 'done'; run.result = result; run.finishedAt = this.clock().toISOString();
+    this.commit(() => { this.saveState(); this.emit('run.finished', key, { status: result.status || 'unknown', prUrl: result.prUrl || null, attemptId: run.attemptId || null }); });
     // keep a copy in the watcher's checkout; the worktree may be removed later
     // `result.json` and `brief.md` are always the latest pass; a rule that chimes in more than once
     // also keeps each pass under its own name, so the record of what it said when survives.
@@ -702,15 +848,18 @@ export class FactoryEngine {
     this.log(`${key}: done (${status}) ${result.prUrl || ''}`);
     await this.report(key, rule, rule.onDone, lines.join('\n'), 'done');
     await this.carryOutNudges(key, run, rule, relay);
+    const owed: Array<{ id: number | null; kind: string; data: Record<string, unknown>; runKey: string | null }> = [];
     if (this.tracker && rule.onDone.state && status === 'pr_open') {
-      try { await this.tracker.setState({ ...readJson(path.join(run.archiveDir, 'issue.json'), {}), id: run.issueId }, rule.onDone.state); }
-      catch (e: any) { this.log(`${key}: onDone state failed: ${e.message}`); }
+      const data = { issue: { ...slimIssue(readJson(path.join(run.archiveDir, 'issue.json'), {})), id: run.issueId }, state: rule.onDone.state };
+      owed.push({ id: this.owe('tracker.setState', data, key), kind: 'tracker.setState', data, runKey: key });
     }
-    if (rule.onDone.closeWorkspace && run.workspaceId) { try { await this.herdr.closeWorkspace(run.workspaceId); } catch { /* ignore */ } }
+    if (rule.onDone.closeWorkspace && run.workspaceId) owed.push({ id: this.owe('herdr.closeWorkspace', { workspaceId: run.workspaceId }, key), kind: 'herdr.closeWorkspace', data: { workspaceId: run.workspaceId }, runKey: key });
     if (watch) {
-      run.prUrl = watch; run.status = 'awaiting_merge'; this.saveState();
+      run.prUrl = watch; run.status = 'awaiting_merge';
+      this.commit(() => { this.saveState(); this.emit('run.awaiting_merge', key, { prUrl: watch }); });
       this.log(`${key}: waiting for ${watch} to be merged before shutting the run down`);
     }
+    await this.performOwed(owed);
     await this.stampAnswered(key, run, rule);
     // Nudges that arrived while this turn was running were held for it. It is over: hand them over.
     await this.deliverQueuedNudges(key);
@@ -755,6 +904,7 @@ export class FactoryEngine {
       const icon = outcome === 'refused' ? '🙋' : '👉';
       lines.push(`${icon} **Nudge → \`${nudge.role}\`** — ${reason}.\n> ${nudge.message.replace(/\r?\n/g, '\n> ')}`);
       this.log(`${key}: nudge → ${targetKey}: ${outcome} (${reason.replace(/`/g, '')})`);
+      this.emit('nudge.planned', key, { to: targetKey, outcome, reason: reason.replace(/`/g, '') });
       const held = { from: from || rule.name, message: nudge.message, at: this.clock().toISOString() };
       if (outcome === 'turn') { this.reserved.add(targetKey); plan.turns.push({ targetKey, nudge: held }); }
       else if (outcome === 'queue') plan.queued.push({ targetKey, nudge: held });
@@ -804,6 +954,17 @@ export class FactoryEngine {
       this.log(`${targetKey}: nudged by ${askedBy} while a turn is in progress; held for its next turn`);
       return false;
     }
+    // A nudged turn takes a slot like any pickup. With none free it waits, held on the run, and
+    // the next poll with room hands it over — the same admission ordinary pickups go through.
+    const targetRule = this.cfg.rules.find((r: any) => r.name === target.rule);
+    const full = targetRule ? this.atCapacity(targetRule, targetKey) : null;
+    if (full) {
+      (target.queuedNudges ??= []).push(...nudges); this.saveState();
+      this.reserved.delete(targetKey);
+      this.log(`${targetKey}: nudged by ${askedBy}, but ${full}; held until a slot is free`);
+      this.emit('nudge.held', targetKey, { by: askedBy, why: full });
+      return false;
+    }
     try { return await this.startNudgedTurnNow(targetKey, target, nudges, askedBy); }
     finally { this.reserved.delete(targetKey); }
   }
@@ -834,6 +995,15 @@ export class FactoryEngine {
     } catch (e: any) {
       this.log(`${targetKey}: the nudged turn could not start: ${e.message}`);
       return false;
+    }
+  }
+
+  /** Runs holding nudges that could not start for want of a slot: try them again, oldest first. */
+  async deliverHeldNudges() {
+    for (const key of Object.keys(this.state.runs)) {
+      const run = this.state.runs[key];
+      if (!run.queuedNudges?.length || run.status === 'running' || run.status === 'starting' || this.reserved.has(key)) continue;
+      await this.deliverQueuedNudges(key);
     }
   }
 
@@ -871,17 +1041,18 @@ export class FactoryEngine {
       if (!pr) continue;
       if (pr.state === 'open') { await this.keepMergeable(key, run, rule, pr); continue; }
       if (pr.state === 'closed') {
-        run.status = 'done'; run.finishedAt ||= this.clock().toISOString(); this.saveState();
+        run.status = 'done'; run.finishedAt ||= this.clock().toISOString(); this.commit(() => { this.saveState(); this.emit('run.pr_closed', key, { prUrl: run.prUrl }); });
         this.log(`${key}: ${run.prUrl} was closed without merging; leaving workspace ${run.workspaceId} and the worktree alone`);
         continue;
       }
       run.mergedAt = pr.mergedAt || this.clock().toISOString();
+      this.commit(() => { this.saveState(); this.emit('run.merged', key, { prUrl: run.prUrl, mergedAt: run.mergedAt }); });
       this.log(`${key}: ${run.prUrl} is merged`);
       // That merge is a commit on the base branch that this checkout does not have. Runs are cut
       // from the tip either way, but the directory you and the "none"/"herdr" modes work in is not.
       this.freshenCheckout(key);
       const did = await this.shutdown(key, run, rule);
-      run.status = 'merged'; run.finishedAt = this.clock().toISOString(); this.saveState();
+      run.status = 'merged'; run.finishedAt = this.clock().toISOString(); this.commit(() => { this.saveState(); this.emit('run.closed', key, { did }); });
       // The notification only carries the first line, and with nothing switched on the thing you
       // need from it is what is still standing — so that goes first and the URL follows.
       const lines = did.length
@@ -926,22 +1097,23 @@ export class FactoryEngine {
    */
   async shutdown(key?: any, run?: any, rule?: any) {
     const policy = rule.onMerged || {};
-    const did = [];
-    if (policy.exitAgent && run.agentName) {
-      const how = await this.herdr.stopAgent(run.agentName, { exitCommand: exitCommandFor(rule.agentKind) });
-      this.log(`${key}: agent ${run.agentName} ${how}`);
-      did.push(`Agent \`${run.agentName}\` ${how}.`);
-    }
-    if (policy.closeWorkspace && run.workspaceId) {
-      try { await this.herdr.closeWorkspace(run.workspaceId); this.log(`${key}: workspace ${run.workspaceId} closed`); did.push(`herdr workspace \`${run.workspaceId}\` closed.`); }
-      catch (e: any) { this.log(`${key}: could not close workspace ${run.workspaceId}: ${e.message}`); did.push(`herdr workspace \`${run.workspaceId}\` is still open (${e.message}).`); }
-    }
+    const did: string[] = [];
+    // Each step is recorded as owed before it is tried, so a crash in the middle of a teardown
+    // resumes the teardown rather than forgetting it. Each step tolerates being tried again.
+    const step = async (kind: string, data: Record<string, unknown>, say: (outcome: string) => string) => {
+      const id = this.owe(kind, data, key);
+      let outcome: string;
+      try { outcome = (await this.performAction(kind, data, key)) ?? 'done'; if (id !== null && isDurable(this.store)) this.store.settlePending(id, { done: true, outcome }, this.clock()); }
+      catch (e: any) { outcome = `not done (${e.message})`; if (id !== null && isDurable(this.store)) this.store.settlePending(id, { done: false, error: e.message }, this.clock()); }
+      this.log(`${key}: ${say(outcome)}`);
+      did.push(say(outcome));
+    };
+    if (policy.exitAgent && run.agentName) await step('herdr.stopAgent', { agentName: run.agentName, exitCommand: exitCommandFor(rule.agentKind) }, (o) => `Agent \`${run.agentName}\` ${o.startsWith('not done') ? 'is still running' : o}.`);
+    if (policy.closeWorkspace && run.workspaceId) await step('herdr.closeWorkspace', { workspaceId: run.workspaceId }, (o) => `herdr workspace \`${run.workspaceId}\` ${o.startsWith('not done') ? `is still open (${o.slice(9)}` : o}.`);
     if (policy.removeWorktree && run.worktree !== 'none') {
       const at = run.worktreePath || run.workDir;
-      const r = removeWorktree({ git: this.git, repo: rule.repo, at });
       const where = at ? path.relative(rule.repo, at) || at : '(none)';
-      this.log(`${key}: worktree ${where}: ${r.removed ? 'removed' : `kept — ${r.reason}`}`);
-      did.push(r.removed ? `Worktree \`${where}\` removed.` : `Worktree \`${where}\` kept: ${r.reason}.`);
+      await step('worktree.remove', { repo: rule.repo, at }, (o) => `Worktree \`${where}\` ${o === 'removed' ? 'removed' : o.replace(/^kept: /, 'kept: ')}.`);
     }
     return did;
   }
@@ -990,15 +1162,22 @@ export class FactoryEngine {
     catch { /* finishedAt is the fallback, and it is already later than everything we wrote */ }
   }
 
-  async report(key?: any, rule?: any, policy?: any, body?: any, sound = 'none') {
+  async report(key: string, rule: any, policy: any, body: string, sound = 'none') {
     const run = this.state.runs[key];
-    if (policy?.comment && this.tracker) { try { await this.tracker.comment(run.issueId, body); } catch (e: any) { this.log(`${key}: comment failed: ${e.message}`); } }
-    if (policy?.notify) await this.herdr.notify(`weawr ${key}`, body.split('\n')[0].replace(/[*`]/g, '').slice(0, 120), { sound });
+    const owed: Array<{ id: number | null; kind: string; data: Record<string, unknown>; runKey: string | null }> = [];
+    this.commit(() => {
+      this.saveState();
+      if (policy?.comment && this.tracker) { const data = { issueId: run.issueId, issueKey: run.issueKey || issueKeyOf(key), body }; owed.push({ id: this.owe('tracker.comment', data, key), kind: 'tracker.comment', data, runKey: key }); }
+      if (policy?.notify) { const data = { title: `weawr ${key}`, body: body.split('\n')[0].replace(/[*`]/g, '').slice(0, 120), sound }; owed.push({ id: this.owe('herdr.notify', data, key), kind: 'herdr.notify', data, runKey: key }); }
+      this.emit('run.reported', key, { comment: !!(policy?.comment && this.tracker), notify: !!policy?.notify, firstLine: body.split('\n')[0].slice(0, 200) });
+    });
+    await this.performOwed(owed);
   }
 
-  /** After a restart, re-attach to runs that were in flight. */
+  /** After a restart, re-attach to runs that were in flight, after finishing what the last owner left undone. */
   async resume() {
-    for (const [key, run] of Object.entries(this.state.runs)) {
+    await this.drainPending();
+    for (const [key, run] of Object.entries<any>(this.state.runs)) {
       // A nudge held for a run that finished while the watcher was down is still owed.
       if (run.queuedNudges?.length && run.status !== 'running' && run.status !== 'starting') { await this.deliverQueuedNudges(key); continue; }
       if (run.status !== 'running' && run.status !== 'starting') continue;
@@ -1020,7 +1199,7 @@ export class FactoryEngine {
         } else {
           run.status = 'stopped';
         }
-        run.finishedAt = this.clock().toISOString(); this.saveState();
+        run.finishedAt = this.clock().toISOString(); this.commit(() => { this.saveState(); this.emit(run.status === 'failed' ? 'run.failed' : 'run.stopped', key, { why: 'agent gone across a restart' }); });
         this.log(`${key}: was ${was} before restart, agent is gone → ${run.status}`);
         // A nudge held for the turn that died is still owed, and with the default one pass no
         // poll will ever revive this run to answer it. A fresh session in the same worktree does.
@@ -1125,8 +1304,48 @@ export class FactoryEngine {
       }
       this.hooks.live?.(summary);
       if (this.clock().getTime() >= nextUpdateCheck) { nextUpdateCheck = this.clock().getTime() + 24 * 3600e3; await this.hooks.updateReminder?.(); }
-      await sleep(this.cfg.pollSeconds * 1000);
+      if (this.stopping) break;
+      await new Promise<void>((r) => { this.wake = r; setTimeout(r, this.cfg.pollSeconds * 1000); });
+      this.wake = null;
+      if (this.stopping) break;
     }
+    this.log(`stopping: scheduling halted; ${this.supervising.size} supervised run(s) and their agents are left as they are`);
+    this.saveState();
+  }
+
+  /** The stable ids for a run, recorded on it at pickup. */
+  idsFor(issue: any, rule: any, key: string, run: any) {
+    const task = taskId(this.ids.factoryId, trackerScope(this.cfg.trackerSpec), issue.identifier);
+    return { hostId: this.ids.hostId, factoryId: this.ids.factoryId, taskId: task, roleRunId: roleRunId(task, rule.role || null), attemptId: attemptId(roleRunId(task, rule.role || null), run.pass || 1, run.startedAt) };
+  }
+
+  /**
+   * The immutable record of one attempt: the exact brief, its hash, the template's hash, the
+   * rule's policy as resolved for it, the agent, and the versions. What "which words was it given,
+   * under which rules" is answered from, whatever the config says later.
+   */
+  attemptSpec(issue: any, rule: any, run: any, brief: string, key: string) {
+    let templateHash: string | null = null; let instructionsHash: string | null = null;
+    try { templateHash = contentHash(this.readTemplate(rule.prompt)); } catch { /* unknown */ }
+    if (rule.instructions) instructionsHash = contentHash(rule.instructions);
+    const policy: Record<string, unknown> = {};
+    for (const k of ['worktree', 'worktreeDir', 'branch', 'permissionMode', 'agentKind', 'model', 'effort', 'agentArgs', 'claudeArgs', 'maxConcurrent', 'prompt', 'instructionsFile', 'claimLabel', 'role', 'passes', 'basedOn', 'skipIfAssignedToOthers', 'onPickup', 'onDone', 'onBlocked', 'onIdle', 'onMerged']) policy[k] = rule[k] ?? null;
+    const head = this.git(['rev-parse', 'HEAD'], run.workDir || this.paths.repo);
+    return {
+      id: run.ids?.attemptId || attemptId(key, run.pass || 1, run.startedAt),
+      runKey: key, issueKey: issue.identifier, pass: run.pass || 1, startedAt: run.startedAt,
+      spec: {
+        provenance: 'recorded', ids: run.ids || null,
+        recipe: { template: rule.prompt, templateHash, instructionsHash, briefHash: contentHash(brief), briefPath: run.briefPath },
+        briefHash: contentHash(brief),
+        rule: rule.name, role: rule.role || null, policy,
+        agent: { kind: rule.agentKind || 'claude', model: rule.model || null, effort: rule.effort || null, permissionMode: rule.permissionMode || null, args: [...(rule.agentArgs || []), ...(rule.claudeArgs || [])].map(String), name: run.agentName },
+        weawr: { version: this.version, protocol: 1 },
+        repository: { root: this.paths.repo, head, branch: run.branch || null, basedOn: run.basedOn || null, workDir: run.workDir || null },
+        issue: { updatedAt: issue.updatedAt || null, labels: issue.labels || [] },
+        nudgedBy: (run.nudges || []).map((n: any) => n.from),
+      },
+    };
   }
 }
 
@@ -1146,3 +1365,10 @@ function isOurAgent(agent?: any, repo?: any, previous?: any) {
   return !!(previous?.workspaceId && previous.workspaceId === agent?.workspace_id);
 }
 
+
+/** The fields a tracker's assign/setState need, without the issue's text. Nothing secret, nothing large. */
+function slimIssue(issue: any) {
+  if (!issue || typeof issue !== 'object') return issue;
+  const { id, identifier, ref, url, team, project, state, assignee, assignees, labels } = issue;
+  return { id, identifier, ref, url, team, project, state, assignee, assignees, labels };
+}

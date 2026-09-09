@@ -9,6 +9,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { factoryPaths, readFactoryState } from '@weawr/engine';
+
+/** The runs a factory holds, wherever it keeps them now (the durable store after any owner has run, else state.json). */
+function runsIn(dir) { const v = readFactoryState(factoryPaths(dir)); const runs = v.state.runs; v.store?.close(); return runs; }
+function nudgesIn(dir) { const v = readFactoryState(factoryPaths(dir)); const n = v.state.nudges; v.store?.close(); return n; }
 
 const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
 
@@ -160,14 +165,14 @@ test('reset by issue key forgets every role\'s run on it; by run key, only that 
   const one = repo(t, { '.weawr/config.json': config(), '.weawr/state/state.json': state() });
   const r = run(one, ['reset', 'GH-7@review']);
   assert.match(r.out, /forgot GH-7@review/);
-  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(one, '.weawr/state/state.json'), 'utf8')).runs).sort(),
-    ['GH-7', 'GH-70', 'GH-7@impl']);
+  assert.deepEqual(Object.keys(runsIn(one)).sort(), ['GH-7', 'GH-70', 'GH-7@impl']);
+  assert.ok(fs.existsSync(path.join(one, '.weawr/state/state.json.migrated')), 'the legacy file was set aside, not deleted');
 
   const all = repo(t, { '.weawr/config.json': config(), '.weawr/state/state.json': state() });
   const r2 = run(all, ['reset', 'GH-7']);
-  assert.match(r2.out, /forgot GH-7, GH-7@review, GH-7@impl/);
+  assert.match(r2.out, /forgot GH-7, GH-7@(impl|review), GH-7@(impl|review)/);
   // GH-70 is a different issue, not a role of GH-7
-  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(all, '.weawr/state/state.json'), 'utf8')).runs), ['GH-70']);
+  assert.deepEqual(Object.keys(runsIn(all)), ['GH-70']);
 
   assert.match(run(all, ['reset', 'GH-9']).out, /no run called GH-9/);
 });
@@ -235,7 +240,6 @@ test('reset by issue key hands the issue\'s nudge budget back too', (t) => {
   assert.match(before.out, /review → impl turn: fix it/);
   const r = run(dir, ['reset', 'GH-7']);
   assert.equal(r.status, 0, r.out);
-  const s = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.deepEqual(Object.keys(s.runs), ['GH-8@impl']);
-  assert.deepEqual(Object.keys(s.nudges), ['GH-8'], 'the other issue keeps its record');
+  assert.deepEqual(Object.keys(runsIn(dir)), ['GH-8@impl']);
+  assert.deepEqual(Object.keys(nudgesIn(dir)), ['GH-8'], 'the other issue keeps its record');
 });

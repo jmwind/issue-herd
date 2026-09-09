@@ -16,7 +16,7 @@ import { GitHubTracker, repoFromGit } from '@weawr/engine/adapters/trackers/gith
 import { prForBranch, prState } from '@weawr/engine/adapters/pr.mjs';
 import { credentialsPath } from '@weawr/engine/adapters/auth.mjs';
 import { isStale, loadRegistry, registryPath } from './registry.mjs';
-import { listRegistrations, registrationsDir, userDir } from '@weawr/engine';
+import { listRegistrations, readFactoryState, registrationsDir, userDir, factoryPaths } from '@weawr/engine';
 import { factoryView, indexSnapshot, parseLog, watchWorkspaces } from './model.mjs';
 import { complexity, runSize } from './git.mjs';
 
@@ -105,6 +105,25 @@ export class FactoryConsole {
     }
     // A worktree weawr made is a checkout of the factory, not a factory of its own.
     return [...found.values()].filter((f) => !/[\\/]\.weawr[\\/]worktrees[\\/]/.test(f.repo) && fs.existsSync(path.join(f.repo, '.weawr', 'config.json')));
+  }
+
+  /**
+   * The factory's state as a reader: the durable store when the factory has one (re-read when its
+   * file changes), else the legacy state.json. A durable store also holds the acknowledgements a
+   * person made through this console before the store existed; they join the notes file's.
+   */
+  readState(repo, c) {
+    const paths = factoryPaths(repo);
+    const sqlite = path.join(paths.stateDir, 'factory.sqlite');
+    if (fs.existsSync(sqlite)) {
+      c.durable ||= new Cached(() => { const v = readFactoryState(paths); const acks = v.store?.acknowledgements() || []; v.store?.close(); return { state: v.state, acks }; });
+      // WAL: the main file's mtime does not always move on a commit; the -wal file's does.
+      const stamp = [sqlite, `${sqlite}-wal`].map((f) => { try { const st = fs.statSync(f); return `${st.mtimeMs}:${st.size}`; } catch { return '-'; } }).join('|');
+      if (c.durableStamp !== stamp) { c.durableStamp = stamp; c.durableValue = c.durable.read(sqlite); }
+      for (const a of c.durableValue?.acks || []) { this.notes.done ||= {}; this.notes.done[`${repo}|${a.issueKey}`] ||= { at: a.at }; }
+      return c.durableValue?.state || { runs: {} };
+    }
+    return c.state.get(paths.statePath) || { runs: {} };
   }
 
   cacheFor(repo) {
@@ -229,7 +248,7 @@ export class FactoryConsole {
       const c = this.cacheFor(f.repo);
       const dir = path.join(f.repo, '.weawr');
       const config = mergeConfig(c.config.get(path.join(dir, 'config.json')) || {}, c.local.get(path.join(dir, 'config.local.json')));
-      const state = this.withLiveResults(c, c.state.get(path.join(dir, 'state', 'state.json')) || { runs: {} });
+      const state = this.withLiveResults(c, this.readState(f.repo, c));
       const events = c.log.get(path.join(dir, 'state', 'logs', 'weawr.log')) || [];
       const sizes = {};
       for (const [key, run] of Object.entries(state.runs || {})) { const s = await this.sizeFor(key, run, f.repo, now); if (s) sizes[key] = s; }

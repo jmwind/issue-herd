@@ -79,6 +79,48 @@ factory is, where its owner answers, and, separately, when the tracker last answ
 (`lastSuccessfulPoll`, `lastPollError`): a slow upstream is not a dead watcher. The legacy shared
 `factories.json` is still read for the transition. `packages/engine/src/registration.ts`.
 
+## Durable state
+
+A factory's state is an SQLite database, `<repo>/.weawr/state/factory.sqlite` (`node:sqlite`, no
+dependency; WAL mode so readers read while the owner writes). It holds what `state.json` held —
+runs by key, the nudge log — and what a JSON file could never hold safely:
+
+| Table | What |
+| --- | --- |
+| `runs`, `nudges` | the run records and the nudge log, as before |
+| `events` | structured events with a durable sequence number — the cursor a client resumes from |
+| `attempts` | one immutable record per turn: the exact brief and its hash, the template's hash, the rule's resolved policy, the agent and model, the weawr version, the repository head |
+| `operations` | tracked commands, deduplicated by `(scope, request id)`: repeating a request returns the original, reusing an id for different input is refused |
+| `pending_actions` | external work a committed transition owes: tracker comments, state changes, label removal, workspace closes, agent exits, worktree removal |
+| `acknowledgements` | tasks a person marked done |
+
+A transition is committed with its event and the work it owes in **one transaction**
+(`FactoryEngine.commit`); the external work is performed after the commit and its outcome
+recorded. An owner that dies in between leaves the work pending, and the next owner performs it on
+resume (`drainPending`) — at most three tries, and a comment is reconciled against the issue before
+it is repeated, so an uncertain send is not a duplicate. Agent exits go through herdr's own "is it
+still there" check, so nothing is typed into a session that already left. Exactly-once across an
+external CLI is not promised; what is promised is that nothing owed is forgotten and nothing
+observable is blindly repeated. `packages/engine/src/store/sqlite.ts`, `factory.ts`.
+
+Admission is the same for every turn: a nudged turn takes a slot like a pickup, counting running,
+starting and reserved runs, and is held on the run (`queuedNudges`) until a poll finds room. A
+signal stops scheduling after the current poll, checkpoints, releases the lock and returns —
+agents are never killed by a stop; they are the owner's to inspect.
+
+### Migration from state.json
+
+The first owner to find a `state.json` and no store migrates it under its lock: backs the file (and
+the console's notes) up to `state/backup-<time>/`, imports runs and nudges in one transaction with
+one legacy attempt record per run (provenance `legacy`: the original resolved policy was never
+recorded and is not invented), imports the console's acknowledgements, marks the store migrated,
+and renames `state.json` to `state.json.migrated`. `weawr migrate --dry-run` shows the inventory
+and what would happen; `weawr migrate` does it explicitly. A `state.json` that does not parse is
+refused and left untouched — never read as an empty factory — and a reader shows that state too.
+There is no dual write: after migration the JSON file is a backup. Rollback (move it back, remove
+`factory.sqlite*`) is only sound before new work has started; afterwards the store is the truth.
+`packages/engine/src/store/migrate.ts`.
+
 ## Identities
 
 Records are keyed by stable ids; `GH-7` and role names stay what a person reads.
@@ -103,7 +145,7 @@ its recorded name: live sessions are never renamed. `packages/engine/src/identit
 | Config loading, path confinement, `.env` rules | `packages/engine/src/config.ts` |
 | The brief | `packages/engine/src/brief.ts`, templates in `packages/recipes/prompts/` |
 | The lifecycle (pickup, supervise, finalize, merges, nudges) | `packages/engine/src/factory.ts` |
-| State (runs, nudges) | `packages/engine/src/state.ts` |
+| State: the store, migration, read-only views | `packages/engine/src/store/` (`state.ts` is the interface and the legacy JSON reader) |
 | Trackers, herdr, git, PRs, credentials | `packages/engine/src/adapters/` |
 | Terminal commands | `apps/cli/src/commands/` |
 | The console (moving into the versioned interface) | `apps/cli/src/console/`, `apps/web/src/` |
