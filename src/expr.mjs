@@ -1,4 +1,4 @@
-// Rule expression language for issue-herd.
+// Rule expression language for weawr.
 //
 //   label:ai and project:Webapp and not assignee:none
 //   (label:ai or label:agent) team:ENG priority>=3

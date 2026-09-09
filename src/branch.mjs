@@ -1,7 +1,7 @@
 // Branch naming for a run.
 //
 // One run, one branch name, true everywhere: the brief the agent reads, the pickup comment on the
-// issue, and the PR it opens. That used to be a guess. In `worktree: "claude"` mode issue-herd
+// issue, and the PR it opens. That used to be a guess. In `worktree: "claude"` mode weawr
 // does not create the branch — `claude --worktree <slug>` does, and it names it by its own scheme
 // (`worktree-<slug>`), so the brief promised a `claude/<slug>` that never existed, while the
 // tracker's own `branchName` was a third name again.

@@ -3,7 +3,7 @@
 //
 // Config:  "tracker": "github"
 //      or  "tracker": { "type": "github", "repo": "owner/name", "host": "github.com", "prefix": "GH" }
-//   repo    defaults to the `origin` remote of the repository issue-herd runs in
+//   repo    defaults to the `origin` remote of the repository weawr runs in
 //   host    a GitHub Enterprise host; api.github.com otherwise
 //   prefix  issues are known as <prefix>-<number> (GH-7) in runs, branches and herdr; "#7" in PR text
 //
@@ -15,19 +15,19 @@
 //
 // Auth: GITHUB_TOKEN / GH_TOKEN, a saved credential, or `gh auth token`. Browser sign-in without
 // `gh` needs an OAuth app with device flow enabled (Settings → Developer settings → OAuth Apps);
-// put its client id in GITHUB_CLIENT_ID below or in ISSUE_HERD_GITHUB_CLIENT_ID.
+// put its client id in GITHUB_CLIENT_ID below or in WEAWR_GITHUB_CLIENT_ID.
 
 import { execFileSync } from 'node:child_process';
 import { slugify } from '../tracker.mjs';
 import { deviceFlow, noCredentialError } from '../auth.mjs';
 
-export const GITHUB_CLIENT_ID = process.env.ISSUE_HERD_GITHUB_CLIENT_ID || '';
+export const GITHUB_CLIENT_ID = process.env.WEAWR_GITHUB_CLIENT_ID || '';
 const PRIORITY_LABELS = { p0: 1, p1: 2, p2: 3, p3: 4, urgent: 1, high: 2, medium: 3, low: 4 };
 const PRIORITY_NAMES = ['none', 'Urgent', 'High', 'Medium', 'Low'];
 // config.json is committed, so these three end up in URLs, file paths and branch names. Validate
 // them where they are read rather than trusting them: a "host" carrying a path or query would send
 // the token somewhere else, and a "prefix" carrying a slash or a dot would put a run's directory
-// outside .issue-herd/state/runs/.
+// outside .weawr/state/runs/.
 const VALID_HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
 const VALID_REPO = /^(?!\.{1,2}$)[A-Za-z0-9._-]+\/(?!\.{1,2}$)[A-Za-z0-9._-]+$/;
 const VALID_PREFIX = /^[A-Za-z][A-Za-z0-9]{0,15}$/;
@@ -42,8 +42,8 @@ export class GitHubTracker {
   };
 
   /**
-   * The GitHub host this machine trusts: github.com, or whatever ISSUE_HERD_GITHUB_HOST names —
-   * a variable issue-herd deliberately refuses to read from a repository's .env.
+   * The GitHub host this machine trusts: github.com, or whatever WEAWR_GITHUB_HOST names —
+   * a variable weawr deliberately refuses to read from a repository's .env.
    *
    * A committed config may *name* the host it expects, but it may not introduce one, because this
    * value decides where an `Authorization: Bearer <your token>` header is sent, and config.json
@@ -51,11 +51,11 @@ export class GitHubTracker {
    * static ones, so signing in cannot be pointed at someone else's server either.
    */
   static host(options = {}) {
-    const trusted = process.env.ISSUE_HERD_GITHUB_HOST || 'github.com';
-    if (!VALID_HOST.test(trusted)) throw new Error(`ISSUE_HERD_GITHUB_HOST is not a hostname: ${JSON.stringify(trusted)}`);
+    const trusted = process.env.WEAWR_GITHUB_HOST || 'github.com';
+    if (!VALID_HOST.test(trusted)) throw new Error(`WEAWR_GITHUB_HOST is not a hostname: ${JSON.stringify(trusted)}`);
     const want = options.host;
     if (want && want !== trusted) {
-      throw new Error(`the config asks to reach GitHub at ${JSON.stringify(want)}, but this machine trusts ${trusted}. A repository cannot redirect your token: if you meant it, set ISSUE_HERD_GITHUB_HOST=${want} in your shell.`);
+      throw new Error(`the config asks to reach GitHub at ${JSON.stringify(want)}, but this machine trusts ${trusted}. A repository cannot redirect your token: if you meant it, set WEAWR_GITHUB_HOST=${want} in your shell.`);
     }
     return trusted;
   }
@@ -88,7 +88,7 @@ export class GitHubTracker {
       }
     }
     ui.log('Create a token with the "repo" scope on the page that opens and paste it here.');
-    await ui.open(`https://${host}/settings/tokens/new?scopes=repo&description=issue-herd`);
+    await ui.open(`https://${host}/settings/tokens/new?scopes=repo&description=weawr`);
     const token = (await ui.askSecret('GitHub token: ')).trim();
     if (!token) throw new Error('no token entered');
     return { kind: 'apiKey', token };
@@ -103,7 +103,7 @@ export class GitHubTracker {
     this.host = GitHubTracker.host(options);
     this.prefix = options.prefix || 'GH';
     if (!VALID_PREFIX.test(this.prefix)) throw new Error(`tracker "prefix" must be letters and digits starting with a letter (it names branches and directories): ${JSON.stringify(options.prefix)}`);
-    // An unknown repository is not fatal here — `issue-herd login` needs only a token. check() is
+    // An unknown repository is not fatal here — `weawr login` needs only a token. check() is
     // what refuses to run the watcher without one.
     const repo = options.repo || repoFromGit(options.cwd || process.cwd(), this.host);
     this.repo = VALID_REPO.test(repo || '') ? repo : null;
@@ -123,7 +123,7 @@ export class GitHubTracker {
   }
 
   async request(method, url, body, { retry = true } = {}) {
-    const headers = { authorization: `Bearer ${this.token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'issue-herd' };
+    const headers = { authorization: `Bearer ${this.token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'weawr' };
     if (body) headers['content-type'] = 'application/json';
     const res = await this.fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
     const text = await res.text();
@@ -134,7 +134,7 @@ export class GitHubTracker {
         const fresh = GitHubTracker.fallback(this.options);
         if (fresh?.token && fresh.token !== this.cred.token) { this.cred = { ...fresh }; return this.request(method, url, body, { retry: false }); }
       }
-      const e = new Error(`GitHub HTTP ${res.status}: ${json?.message || text.slice(0, 200)}${res.status === 401 ? ' — run `issue-herd login github` or check GITHUB_TOKEN' : ''}`);
+      const e = new Error(`GitHub HTTP ${res.status}: ${json?.message || text.slice(0, 200)}${res.status === 401 ? ' — run `weawr login github` or check GITHUB_TOKEN' : ''}`);
       e.status = res.status; throw e;
     }
     return json;
@@ -198,7 +198,7 @@ export class GitHubTracker {
       this.labelsPending.set(name, (async () => {
         try { await this.rest('GET', `/labels/${encodeURIComponent(name)}`); return; }
         catch (e) { if (e.status !== 404) throw e; }
-        try { await this.rest('POST', '/labels', { name, color: 'c5def5', description: 'set by issue-herd' }); }
+        try { await this.rest('POST', '/labels', { name, color: 'c5def5', description: 'set by weawr' }); }
         catch (e) { if (e.status !== 422) throw e; }   // someone created it between our GET and POST
       })().catch((e) => { this.labelsPending.delete(name); throw e; }));
     }
@@ -226,7 +226,7 @@ export class GitHubTracker {
    * Guessing was worse than refusing. Treating an unknown name as a label silently created
    * "In Progress" in the user's repository the first time a Linear-shaped config ran here, and
    * treating "Done" as closed shut the issue the moment its PR opened, before anyone reviewed it.
-   * `issue-herd init --tracker github` sets these to null; the error says to do the same.
+   * `weawr init --tracker github` sets these to null; the error says to do the same.
    */
   async setState(issue, name) {
     const want = String(name).trim().toLowerCase();

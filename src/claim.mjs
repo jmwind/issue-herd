@@ -19,7 +19,9 @@
 export const ROLE_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 /** The comment that says an agent took the issue. The prefix of every role's marker. */
-export const CLAIM_MARKER = '**issue-herd** picked this up';
+export const CLAIM_MARKER = '**weawr** picked this up';
+/** What the same comment said before the rename (issue-herd → weawr, #71). An issue claimed under the old name is still claimed. */
+export const LEGACY_CLAIM_MARKER = '**issue-herd** picked this up';
 
 /**
  * A role as written in config.json, checked. `null`/`''`/undefined mean "no role", which is the
@@ -43,8 +45,8 @@ export function claimLabelFor(rule) {
  * The marker that identifies a pickup comment for this role. A roleless marker is a prefix of
  * every role's, so a roleless rule is blocked by any pickup comment while a role only sees its own.
  */
-export function pickupMarker(role) {
-  return role ? `${CLAIM_MARKER} as \`${role}\`` : CLAIM_MARKER;
+export function pickupMarker(role, marker = CLAIM_MARKER) {
+  return role ? `${marker} as \`${role}\`` : marker;
 }
 
 /**
@@ -54,7 +56,7 @@ export function pickupMarker(role) {
  * identifier contain dots, letters, digits, "-" and "_", so "V1.2" is a legal issue key and
  * "V1.2.review" could be read as issue V1.2 in role "review" or issue V1 in role "2.review". No
  * identifier and no role can contain "@", so there is exactly one way to read a run key. It is
- * also safe unquoted in a shell (`issue-herd reset GH-7@review`), in a file name, and in a herdr
+ * also safe unquoted in a shell (`weawr reset GH-7@review`), in a file name, and in a herdr
  * agent name once slugified.
  */
 export const ROLE_SEPARATOR = '@';
@@ -64,7 +66,7 @@ export function runKeyFor(identifier, role) {
   return role ? `${identifier}${ROLE_SEPARATOR}${role}` : String(identifier);
 }
 
-/** The issue key a run key belongs to — `issue-herd reset GH-7` has to find `GH-7@review` too. */
+/** The issue key a run key belongs to — `weawr reset GH-7` has to find `GH-7@review` too. */
 export function issueKeyOf(runKey) {
   const i = String(runKey).indexOf(ROLE_SEPARATOR);
   return i === -1 ? String(runKey) : String(runKey).slice(0, i);
@@ -97,9 +99,9 @@ export function heldByAPerson(issue, rule, viewer) {
 export function alreadyTaken(issue, rule, viewer) {
   const label = claimLabelFor(rule);
   if (label && issue.labels.some((l) => l.toLowerCase() === label.toLowerCase())) return `already carries the '${label}' claim label`;
-  const marker = pickupMarker(rule.role);
-  if ((issue.comments || []).some((c) => c.body.includes(marker))) {
-    return rule.role ? `an issue-herd '${rule.role}' pickup comment is already on it` : 'an issue-herd pickup comment is already on it';
+  const markers = [pickupMarker(rule.role), pickupMarker(rule.role, LEGACY_CLAIM_MARKER)];
+  if ((issue.comments || []).some((c) => markers.some((m) => c.body.includes(m)))) {
+    return rule.role ? `a weawr '${rule.role}' pickup comment is already on it` : 'a weawr pickup comment is already on it';
   }
   return heldByAPerson(issue, rule, viewer);
 }

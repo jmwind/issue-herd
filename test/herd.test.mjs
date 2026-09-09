@@ -1,7 +1,7 @@
 // The watcher class in-process, with a fake herdr object and no tracker: the handoffs between
 // roles (GH-61) are a matter of ordering between runs, which a subprocess per run cannot show.
 //
-// bin/issue-herd.mjs resolves the repository from process.cwd() when it is imported, so this file
+// bin/weawr.mjs resolves the repository from process.cwd() when it is imported, so this file
 // stands in a throwaway repository first and imports the module after. Node runs each test file
 // in its own process, so the chdir is nobody else's problem.
 import { test } from 'node:test';
@@ -11,12 +11,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const BIN = new URL('../bin/issue-herd.mjs', import.meta.url).href;
+const BIN = new URL('../bin/weawr.mjs', import.meta.url).href;
 
-const REPO = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-herd-')));
+const REPO = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-herd-')));
 execFileSync('git', ['init', '-q', REPO]);
-fs.mkdirSync(path.join(REPO, '.issue-herd'), { recursive: true });
-fs.writeFileSync(path.join(REPO, '.issue-herd', 'config.json'), JSON.stringify({
+fs.mkdirSync(path.join(REPO, '.weawr'), { recursive: true });
+fs.writeFileSync(path.join(REPO, '.weawr', 'config.json'), JSON.stringify({
   tracker: 'linear', roles: ['impl', 'review', 'usability'], maxNudges: 6,
   defaults: { worktree: 'none', onPickup: { comment: false }, onDone: { comment: false, notify: true }, onBlocked: { comment: false, notify: true }, onIdle: { comment: false, notify: false } },
   rules: [
@@ -26,10 +26,10 @@ fs.writeFileSync(path.join(REPO, '.issue-herd', 'config.json'), JSON.stringify({
   ],
 }));
 process.chdir(REPO);
-const { IssueHerd, loadConfig } = await import(BIN);
+const { Weawr, loadConfig } = await import(BIN);
 process.on('exit', () => fs.rmSync(REPO, { recursive: true, force: true }));
 
-const STATE = path.join(REPO, '.issue-herd', 'state', 'state.json');
+const STATE = path.join(REPO, '.weawr', 'state', 'state.json');
 const ISSUE = { id: 'i1', identifier: 'GH-7', ref: 'GH-7', title: 'Fix the thing', description: '', url: 'https://example.test/7', labels: ['ai'], comments: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', project: null, team: null, assignee: null, assignees: [], state: { name: 'open' } };
 
 /**
@@ -56,7 +56,7 @@ function fakeHerdr({ gone = [] } = {}) {
 /** A finished run on GH-7 for `role`, its result in place, as state.json would record it. */
 function finishedRun(role, over = {}) {
   const key = `GH-7@${role}`;
-  const dir = path.join(REPO, '.issue-herd', 'state', 'runs', key);
+  const dir = path.join(REPO, '.weawr', 'state', 'runs', key);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'result.json'), JSON.stringify({ status: 'pr_open', prUrl: 'https://github.com/o/r/pull/1' }));
   fs.writeFileSync(path.join(dir, 'issue.json'), JSON.stringify(ISSUE));
@@ -71,7 +71,7 @@ function finishedRun(role, over = {}) {
 function app({ runs, nudges = {}, herdr = fakeHerdr() }) {
   fs.mkdirSync(path.dirname(STATE), { recursive: true });
   fs.writeFileSync(STATE, JSON.stringify({ runs, nudges }));
-  const a = new IssueHerd({ cfg: loadConfig(), tracker: null, herdr });
+  const a = new Weawr({ cfg: loadConfig(), tracker: null, herdr });
   return { a, herdr, rule: (name) => a.cfg.rules.find((r) => r.name === name) };
 }
 

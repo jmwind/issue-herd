@@ -131,11 +131,11 @@ export function nudgeInstructions({ role, roles, left, max }) {
   if (!others.length) return '';
   const named = others.map((r) => `\`${r}\``).join(', ');
   const budget = left > 0
-    ? `The agents on this issue have **${left}** nudge${left === 1 ? '' : 's'} left before issue-herd stops relaying them and asks a person in`
-    : 'The agents on this issue have **no nudges left**: issue-herd will not relay another, so anything that still needs another role needs a person';
+    ? `The agents on this issue have **${left}** nudge${left === 1 ? '' : 's'} left before weawr stops relaying them and asks a person in`
+    : 'The agents on this issue have **no nudges left**: weawr will not relay another, so anything that still needs another role needs a person';
   return `**Working with the other roles.** The other roles on this issue are ${named}. When your result needs
 one of them to act — a reviewer whose findings must be fixed, an implementer who has pushed the fix
-and wants it looked at again — say so in the result and issue-herd hands your message to that
+and wants it looked at again — say so in the result and weawr hands your message to that
 role's agent as its next turn, without waiting for a person:
 
 \`\`\`json

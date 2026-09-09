@@ -340,8 +340,8 @@ test('tailscale addresses are the 100.64/10 IPv4 ones only', () => {
 test('markDone: the one action — every agent still up on the task gets its exit command, every run\'s workspace is closed, the decision is recorded, undo leaves them alone', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.ISSUE_HERD_CONSOLE_NOTES = path.join(dir, 'console.json');
-  t.after(() => { delete process.env.ISSUE_HERD_CONSOLE_NOTES; });
+  process.env.WEAWR_CONSOLE_NOTES = path.join(dir, 'console.json');
+  t.after(() => { delete process.env.WEAWR_CONSOLE_NOTES; });
   const stopped = []; const closed = []; const order = [];
   const herdr = {
     run: async () => null,
@@ -364,11 +364,11 @@ test('markDone: the one action — every agent still up on the task gets its exi
   assert.deepEqual(stopped, [['gh-1-impl', '/exit'], ['gh-1-review', '/quit']], 'each agent gets its own exit command');
   assert.deepEqual(closed, ['w1', 'w2', 'w3'], 'every role\'s workspace goes, the already-exited one included');
   assert.deepEqual(order, ['gh-1-impl', 'w1', 'gh-1-review', 'w2', 'w3'], 'an agent exits before its workspace closes');
-  assert.ok(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done['/r|GH-1'].at, 'the decision is the console\'s own note');
+  assert.ok(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done['/r|GH-1'].at, 'the decision is the console\'s own note');
   const undone = await app.markDone({ factory: 'f', issue: 'GH-1' }, false);
   assert.deepEqual(undone, { done: false, outcomes: [] });
   assert.equal(stopped.length, 2); assert.equal(closed.length, 3, 'undo touches neither the agents nor the workspaces');
-  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {});
+  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done, {});
   await assert.rejects(app.markDone({ factory: 'f', issue: 'GH-9' }), /no task GH-9/);
   // An agent that will not go keeps the task where it is: nothing recorded, the card stays, and
   // its workspace is not pulled out from under it.
@@ -379,14 +379,14 @@ test('markDone: the one action — every agent still up on the task gets its exi
   assert.match(stuck.error, /review \(gh-1-review\) still running; not marked done/);
   assert.deepEqual(stuck.outcomes.map((o) => [o.outcome, o.workspace]), [['exited', 'closed'], ['is still running', 'left open'], ['was already gone', 'closed']], 'what happened to each agent and workspace is still reported');
   assert.deepEqual(closed, ['w1', 'w3'], 'the running agent keeps its workspace');
-  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {}, 'a partial shutdown is not a done note');
+  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done, {}, 'a partial shutdown is not a done note');
   // A workspace herdr will not close is surfaced the same way, not left as a zombie behind a done note.
   herdr.stopAgent = async () => 'exited';
   herdr.closeWorkspace = async (id) => { if (id === 'w2') throw new Error('herdr workspace close: socket gone'); };
   const zombie = await app.markDone({ factory: 'f', issue: 'GH-1' });
   assert.equal(zombie.done, false);
   assert.match(zombie.error, /review workspace w2 is still open \(herdr workspace close: socket gone\); not marked done/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done, {});
+  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done, {});
   // A workspace herdr no longer has is not a failure: it is what we wanted.
   herdr.closeWorkspace = async () => { const e = new Error('herdr workspace close: no such workspace'); e.code = 'workspace_not_found'; throw e; };
   const gone = await app.markDone({ factory: 'f', issue: 'GH-1' });
@@ -421,8 +421,8 @@ test('tidy: closes the workspaces of exited agents on tasks already marked done,
 test('markDone and tidy: herdr not answering is not a shutdown — nothing is closed, nothing is recorded, the click is refused with the reason', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.ISSUE_HERD_CONSOLE_NOTES = path.join(dir, 'console.json');
-  t.after(() => { delete process.env.ISSUE_HERD_CONSOLE_NOTES; });
+  process.env.WEAWR_CONSOLE_NOTES = path.join(dir, 'console.json');
+  t.after(() => { delete process.env.WEAWR_CONSOLE_NOTES; });
   // With no snapshot every agent reads as gone and every workspace as unknown, never as closed.
   const v = factoryView({ id: 'app', repo: '/r', config: CONFIG, state: fixtureState(), index: indexSnapshot(null), now: T(15, 0) });
   assert.deepEqual(v.issues.map((i) => i.runs.map((r) => [r.agentAlive, r.workspaceId, r.workspaceOpen])), [[[false, 'w1', null]], [[false, 'w2', null]], [[false, null, false]]]);
@@ -435,7 +435,7 @@ test('markDone and tidy: herdr not answering is not a shutdown — nothing is cl
   assert.equal(refused.done, false); assert.deepEqual(refused.outcomes, []);
   assert.match(refused.error, /herdr is not answering; nothing was closed and nothing is marked done/);
   assert.deepEqual(calls, [], 'no exit, no close: there is nothing to see');
-  assert.ok(!fs.existsSync(process.env.ISSUE_HERD_CONSOLE_NOTES) || !JSON.parse(fs.readFileSync(process.env.ISSUE_HERD_CONSOLE_NOTES, 'utf8')).done?.['/r|GH-1'], 'no done note');
+  assert.ok(!fs.existsSync(process.env.WEAWR_CONSOLE_NOTES) || !JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done?.['/r|GH-1'], 'no done note');
   await assert.rejects(app.tidy(), /herdr is not answering/);
   // Undo needs nothing from herdr.
   assert.deepEqual(await app.markDone({ factory: 'f', issue: 'GH-1' }, false), { done: false, outcomes: [] });
@@ -450,13 +450,13 @@ test('markDone and tidy: herdr not answering is not a shutdown — nothing is cl
 test('tick: a clock-only advance does not emit another state; a real change does', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.ISSUE_HERD_CONSOLE_NOTES = path.join(dir, 'console.json');
-  t.after(() => { delete process.env.ISSUE_HERD_CONSOLE_NOTES; });
-  const repo = path.join(dir, 'app'); fs.mkdirSync(path.join(repo, '.issue-herd', 'state'), { recursive: true });
+  process.env.WEAWR_CONSOLE_NOTES = path.join(dir, 'console.json');
+  t.after(() => { delete process.env.WEAWR_CONSOLE_NOTES; });
+  const repo = path.join(dir, 'app'); fs.mkdirSync(path.join(repo, '.weawr', 'state'), { recursive: true });
   // an unknown tracker keeps the console off the network: no credentials, no issue or PR lookups
-  fs.writeFileSync(path.join(repo, '.issue-herd', 'config.json'), JSON.stringify({ name: 'app', tracker: 'nope', rules: [{ name: 'ai', role: 'impl', match: 'any:true' }] }));
+  fs.writeFileSync(path.join(repo, '.weawr', 'config.json'), JSON.stringify({ name: 'app', tracker: 'nope', rules: [{ name: 'ai', role: 'impl', match: 'any:true' }] }));
   const run = { rule: 'ai', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-1', title: 't', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-1-impl' };
-  const state = path.join(repo, '.issue-herd', 'state', 'state.json');
+  const state = path.join(repo, '.weawr', 'state', 'state.json');
   fs.writeFileSync(state, JSON.stringify({ runs: { 'GH-1@impl': run } }));
   const registry = path.join(dir, 'factories.json');
   stampFactory({ repo, name: 'app', tracker: 'nope', version: '1.0.0', pollSeconds: 30 }, registry, new Date());
@@ -523,6 +523,11 @@ test('http: an ungated console serves the app and the state, and refuses cross-o
   const ok = await fetch(base + '/api/exit', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', run: 'GH-1' }) });
   assert.equal(ok.status, 200); assert.deepEqual(await ok.json(), { ok: true, outcome: 'exited' }); assert.deepEqual(calls, [{ factory: 'f', run: 'GH-1' }]);
   assert.equal((await fetch(base + '/app.css')).headers.get('content-type'), 'text/css; charset=utf-8');
+  // The favicon set from assets/icons is served next to the page, and the page names it.
+  const fav = await fetch(base + '/favicon.svg'); assert.equal(fav.status, 200); assert.equal(fav.headers.get('content-type'), 'image/svg+xml'); assert.match(await fav.text(), /<svg[^>]*aria-label="weawr"/);
+  assert.equal((await fetch(base + '/favicon.ico')).headers.get('content-type'), 'image/x-icon');
+  assert.equal((await fetch(base + '/apple-touch-icon.png')).headers.get('content-type'), 'image/png');
+  assert.match(body, /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/, 'the page links its favicon');
   // Mark done takes seconds when an agent has to shut down: the page shows it from the click until the state lands.
   const js = await (await fetch(base + '/app.js')).text();
   assert.match(js, /class="btn done busy" disabled/, 'the button shows its request in flight'); assert.match(js, /Closing ' \+ b\.agents \+ ' agent/, 'and says which step it is on');
@@ -547,6 +552,8 @@ test('http: a gated console shows the lock page, refuses the API, unlocks with t
   const page = await fetch(base + '/'); const lock = await page.text(); assert.match(lock, /Locked/);
   assert.match(lock, new RegExp('<a class="home" href="' + REPO_URL + '" target="_blank"'), 'the lock page links the mark too');
   assert.equal((await fetch(base + '/api/state')).status, 401);
+  assert.equal((await fetch(base + '/favicon.svg')).status, 200, 'the favicon is not behind the gate: the lock page has a tab too');
+  assert.match(lock, /<link rel="icon" href="\/favicon\.svg"/, 'and the lock page links it');
   const wrong = await fetch(base + '/unlock', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code: '0000' }) });
   assert.equal(wrong.status, 401); assert.equal((await wrong.json()).attemptsLeft, 4);
   const right = await fetch(base + '/unlock', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code: '1357' }) });

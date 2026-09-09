@@ -4,11 +4,11 @@
 // worktree stay up so a reviewer can poke at them, and the thing that says they are no longer
 // needed is the PR being merged — which is a GitHub question no matter which tracker the issue
 // came from, because a Linear issue's PR is on GitHub too. So this is not a tracker method: it is
-// one REST call about one URL, and it is the only part of issue-herd that reads a code host.
+// one REST call about one URL, and it is the only part of weawr that reads a code host.
 //
 // The URL comes out of the agent's result.json, and result.json is written by a model that has
 // read the issue's text, so it is not trusted to say where the token goes: `host` is what the
-// machine trusts (github.com, or ISSUE_HERD_GITHUB_HOST), and a PR URL anywhere else is refused
+// machine trusts (github.com, or WEAWR_GITHUB_HOST), and a PR URL anywhere else is refused
 // rather than fetched.
 
 const PR_URL = /^https?:\/\/([^/?#]+)\/([^/?#]+)\/([^/?#]+)\/pulls?\/(\d+)(?:[/?#].*)?$/;
@@ -64,7 +64,7 @@ export async function prState(url, { token = null, host = 'github.com', fetchImp
   const pr = parsePrUrl(url);
   if (!pr) throw new Error(`not a pull request URL: ${url}`);
   if (pr.host !== host) throw new Error(`${pr.host} is not the GitHub host this machine trusts (${host}); not asking it about ${url}`);
-  const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'issue-herd' };
+  const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'weawr' };
   if (token) headers.authorization = `Bearer ${token}`;
   const res = await fetchImpl(`${apiBase(host)}/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`, { headers });
   const text = await res.text();
@@ -156,7 +156,7 @@ export async function keepMergeable(run, pr, { lookupAgent, nudge, tellPerson, l
  */
 export function conflictPrompt({ prUrl, branch, baseRef, briefPath }) {
   const base = baseRef || '<base>';
-  return `issue-herd: your pull request ${prUrl} now conflicts with ${baseRef || 'the base branch'} — something merged after you pushed, and GitHub reports it as not mergeable. `
+  return `weawr: your pull request ${prUrl} now conflicts with ${baseRef || 'the base branch'} — something merged after you pushed, and GitHub reports it as not mergeable. `
     + `Your brief${briefPath ? ` (${briefPath})` : ''} says the PR is yours to keep mergeable until it is merged or closed. `
     + `Bring the branch up to date now: \`git fetch origin ${base}\` and \`git merge origin/${base}\` into \`${branch || 'your branch'}\` — a merge, never a rebase, never a force-push — `
     + `resolve every conflict so the change still does what the PR says, re-run the repository's checks, push, and say on the PR in one line what you merged in. `
@@ -172,7 +172,7 @@ export function conflictPrompt({ prUrl, branch, baseRef, briefPath }) {
 export async function prForBranch({ repo, branch, token = null, host = 'github.com', fetchImpl = fetch }) {
   if (!repo || !branch) return null;
   const owner = repo.split('/')[0];
-  const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'issue-herd' };
+  const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'weawr' };
   if (token) headers.authorization = `Bearer ${token}`;
   const q = `head=${encodeURIComponent(`${owner}:${branch}`)}&state=all&sort=created&direction=desc&per_page=1`;
   const res = await fetchImpl(`${apiBase(host)}/repos/${repo}/pulls?${q}`, { headers });

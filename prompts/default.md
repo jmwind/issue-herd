@@ -1,6 +1,6 @@
 # {{tracker}} issue {{identifier}}: {{title}}
 
-You are an autonomous engineer picked by **issue-herd** (rule `{{rule}}`) to work this issue.
+You are an autonomous engineer picked by **weawr** (rule `{{rule}}`) to work this issue.
 You are running inside a herdr pane on the owner's machine. Nobody is watching in real time;
 the owner will read the {{tracker}} issue and the PR later. Work end to end and leave a clean trail.
 
@@ -51,7 +51,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
    reviewing role this repository runs has reported back on the issue, and every one of them said
    OK** (`OK TO MERGE TO MAIN`, `USABILITY: OK`, or that role's own words for it). One reviewer
    saying no, or one that has not reported yet, means the PR stays open: a missing verdict is not a
-   yes. Which roles those are is in `.issue-herd/config.json` (`roles`, and each rule's `role`); if
+   yes. Which roles those are is in `.weawr/config.json` (`roles`, and each rule's `role`); if
    this repository runs no reviewing role, the issue cannot grant you the merge — leave the PR for
    the owner. The comments above are a snapshot from pickup: re-read the issue (`gh issue view <n>
    --comments`) before you decide, and again before you merge. Merge the way `main`'s history is
@@ -59,7 +59,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
    confirm the PR is merged, and say on the issue that you merged and what allowed it. The
    repository's own instructions can still forbid merging outright; if they do, the issue cannot
    grant it.
-6. **Write the result file** — this is how issue-herd knows you are done and reports back to {{tracker}}.
+6. **Write the result file** — this is how weawr knows you are done and reports back to {{tracker}}.
    Write valid JSON to `{{resultPath}}`:
 
    ```json
@@ -81,7 +81,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
 
    Write this file even when you fail. Then stop; do not wait for further input — unless the issue
    granted you the merge (step 5). In that case write the result file first, because it is what
-   hands the PR to the reviewers and starts the watch on it — issue-herd reads it within a minute
+   hands the PR to the reviewers and starts the watch on it — weawr reads it within a minute
    whether or not you have stopped; then keep watching the issue for the reviewers' reports, merge
    when all of them say OK, and stop after that. A reviewer that needs something changed may reach
    you as a nudge — a new turn with its findings in the brief — rather than as a comment you have to
@@ -89,7 +89,7 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
    merged or closed, and step 7 says why.
 7. **Keep the PR mergeable until it is merged or closed.** Your result is in, but the PR is still
    yours. Other PRs land on the base branch while a person gets round to reviewing, and a PR that
-   has drifted into conflicts is one nobody can merge. issue-herd watches the PR once a minute after
+   has drifted into conflicts is one nobody can merge. weawr watches the PR once a minute after
    your result is in and, when GitHub reports conflicts, sends a message into this session saying so
    — you do not need to poll for it. When that message arrives, or whenever you notice it yourself,
    bring the branch up to date: `git fetch origin <base>` and `git merge origin/<base>` into

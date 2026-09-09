@@ -1,6 +1,6 @@
 # How to work in this repository
 
-issue-herd works its own GitHub issues with this file. Keep it short and concrete.
+weawr works its own GitHub issues with this file. Keep it short and concrete.
 
 ## Read first
 
@@ -16,13 +16,13 @@ issue-herd works its own GitHub issues with this file. Keep it short and concret
 
 - `npm test` (Node's built-in runner, no dependencies). Add or extend a test in `test/` for what
   you changed; tracker changes must keep `test/trackers.test.mjs` green.
-- `node bin/issue-herd.mjs --help` still prints the command list (it is the file header).
-- If you touched the GitHub tracker: `node bin/issue-herd.mjs match "any:true"` in this repo is a
+- `node bin/weawr.mjs --help` still prints the command list (it is the file header).
+- If you touched the GitHub tracker: `node bin/weawr.mjs match "any:true"` in this repo is a
   read-only call against the real API through `gh auth token`.
 
 ## Never
 
-- Commit a token, a `credentials.json`, or anything under `.issue-herd/state/`.
+- Commit a token, a `credentials.json`, or anything under `.weawr/state/`.
 - Add an npm dependency; the tool ships with none.
 - Change the normalized issue shape without updating `checkIssue()` and both trackers.
 
@@ -40,7 +40,7 @@ issue-herd works its own GitHub issues with this file. Keep it short and concret
 ## The three roles on this repository
 
 Every issue here is shared by three agents, each holding its own claim (`herdr:impl`,
-`herdr:review`, `herdr:usability`). The wiring is in `.issue-herd/config.json`; your brief says
+`herdr:review`, `herdr:usability`). The wiring is in `.weawr/config.json`; your brief says
 which role you are.
 
 - **`impl`** builds the change and opens the PR. When the PR is up and the checks above pass, hand
@@ -55,7 +55,7 @@ which role you are.
   implementer's agent idle. The implementer fixes, pushes to the same PR, writes its result again
   with the same PR URL, and nudges back the reviewer(s) that asked (`[{ "role": "review", … },
   { "role": "usability", … }]`) naming the commits to re-read. An `OK` verdict needs no nudge. The
-  issue has `maxNudges` (six) of these before issue-herd asks the owner in; if you cannot agree
+  issue has `maxNudges` (six) of these before weawr asks the owner in; if you cannot agree
   before then, or the owner has asked to be involved, write `needs_human` and say why.
 
 ## Who merges

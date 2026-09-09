@@ -1,6 +1,6 @@
 # How to work in this repository
 
-<!-- issue-herd appends this file to every agent brief. Keep it short and concrete: the agent
+<!-- weawr appends this file to every agent brief. Keep it short and concrete: the agent
      also reads the repo's own AGENTS.md / CLAUDE.md, so put only what a one-shot autonomous
      session needs to get right. Delete these comments. -->
 

@@ -1,4 +1,4 @@
-// The orchestrator behind `issue-herd console`: finds the factories on this machine, reads what
+// The orchestrator behind `weawr console`: finds the factories on this machine, reads what
 // each watcher has written, asks herdr once per tick, builds the view, and says when it changed.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -32,7 +32,7 @@ const LIVE = new Set(['running', 'starting', 'awaiting_merge', 'done']);
 /**
  * The process environment plus the tracker's own token variables from the factory's .env.local
  * and .env, which is where the watcher's docs say a per-project token may live. Only those names
- * are read; a repository's .env never gets to set anything of issue-herd's own.
+ * are read; a repository's .env never gets to set anything of weawr's own.
  */
 function envWith(repo, names) {
   const env = { ...process.env };
@@ -70,7 +70,7 @@ export class FactoryConsole {
     this.live = new Map();   // repo → { tracker, ghToken, issues: Map, prs: Map, busy }
     // Tasks a person marked done in the console. The console's own file, never the watcher's
     // state.json (two writers on one file is how state gets lost); keyed by repo and issue.
-    this.notesFile = process.env.ISSUE_HERD_CONSOLE_NOTES || path.join(path.dirname(credentialsPath()), 'console.json');
+    this.notesFile = process.env.WEAWR_CONSOLE_NOTES || path.join(path.dirname(credentialsPath()), 'console.json');
     this.notes = readNotes(this.notesFile);
     this.sizes = new Map();  // runKey → { at, head, value }
     this.listeners = new Set();
@@ -99,8 +99,8 @@ export class FactoryConsole {
       f.workspaceId = w.workspaceId; f.watchName = w.name;
       found.set(repo, f);
     }
-    // A worktree issue-herd made is a checkout of the factory, not a factory of its own.
-    return [...found.values()].filter((f) => !/[\\/]\.issue-herd[\\/]worktrees[\\/]/.test(f.repo) && fs.existsSync(path.join(f.repo, '.issue-herd', 'config.json')));
+    // A worktree weawr made is a checkout of the factory, not a factory of its own.
+    return [...found.values()].filter((f) => !/[\\/]\.weawr[\\/]worktrees[\\/]/.test(f.repo) && fs.existsSync(path.join(f.repo, '.weawr', 'config.json')));
   }
 
   cacheFor(repo) {
@@ -150,7 +150,7 @@ export class FactoryConsole {
   /** The factory's tracker (and a GitHub token for its PRs), built once from what this machine holds. */
   liveFor(repo, config) {
     if (this.live.has(repo)) return this.live.get(repo);
-    const host = process.env.ISSUE_HERD_GITHUB_HOST || 'github.com';
+    const host = process.env.WEAWR_GITHUB_HOST || 'github.com';
     const entry = { tracker: null, ghToken: null, ghRepo: repoFromGit(repo, host), host, issues: new Map(), prs: new Map(), branches: new Map(), busy: false, why: null };
     try {
       const spec = trackerSpec(config.tracker || 'linear');
@@ -221,10 +221,10 @@ export class FactoryConsole {
     const seenIds = new Set();
     for (const f of this.discover(index)) {
       const c = this.cacheFor(f.repo);
-      const dir = path.join(f.repo, '.issue-herd');
+      const dir = path.join(f.repo, '.weawr');
       const config = mergeConfig(c.config.get(path.join(dir, 'config.json')) || {}, c.local.get(path.join(dir, 'config.local.json')));
       const state = this.withLiveResults(c, c.state.get(path.join(dir, 'state', 'state.json')) || { runs: {} });
-      const events = c.log.get(path.join(dir, 'state', 'logs', 'issue-herd.log')) || [];
+      const events = c.log.get(path.join(dir, 'state', 'logs', 'weawr.log')) || [];
       const sizes = {};
       for (const [key, run] of Object.entries(state.runs || {})) { const s = await this.sizeFor(key, run, f.repo, now); if (s) sizes[key] = s; }
       let id = String(config.name || f.registry?.name || f.watchName || path.basename(f.repo)).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'factory';

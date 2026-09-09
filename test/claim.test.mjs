@@ -5,13 +5,14 @@ import {
   ROLE_RE, ROLE_SEPARATOR,
   alreadyTaken, applyRoles, checkBasedOn, checkRoleBranches, claimLabelFor, issueKeyOf,
   heldByAPerson, nextPass, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker,
+  LEGACY_CLAIM_MARKER,
   runKeyFor, workspaceLabel,
 } from '../src/claim.mjs';
 
 const issue = (over = {}) => ({ identifier: 'GH-7', labels: [], comments: [], assignees: [], assignee: null, ...over });
 const rule = (over = {}) => ({ name: 'r', claimLabel: 'herdr', role: null, skipIfAssignedToOthers: true, ...over });
 /** What the watcher would post on pickup for this rule. */
-const pickupComment = (role) => ({ body: `🐑 ${pickupMarker(role)} on \`mbp\` · herdr workspace \`w3\` · rule \`r\``, author: 'me', createdAt: '2026-01-01T00:00:00Z' });
+const pickupComment = (role) => ({ body: `🧵 ${pickupMarker(role)} on \`mbp\` · herdr workspace \`w3\` · rule \`r\``, author: 'me', createdAt: '2026-01-01T00:00:00Z' });
 
 // ---------------------------------------------------------------- naming
 
@@ -33,7 +34,7 @@ test('a role scopes the run key, and the issue key is recoverable from it', () =
 test('a run key can always be read back, whatever the tracker calls its issues', () => {
   // checkIssue() lets an identifier hold dots, dashes and underscores, so a "." separator made
   // "V1.2.review" ambiguous: issue V1.2 in role "review", or issue V1 in role "2.review"?
-  // `issue-herd reset V1.2` read it the second way and forgot the wrong runs. No identifier and
+  // `weawr reset V1.2` read it the second way and forgot the wrong runs. No identifier and
   // no role can contain the separator, so there is exactly one way to split.
   for (const id of ['GH-7', 'DEV-123', 'V1.2', 'a_b-c.d', '7']) {
     assert.equal(issueKeyOf(runKeyFor(id, 'review')), id, id);
@@ -66,6 +67,16 @@ test('two roles hold the same issue at once without either skipping the other', 
   assert.match(alreadyTaken(both, rule({ role: 'impl' })), /herdr:impl/);
   assert.match(alreadyTaken(both, rule({ role: 'review' })), /herdr:review/);
   assert.equal(alreadyTaken(both, rule({ role: 'split' })), null);
+});
+
+test('a pickup comment written under the old name (issue-herd) still counts as a claim, in its role', () => {
+  // The rename (#71) changed the marker's first word. Issues claimed before it must not be taken twice.
+  const legacy = (role) => ({ body: `🐑 ${pickupMarker(role, LEGACY_CLAIM_MARKER)} on \`mbp\` · herdr workspace \`w3\` · rule \`r\``, author: 'me', createdAt: '2026-01-01T00:00:00Z' });
+  assert.match(legacy('impl').body, /\*\*issue-herd\*\* picked this up as `impl`/);
+  assert.match(alreadyTaken(issue({ comments: [legacy('impl')] }), rule({ role: 'impl' })), /a weawr 'impl' pickup comment/);
+  assert.equal(alreadyTaken(issue({ comments: [legacy('impl')] }), rule({ role: 'review' })), null, 'the old marker is still role-scoped');
+  assert.match(alreadyTaken(issue({ comments: [legacy(null)] }), rule()), /a weawr pickup comment/);
+  assert.match(pickupMarker('impl'), /^\*\*weawr\*\* picked this up as `impl`$/, 'new pickups are written under the new name');
 });
 
 test('with no role configured you get exactly the old, exclusive claim', () => {

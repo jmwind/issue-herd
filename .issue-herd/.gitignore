@@ -1,7 +1,0 @@
-# issue-herd. config.json, instructions.md and prompts/ are committed; these are not.
-# runtime state: state.json, runs/<KEY>/, logs/
-state/
-# per-machine overrides of config.json
-config.local.json
-# the git worktrees issue-herd creates for runs
-worktrees/

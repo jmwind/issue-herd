@@ -18,8 +18,8 @@ for (const [id, T] of Object.entries(TRACKERS)) {
   });
 
   test(`${id}: refuses to start without a token and names the way out`, () => {
-    assert.throws(() => new T(null, { options: { repo: 'o/r' } }), /issue-herd login/);
-    assert.throws(() => new T({ token: '' }, { options: { repo: 'o/r' } }), /issue-herd login/);
+    assert.throws(() => new T(null, { options: { repo: 'o/r' } }), /weawr login/);
+    assert.throws(() => new T({ token: '' }, { options: { repo: 'o/r' } }), /weawr login/);
   });
 }
 
@@ -36,7 +36,7 @@ test('an unknown tracker lists the known ones', () => {
 });
 
 test('naming a tracker on the command line keeps the config options for it', () => {
-  // `issue-herd login github` in a GitHub Enterprise repo must sign in to that host, not github.com.
+  // `weawr login github` in a GitHub Enterprise repo must sign in to that host, not github.com.
   const configured = { type: 'github', host: 'ghe.corp.com', repo: 'team/app' };
   assert.deepEqual(mergeSpec({ type: 'github' }, configured), configured);
   assert.deepEqual(mergeSpec({ type: 'linear' }, configured), { type: 'linear' }, 'a different tracker keeps nothing');
