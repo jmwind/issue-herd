@@ -29,7 +29,8 @@ export async function update(ctx: Context, args: string[] = []): Promise<void> {
   if (!tag) { console.log(`weawr ${ctx.version} is the newest published version; nothing to do (weawr update --to vX.Y.Z installs a specific one)`); return; }
   const spec = `${INSTALL_SPEC}#${tag}`;
   console.log(`weawr ${ctx.version} → installing ${tag} from ${spec} …`);
-  execFileSync('npm', ['install', '-g', spec], { stdio: 'inherit' });
+  // npm 11 runs a git dependency's prepare (the build) only when allowed by name; older npm ignores the flag.
+  execFileSync('npm', ['install', '-g', '--allow-scripts=weawr', spec], { stdio: 'inherit' });
   const now = execFileSync('weawr', ['--version'], { encoding: 'utf8' }).trim();
   console.log(`now ${now}`);
   console.log(`rollback: weawr update --to v${ctx.version}`);

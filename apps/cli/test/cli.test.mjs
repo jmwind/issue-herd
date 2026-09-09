@@ -57,7 +57,7 @@ test('a repository .env still supplies the tracker token, which is what it is fo
   const dir = repo(t, { '.weawr/config.json': config(), '.env': 'LINEAR_API_KEY=lin_api_fromenv\n' });
   // `match` gets as far as calling Linear, which fails on the fake key — proof the key was read.
   const r = run(dir, ['match', 'any:true']);
-  assert.match(r.out, /Linear HTTP 4\d\d|fetch failed/);
+  assert.match(r.out, /Linear HTTP \d{3}|fetch failed/, 'Linear was asked (whatever it answered); the key came from .env');
   assert.doesNotMatch(r.out, /no Linear credentials/);
 });
 
@@ -149,7 +149,7 @@ test('"roles" switches roles on and off for the project without deleting the rul
   const dir = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', roles: ['impl'], rules }) });
   // `match` reaches the tracker, so the config was accepted and the disabled rule is still a rule.
   const r = run(dir, ['match', 'any:true'], { LINEAR_API_KEY: 'lin_api_nope' });
-  assert.match(r.out, /Linear HTTP 4\d\d|fetch failed/);
+  assert.match(r.out, /Linear HTTP \d{3}|fetch failed/);
   const bad = repo(t, { '.weawr/config.json': JSON.stringify({ tracker: 'linear', roles: 'impl', rules }) });
   assert.match(run(bad, ['status']).out, /"roles" must be an array/);
 });

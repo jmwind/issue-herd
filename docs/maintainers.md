@@ -103,7 +103,8 @@ built artifact never hot-reloads: it serves copies of the page read once at star
 caches its build. `pnpm build` before you trust a change in the artifact; `pnpm build --force` if
 a cached output ever looks stale.
 
-`npm install -g github:jmwind/weawr` keeps working without pnpm or Turborepo on the user's
-machine: npm clones, installs the dev dependencies and runs `prepare`, which is
+`npm install -g --allow-scripts=weawr github:jmwind/weawr` keeps working without pnpm or Turborepo
+on the user's machine (npm 11 runs a git dependency's `prepare` only when allowed by name; older
+npm ignores the flag): npm clones, installs the dev dependencies and runs `prepare`, which is
 `scripts/build.mjs` — every package's own `build` script in dependency order, the same artifact
 `turbo run build` makes. `node scripts/verify-install.mjs --git` exercises exactly that path.

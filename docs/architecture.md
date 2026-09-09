@@ -42,7 +42,7 @@ application's source: the CLI build copies the web build in as assets.
 the prompt templates and `config.example.json` next to it). The root `package.json` is the
 installable package: `bin` points at that file, `files` ships only `apps/cli/dist`, docs and the
 licence, and `prepare` runs `scripts/build.mjs` — every package's own `build` script in dependency
-order, with plain Node — so `npm install -g github:jmwind/weawr` works without pnpm or Turborepo
+order, with plain Node — so `npm install -g --allow-scripts=weawr github:jmwind/weawr` works without pnpm or Turborepo
 on the user's machine. `scripts/verify-install.mjs` packs, installs into a clean prefix and drives
 the installed command from a fresh repository; `--git` does the same through `git+file://`.
 

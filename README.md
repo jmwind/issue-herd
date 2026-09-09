@@ -66,10 +66,11 @@ One line per thing that happened, and one live line at the bottom rewritten afte
 ## Install
 
 ```bash
-npm install -g github:jmwind/weawr
+npm install -g --allow-scripts=weawr github:jmwind/weawr
 ```
 
-You need **Node 22.13+**, the `herdr` CLI (0.8.2 or newer) with its server running,
+(`--allow-scripts` is what npm 11 needs to run the build that installing from git involves; older
+npm ignores it.) You need **Node 22.13+**, the `herdr` CLI (0.8.2 or newer) with its server running,
 an agent on your PATH and logged in (`claude`, `codex`, …), and `gh` logged in so agents can open
 pull requests. Update with `weawr update` (it installs a release tag and tells you how to roll
 back); the watcher tells you when there is a new version. The installed tool has no runtime

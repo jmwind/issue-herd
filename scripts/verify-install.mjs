@@ -33,7 +33,8 @@ try {
     if (/package\/(packages|apps\/web)\//.test(listing)) fail('the tarball includes source packages');
     if (/package\/apps\/cli\/src\//.test(listing)) fail('the tarball includes apps/cli/src');
   }
-  sh('npm', ['install', '-g', '--prefix', prefix, spec], { cwd: tmp, env, stdio: ['ignore', 'pipe', 'inherit'] });
+  // npm 11 runs a git dependency's prepare script only when allowed by name; older npm ignores the flag.
+  sh('npm', ['install', '-g', '--prefix', prefix, '--allow-scripts=weawr', spec], { cwd: tmp, env, stdio: ['ignore', 'pipe', 'inherit'] });
   const bin = path.join(prefix, process.platform === 'win32' ? '' : 'bin', 'weawr');
   const version = sh(bin, ['--version'], { env }).trim();
   const expected = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;

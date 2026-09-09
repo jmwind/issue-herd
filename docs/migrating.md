@@ -101,7 +101,7 @@ the checkout itself, which this migration does not move.
 
    ```bash
    npm uninstall -g issue-herd
-   npm install -g github:jmwind/weawr     # or, from the clone: npm link
+   npm install -g --allow-scripts=weawr github:jmwind/weawr     # or, from the clone: npm link
    weawr --version
    ```
 
