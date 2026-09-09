@@ -1,0 +1,27 @@
+{
+  "name": "@weawr/engine",
+  "version": "0.2.8",
+  "private": true,
+  "description": "The factory: lifecycle, commands, observations and canonical projections, with its tracker/herdr/git/persistence adapters.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*": "./dist/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@weawr/protocol": "*",
+    "@weawr/recipes": "*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test"
+  }
+}

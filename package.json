@@ -1,29 +1,43 @@
 {
   "name": "weawr",
   "version": "0.2.8",
-  "description": "Watch Linear or GitHub Issues; when an issue matches a rule, open a herdr workspace, run Claude Code in a worktree, brief it, and report the PR back to the issue.",
+  "private": true,
+  "description": "Watch Linear or GitHub Issues; when an issue matches a rule, open a herdr workspace, run a coding agent in a worktree, brief it, and report the PR back to the issue.",
   "type": "module",
   "bin": {
-    "weawr": "bin/weawr.mjs"
+    "weawr": "apps/cli/dist/weawr.mjs"
   },
   "files": [
-    "bin",
-    "src",
-    "prompts",
-    "config.example.json",
-    "assets",
+    "apps/cli/dist",
     "docs",
     "README.md",
     "LICENSE"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
+  "packageManager": "pnpm@11.1.3",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "test": "node --test",
-    "smoke": "node bin/weawr.mjs smoke",
-    "release": "npm test && npm version patch && git push --follow-tags",
-    "release:minor": "npm test && npm version minor && git push --follow-tags"
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "node scripts/check-imports.mjs",
+    "dev": "turbo run dev",
+    "prepare": "node scripts/build.mjs",
+    "verify:install": "node scripts/verify-install.mjs",
+    "smoke": "node apps/cli/dist/weawr.mjs smoke",
+    "release": "turbo run lint typecheck build && turbo run test --force && node scripts/verify-install.mjs && npm version patch && git push --follow-tags",
+    "release:minor": "turbo run lint typecheck build && turbo run test --force && node scripts/verify-install.mjs && npm version minor && git push --follow-tags"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "esbuild": "0.28.2",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3"
   },
   "repository": {
     "type": "git",

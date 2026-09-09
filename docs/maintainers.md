@@ -17,23 +17,33 @@ would silently believe it is up to date forever.
 The rename itself — every path, variable and file that changed name, and the order to move an
 install over — is in [Migrating from issue-herd](migrating.md).
 
-That runs the tests, bumps the patch version in `package.json`, commits it, tags `vX.Y.Z`, and
-pushes commits and tags. Everyone picks it up with `weawr update`. Use
-`npm run release:minor` for a feature. To hack on the tool without installing:
+That lints, type-checks, builds, runs the tests uncached, installs the packed artifact into a clean
+prefix and exercises it from a fresh repository (`scripts/verify-install.mjs`), then bumps the patch
+version in `package.json`, commits it, tags `vX.Y.Z`, and pushes commits and tags. Everyone picks it
+up with `weawr update`. Use `npm run release:minor` for a feature.
 
-```bash
-git clone git@github.com:jmwind/weawr.git && cd weawr && npm link
-```
-
-Requires Node 22+, the `herdr` CLI with its server running, `claude` on PATH and logged in, and
-`gh` logged in for PRs (with GitHub Issues as the tracker, that login is also the token). No npm
-dependencies.
+Requires Node 22.13+, the `herdr` CLI with its server running, `claude` on PATH and logged in, and
+`gh` logged in for PRs (with GitHub Issues as the tracker, that login is also the token). The
+installed tool still has no runtime dependencies; the workspace has development ones (TypeScript,
+esbuild, Turborepo), pinned.
 
 
 ## Hacking on it
 
+The repository is a pnpm workspace built with Turborepo: `apps/cli` (the executable), `apps/web`
+(the console page), and `packages/{engine,recipes,protocol,client}`. See
+[architecture.md](architecture.md) for who owns what.
+
 ```bash
-git clone git@github.com:jmwind/weawr.git && cd weawr && npm link
+git clone git@github.com:jmwind/weawr.git && cd weawr
+pnpm install            # also builds, through `prepare`
+pnpm build              # turbo run build → apps/cli/dist/weawr.mjs, the one file users run
+pnpm test               # every package's tests, against their built output
+pnpm lint               # the import-direction check (scripts/check-imports.mjs)
+node apps/cli/dist/weawr.mjs --help
 ```
 
-`npm test` runs the tool's own unit tests (Node's built-in runner, no dependencies).
+`npm install -g github:jmwind/weawr` keeps working without pnpm or Turborepo on the user's
+machine: npm clones, installs the dev dependencies and runs `prepare`, which is
+`scripts/build.mjs` — every package's own `build` script in dependency order, the same artifact
+`turbo run build` makes. `node scripts/verify-install.mjs --git` exercises exactly that path.

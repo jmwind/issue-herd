@@ -1,0 +1,22 @@
+{
+  "name": "@weawr/protocol",
+  "version": "0.2.8",
+  "private": true,
+  "description": "Serializable contracts between the weawr CLI and its clients: schemas, envelopes, versions.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test"
+  }
+}

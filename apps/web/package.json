@@ -1,0 +1,16 @@
+{
+  "name": "@weawr/web",
+  "version": "0.2.8",
+  "private": true,
+  "description": "The factory console page: rendering and interaction only. Built as static assets the CLI serves.",
+  "type": "module",
+  "dependencies": {
+    "@weawr/client": "*",
+    "@weawr/protocol": "*"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "echo 'web: no TypeScript yet'",
+    "test": "node --test"
+  }
+}

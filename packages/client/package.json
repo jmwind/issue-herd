@@ -1,0 +1,25 @@
+{
+  "name": "@weawr/client",
+  "version": "0.2.8",
+  "private": true,
+  "description": "Browser/mobile transport for the weawr CLI interface: fetch, SSE, reconnect, operation tracking.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@weawr/protocol": "*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test"
+  }
+}

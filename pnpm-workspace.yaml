@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+  - packages/*
+# Internal packages are referenced as "*" so that both pnpm (here) and npm (the
+# `npm install -g github:jmwind/weawr` path, which knows nothing of `workspace:`)
+# link them from the workspace.
+linkWorkspacePackages: true
