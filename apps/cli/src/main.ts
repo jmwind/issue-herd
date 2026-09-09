@@ -12,7 +12,7 @@ import { reset, status } from './commands/status.js';
 import { match } from './commands/match.js';
 import { watch } from './commands/watch.js';
 import { smoke } from './commands/smoke.js';
-import { consoleCommand } from './commands/console.js';
+import { serve } from './commands/serve.js';
 import { update, updateReminder } from './commands/update.js';
 import { migrate } from './commands/migrate.js';
 import { recipe } from './commands/recipe.js';
@@ -32,7 +32,8 @@ export async function main(argv: string[]): Promise<void> {
   ctx.loadEnv();
   const cmd = argv[0] || 'run';
   if (cmd === 'login' || cmd === 'logout') return auth(ctx, cmd, argv.slice(1));
-  if (cmd === 'console') return consoleCommand(ctx, argv.slice(1));
+  if (cmd === 'console') return serve(ctx, argv.slice(1), { asConsole: true });
+  if (cmd === 'serve') return serve(ctx, argv.slice(1));
   if (!ctx.hasConfig()) throw new Error(`no ${path.relative(process.cwd(), ctx.paths.configPath) || ctx.paths.configPath} — cd into the repo you want to work on and run \`weawr init\``);
   const cfg = ctx.config();
   if (cmd !== 'smoke') await updateReminder(ctx);

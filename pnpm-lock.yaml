@@ -32,6 +32,10 @@ importers:
       '@weawr/recipes':
         specifier: '*'
         version: link:../../packages/recipes
+    devDependencies:
+      '@weawr/client':
+        specifier: '*'
+        version: link:../../packages/client
 
   apps/web:
     dependencies:

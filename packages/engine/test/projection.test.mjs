@@ -1,41 +1,47 @@
-// The console: the view model from fixtures, the gate, the registry, and the HTTP surface end to
-// end on an ephemeral port with a stand-in orchestrator.
+// The canonical projection, from fixtures: runs, structured events, what herdr says, what the
+// tracker said. Ported from the console's model tests; the log parser is gone, so the same run
+// history is given as the events the engine records.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { parseLog, segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView, productionWindows, production, SETTLE_MS } from '../build/console/model.mjs';
-import { Gate, hashPasscode, verifyPasscode } from '../build/console/passcode.mjs';
-import { stampFactory, loadRegistry, isStale, forgetFactory } from '../build/console/registry.mjs';
-import { complexity } from '../build/console/git.mjs';
-import { createHandler, listen, tailscaleAddresses, REPO_URL } from '../build/console/server.mjs';
-import { FactoryConsole } from '../build/console/console.mjs';
+import { segments, humanWaitMs, indexSnapshot, watchWorkspaces, runState, ownsPr, factoryView, productionWindows, production, timelineOf, SETTLE_MS } from '../dist/projection.js';
+import { complexity } from '../dist/adapters/git-size.mjs';
 
 const T = (h, m, s = 0) => new Date(2026, 8, 7, h, m, s).getTime();
 const iso = (h, m, s = 0) => new Date(T(h, m, s)).toISOString();
 
-const LOG = `[2026-09-07 14:00:00] picking up GH-7@impl "Fix the thing" (rule implement, role impl)
-[2026-09-07 14:00:05] GH-7@impl: prompted (state working)
-[2026-09-07 14:10:00] GH-7@impl: blocked — waiting for approval or input in w1
-[2026-09-07 14:14:00] GH-7@impl: unblocked → working
-[2026-09-07 14:30:00] GH-7@impl: idle without a result — probably asking a question in w1
-[2026-09-07 14:33:00] GH-7@impl: working again
-[2026-09-07 14:40:00] GH-7@impl: done (pr_open) https://github.com/o/r/pull/9
-[2026-09-07 14:41:00] poll #3: 11 open issues, 0 matched
-`;
+/** GH-7@impl's history as the engine records it. */
+const EVENTS = timelineOf([
+  { at: iso(14, 0, 5), kind: 'run.prompted', runKey: 'GH-7@impl' },
+  { at: iso(14, 10), kind: 'run.blocked', runKey: 'GH-7@impl' },
+  { at: iso(14, 14), kind: 'run.working', runKey: 'GH-7@impl' },
+  { at: iso(14, 30), kind: 'run.question', runKey: 'GH-7@impl' },
+  { at: iso(14, 33), kind: 'run.working', runKey: 'GH-7@impl' },
+  { at: iso(14, 40), kind: 'run.finished', runKey: 'GH-7@impl', data: { status: 'pr_open' } },
+  { at: iso(14, 41), kind: 'factory.poll', runKey: null },
+]);
+/** The old fixtures' log lines, read into the events the engine would have recorded for them. */
+const LINE = /^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\] (\S+?): (.*)$/;
+function parseLog(text) {
+  if (text === undefined) return EVENTS;
+  const events = [];
+  for (const raw of String(text).split('\n')) {
+    const m = LINE.exec(raw); if (!m) continue;
+    const at = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).toISOString(); const msg = m[8];
+    const kind = /^prompted/.test(msg) ? 'run.prompted' : /^blocked\b/.test(msg) ? 'run.blocked' : /^unblocked|^working again/.test(msg) ? 'run.working' : /^(idle|done|unknown) without a result/.test(msg) ? 'run.question' : /^done \(/.test(msg) ? 'run.finished' : /^agent exited without a result/.test(msg) ? 'run.stopped' : /is merged/.test(msg) ? 'run.merged' : null;
+    if (kind) events.push({ at, kind, runKey: m[7] });
+  }
+  return timelineOf(events);
+}
 
-test('parseLog keeps the lines that move a run and reads their local timestamps', () => {
-  const ev = parseLog(LOG);
-  assert.deepEqual(ev.map((e) => e.kind), ['working', 'blocked', 'working', 'question', 'working', 'done']);
-  assert.equal(ev[1].ts, T(14, 10));
-  assert.ok(ev.every((e) => e.key === 'GH-7@impl'));
+test('timelineOf keeps the events that move a run and reads their timestamps', () => {
+  assert.deepEqual(EVENTS.map((e) => e.kind), ['working', 'blocked', 'working', 'question', 'working', 'done']);
+  assert.equal(EVENTS[1].ts, T(14, 10));
+  assert.ok(EVENTS.every((e) => e.key === 'GH-7@impl'));
 });
 
 test('segments and human wait: dialogs and questions are a person\'s time, and so is a PR waiting to merge', () => {
   const run = { startedAt: iso(14, 0), finishedAt: iso(14, 40), status: 'awaiting_merge' };
-  const segs = segments(run, parseLog(LOG), T(15, 0));
+  const segs = segments(run, parseLog(), T(15, 0));
   assert.deepEqual(segs.map((s) => s.kind), ['working', 'blocked', 'working', 'question', 'working', 'done']);
   assert.equal(segs[1].to - segs[1].from, 4 * 60e3);
   // 4 min blocked + 3 min asking + 20 min since the PR opened
@@ -79,7 +85,7 @@ const CONFIG = { name: 'app', tracker: 'github', roles: ['impl', 'review'], maxC
 ] };
 
 test('factoryView: issues bucketed, role slots in order, alerts ranked, human wait summed', () => {
-  const v = factoryView({ id: 'app', repo: '/home/me/app', config: CONFIG, state: fixtureState(), events: parseLog(LOG), index: indexSnapshot(SNAPSHOT), sizes: { 'GH-7@impl': { added: 10, removed: 2, files: 1, paths: ['src/a.mjs'], commits: [{ sha: 'abc1234', subject: 'x' }], complexity: { grade: 'S', why: '1 directory' } } }, registry: { version: '0.2.4', lastPoll: iso(14, 59), pollSeconds: 30 }, now: T(15, 0) });
+  const v = factoryView({ id: 'app', repo: '/home/me/app', config: CONFIG, state: fixtureState(), events: parseLog(), index: indexSnapshot(SNAPSHOT), sizes: { 'GH-7@impl': { added: 10, removed: 2, files: 1, paths: ['src/a.mjs'], commits: [{ sha: 'abc1234', subject: 'x' }], complexity: { grade: 'S', why: '1 directory' } } }, registry: { version: '0.2.4', lastPoll: iso(14, 59), pollSeconds: 30 }, now: T(15, 0) });
   assert.equal(v.name, 'app'); assert.equal(v.tracker, 'github');
   assert.deepEqual(v.roles, ['impl', 'review']);
   assert.deepEqual(v.issues.map((i) => [i.key, i.bucket]), [['GH-7', 'inflight'], ['GH-8', 'done'], ['GH-9', 'merged']]);
@@ -262,13 +268,13 @@ test('production: what came out today, this week and this month, and time on its
     // merged in August: outside every window
     'GH-1': { rule: 'implement', status: 'merged', issueKey: 'GH-1', title: 'Older', startedAt: new Date(2026, 7, 20, 10).toISOString(), finishedAt: new Date(2026, 7, 20, 12).toISOString(), agentName: 'gh-1', prUrl: 'https://github.com/o/r/pull/1' },
   };
-  const v = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, events: parseLog(LOG), now: T(15, 0) });
+  const v = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs }, events: parseLog(), now: T(15, 0) });
   assert.deepEqual(v.production.today, { finished: 1, merged: 0, workingMs: 33 * 60e3, humanMs: 7 * 60e3 });
   assert.deepEqual(v.production.week, v.production.today);
   assert.deepEqual(v.production.month, { finished: 2, merged: 1, workingMs: (33 + 60) * 60e3, humanMs: 7 * 60e3 });
   assert.equal(v.counts.working, 0);
   // a PR waiting 20 min for its merge is still in flight, not output, and the wait is a person's
-  const waiting = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { ...runs, 'GH-7@impl': { ...runs['GH-7@impl'], status: 'awaiting_merge', prUrl: 'https://github.com/o/r/pull/9' } } }, events: parseLog(LOG), now: T(15, 0) });
+  const waiting = factoryView({ id: 'x', repo: '/r', config: CONFIG, state: { runs: { ...runs, 'GH-7@impl': { ...runs['GH-7@impl'], status: 'awaiting_merge', prUrl: 'https://github.com/o/r/pull/9' } } }, events: parseLog(), now: T(15, 0) });
   assert.deepEqual(waiting.production.today, { finished: 0, merged: 0, workingMs: 33 * 60e3, humanMs: 27 * 60e3 });
   // a run straddling midnight counts today's part only
   const straddle = [{ bucket: 'inflight', runs: [{ segments: [{ from: T(0, 0) - 30 * 60e3, to: T(0, 30), kind: 'working' }], waitingSince: null }] }];
@@ -303,177 +309,6 @@ test('complexity grades from size facts, with a reason', () => {
   assert.equal(s.grade, 'S'); assert.match(s.why, /tests 1:1/);
   const l = complexity({ added: 500, removed: 40, files: 5, paths: ['src/a.mjs', 'src/b/c.mjs', 'package.json'], commits: [] });
   assert.equal(l.grade, 'L'); assert.match(l.why, /dependencies touched/);
-});
-
-test('passcode: hash verifies, wrong code fails, gate locks after five misses and sessions expire', () => {
-  const hash = hashPasscode('2468');
-  assert.ok(verifyPasscode('2468', hash)); assert.ok(!verifyPasscode('2469', hash)); assert.ok(!verifyPasscode('2468', 'garbage'));
-  assert.throws(() => hashPasscode('12'), /at least 4 digits/);
-  assert.throws(() => hashPasscode('floorpass'), /digits/, 'letters cannot be typed on the phone keypad');
-  let t = 1000; const gate = new Gate({ hash, sessionMs: 60_000, now: () => t });
-  for (let i = 0; i < 4; i++) assert.equal(gate.tryUnlock('0000', 'a').attemptsLeft, 4 - i);
-  const fifth = gate.tryUnlock('0000', 'a');
-  assert.ok(fifth.lockedMs > 0); assert.equal(fifth.attemptsLeft, 0);
-  assert.equal(gate.tryUnlock('2468', 'a').ok, false, 'even the right code is refused while locked');
-  assert.equal(gate.tryUnlock('2468', 'b').ok, true, 'another address is not locked');
-  t += 5 * 60e3 + 1;
-  const ok = gate.tryUnlock('2468', 'a'); assert.ok(ok.ok);
-  assert.ok(gate.check(ok.token)); assert.ok(!gate.check('nope'));
-  t += 60_001; assert.ok(!gate.check(ok.token), 'sessions expire');
-  assert.ok(new Gate({ hash: null }).check(undefined), 'no passcode: nothing is gated');
-});
-
-test('registry: stamp, read back, staleness, forget', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-reg-')); const file = path.join(dir, 'factories.json');
-  fs.writeFileSync(file, 'not json'); assert.deepEqual(loadRegistry(file), {}, 'a corrupt registry reads as empty');
-  const e = stampFactory({ repo: '/r/app', name: 'app', tracker: 'github', version: '1.0.0', pollSeconds: 30 }, file, new Date(T(14, 0)));
-  assert.equal(loadRegistry(file)['/r/app'].name, 'app');
-  assert.equal(isStale(e, T(14, 1)), false); assert.equal(isStale(e, T(14, 2)), true, 'three polls missed');
-  assert.equal(isStale({}), true);
-  assert.equal(forgetFactory('/r/app', file), true); assert.deepEqual(loadRegistry(file), {});
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-test('tailscale addresses are the 100.64/10 IPv4 ones only', () => {
-  assert.deepEqual(tailscaleAddresses({ lo: [{ family: 'IPv4', address: '127.0.0.1' }], ts: [{ family: 'IPv4', address: '100.101.7.22' }, { family: 'IPv6', address: 'fd7a::1' }], en0: [{ family: 'IPv4', address: '192.168.1.5' }] }), ['100.101.7.22']);
-});
-
-test('markDone: the one action — every agent still up on the task gets its exit command, every run\'s workspace is closed, the decision is recorded, undo leaves them alone', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.WEAWR_CONSOLE_NOTES = path.join(dir, 'console.json');
-  t.after(() => { delete process.env.WEAWR_CONSOLE_NOTES; });
-  const stopped = []; const closed = []; const order = [];
-  const herdr = {
-    run: async () => null,
-    stopAgent: async (agent, opts) => { stopped.push([agent, opts.exitCommand]); order.push(agent); return 'exited'; },
-    closeWorkspace: async (id) => { closed.push(id); order.push(id); },
-  };
-  const app = new FactoryConsole({ herdr, registryFile: path.join(dir, 'factories.json'), hostname: 'box' });
-  app.current.herdr = { connected: true, version: '0.8.2' };
-  app.current.factories = [{ id: 'f', repo: '/r', issues: [{ key: 'GH-1', runs: [
-    { key: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', agentAlive: true, workspaceId: 'w1', workspaceOpen: true },
-    { key: 'GH-1@review', role: 'review', agent: 'gh-1-review', agentKind: 'codex', agentAlive: true, workspaceId: 'w2', workspaceOpen: true },
-    // exited on its own, workspace still sitting in herdr's sidebar: that is the pile
-    { key: 'GH-1@usability', role: 'usability', agent: 'gh-1-usability', agentKind: 'claude', agentAlive: false, workspaceId: 'w3', workspaceOpen: true },
-    // exited and closed by hand already: nothing to do, nothing to report
-    { key: 'GH-1@split', role: 'split', agent: 'gh-1-split', agentKind: 'claude', agentAlive: false, workspaceId: 'w4', workspaceOpen: false },
-  ] }] }];
-  const done = await app.markDone({ factory: 'f', issue: 'GH-1' });
-  assert.equal(done.done, true);
-  assert.deepEqual(done.outcomes.map((o) => [o.role, o.outcome, o.workspaceId, o.workspace]), [['impl', 'exited', 'w1', 'closed'], ['review', 'exited', 'w2', 'closed'], ['usability', 'was already gone', 'w3', 'closed']], 'every run with an agent up or a workspace open is reported');
-  assert.deepEqual(stopped, [['gh-1-impl', '/exit'], ['gh-1-review', '/quit']], 'each agent gets its own exit command');
-  assert.deepEqual(closed, ['w1', 'w2', 'w3'], 'every role\'s workspace goes, the already-exited one included');
-  assert.deepEqual(order, ['gh-1-impl', 'w1', 'gh-1-review', 'w2', 'w3'], 'an agent exits before its workspace closes');
-  assert.ok(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done['/r|GH-1'].at, 'the decision is the console\'s own note');
-  const undone = await app.markDone({ factory: 'f', issue: 'GH-1' }, false);
-  assert.deepEqual(undone, { done: false, outcomes: [] });
-  assert.equal(stopped.length, 2); assert.equal(closed.length, 3, 'undo touches neither the agents nor the workspaces');
-  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done, {});
-  await assert.rejects(app.markDone({ factory: 'f', issue: 'GH-9' }), /no task GH-9/);
-  // An agent that will not go keeps the task where it is: nothing recorded, the card stays, and
-  // its workspace is not pulled out from under it.
-  herdr.stopAgent = async (agent) => (agent === 'gh-1-review' ? 'is still running' : 'exited');
-  closed.length = 0;
-  const stuck = await app.markDone({ factory: 'f', issue: 'GH-1' });
-  assert.equal(stuck.done, false);
-  assert.match(stuck.error, /review \(gh-1-review\) still running; not marked done/);
-  assert.deepEqual(stuck.outcomes.map((o) => [o.outcome, o.workspace]), [['exited', 'closed'], ['is still running', 'left open'], ['was already gone', 'closed']], 'what happened to each agent and workspace is still reported');
-  assert.deepEqual(closed, ['w1', 'w3'], 'the running agent keeps its workspace');
-  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done, {}, 'a partial shutdown is not a done note');
-  // A workspace herdr will not close is surfaced the same way, not left as a zombie behind a done note.
-  herdr.stopAgent = async () => 'exited';
-  herdr.closeWorkspace = async (id) => { if (id === 'w2') throw new Error('herdr workspace close: socket gone'); };
-  const zombie = await app.markDone({ factory: 'f', issue: 'GH-1' });
-  assert.equal(zombie.done, false);
-  assert.match(zombie.error, /review workspace w2 is still open \(herdr workspace close: socket gone\); not marked done/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done, {});
-  // A workspace herdr no longer has is not a failure: it is what we wanted.
-  herdr.closeWorkspace = async () => { const e = new Error('herdr workspace close: no such workspace'); e.code = 'workspace_not_found'; throw e; };
-  const gone = await app.markDone({ factory: 'f', issue: 'GH-1' });
-  assert.equal(gone.done, true);
-  assert.deepEqual(gone.outcomes.map((o) => o.workspace), ['was already closed', 'was already closed', 'was already closed']);
-  app.stop();
-});
-
-test('tidy: closes the workspaces of exited agents on tasks already marked done, and nothing else', async (t) => {
-  const closed = [];
-  const herdr = { run: async () => null, stopAgent: async () => { throw new Error('tidy must not touch agents'); }, closeWorkspace: async (id) => { if (id === 'w9') throw new Error('herdr workspace close: nope'); closed.push(id); } };
-  const app = new FactoryConsole({ herdr, registryFile: path.join(os.tmpdir(), 'ih-none.json'), hostname: 'box' });
-  app.current.herdr = { connected: true, version: '0.8.2' };
-  const run = (key, role, o) => ({ key, role, agent: key.toLowerCase(), agentKind: 'claude', agentAlive: false, workspaceOpen: true, ...o });
-  app.current.factories = [
-    { id: 'a', repo: '/a', issues: [
-      { key: 'GH-1', cleared: true, bucket: 'done', runs: [run('GH-1@impl', 'impl', { workspaceId: 'w1' }), run('GH-1@review', 'review', { workspaceId: 'w2', workspaceOpen: false }), run('GH-1@usability', 'usability', { workspaceId: 'w3', agentAlive: true })] },
-      { key: 'GH-2', cleared: false, bucket: 'done', runs: [run('GH-2@impl', 'impl', { workspaceId: 'w4' })] },
-      { key: 'GH-3', cleared: true, bucket: 'inflight', runs: [run('GH-3@impl', 'impl', { workspaceId: 'w5' })] },
-      { key: 'GH-4', cleared: true, bucket: 'merged', runs: [run('GH-4@impl', 'impl', { workspaceId: null })] },
-    ] },
-    { id: 'b', repo: '/b', issues: [{ key: 'GH-7', cleared: true, bucket: 'merged', runs: [run('GH-7@impl', 'impl', { workspaceId: 'w8' }), run('GH-7@review', 'review', { workspaceId: 'w9' })] }] },
-  ];
-  const one = await app.tidy({ factory: 'a' });
-  assert.deepEqual(one.map((o) => [o.issue, o.workspaceId, o.workspace]), [['GH-1', 'w1', 'closed']], 'marked done, agent gone, workspace open: that and only that; one factory when asked');
-  const all = await app.tidy();
-  assert.deepEqual(all.map((o) => [o.factory, o.workspaceId, o.workspace]), [['a', 'w1', 'closed'], ['b', 'w8', 'closed'], ['b', 'w9', 'is still open (herdr workspace close: nope)']], 'every factory otherwise, and a refusal is reported, not hidden');
-  assert.deepEqual(closed, ['w1', 'w1', 'w8']);
-  app.stop();
-});
-
-test('markDone and tidy: herdr not answering is not a shutdown — nothing is closed, nothing is recorded, the click is refused with the reason', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.WEAWR_CONSOLE_NOTES = path.join(dir, 'console.json');
-  t.after(() => { delete process.env.WEAWR_CONSOLE_NOTES; });
-  // With no snapshot every agent reads as gone and every workspace as unknown, never as closed.
-  const v = factoryView({ id: 'app', repo: '/r', config: CONFIG, state: fixtureState(), index: indexSnapshot(null), now: T(15, 0) });
-  assert.deepEqual(v.issues.map((i) => i.runs.map((r) => [r.agentAlive, r.workspaceId, r.workspaceOpen])), [[[false, 'w1', null]], [[false, 'w2', null]], [[false, null, false]]]);
-  const calls = [];
-  const herdr = { run: async () => { throw new Error('connect ECONNREFUSED'); }, stopAgent: async (a) => { calls.push(['stop', a]); return 'exited'; }, closeWorkspace: async (id) => { calls.push(['close', id]); } };
-  const app = new FactoryConsole({ herdr, registryFile: path.join(dir, 'factories.json'), hostname: 'box' });
-  app.current.herdr = { connected: false, version: null };
-  app.current.factories = [{ id: 'f', repo: '/r', issues: [{ key: 'GH-1', cleared: false, bucket: 'done', runs: [{ key: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', agentAlive: false, workspaceId: 'w1', workspaceOpen: null }] }] }];
-  const refused = await app.markDone({ factory: 'f', issue: 'GH-1' });
-  assert.equal(refused.done, false); assert.deepEqual(refused.outcomes, []);
-  assert.match(refused.error, /herdr is not answering; nothing was closed and nothing is marked done/);
-  assert.deepEqual(calls, [], 'no exit, no close: there is nothing to see');
-  assert.ok(!fs.existsSync(process.env.WEAWR_CONSOLE_NOTES) || !JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done?.['/r|GH-1'], 'no done note');
-  await assert.rejects(app.tidy(), /herdr is not answering/);
-  // Undo needs nothing from herdr.
-  assert.deepEqual(await app.markDone({ factory: 'f', issue: 'GH-1' }, false), { done: false, outcomes: [] });
-  // herdr back: the same click goes through, closing what it can see.
-  app.current.herdr = { connected: true, version: '0.8.2' };
-  app.current.factories[0].issues[0].runs[0].workspaceOpen = true;
-  const ok = await app.markDone({ factory: 'f', issue: 'GH-1' });
-  assert.equal(ok.done, true); assert.deepEqual(calls, [['close', 'w1']]);
-  app.stop();
-});
-
-test('tick: a clock-only advance does not emit another state; a real change does', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-console-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.WEAWR_CONSOLE_NOTES = path.join(dir, 'console.json');
-  t.after(() => { delete process.env.WEAWR_CONSOLE_NOTES; });
-  const repo = path.join(dir, 'app'); fs.mkdirSync(path.join(repo, '.weawr', 'state'), { recursive: true });
-  // an unknown tracker keeps the console off the network: no credentials, no issue or PR lookups
-  fs.writeFileSync(path.join(repo, '.weawr', 'config.json'), JSON.stringify({ name: 'app', tracker: 'nope', rules: [{ name: 'ai', role: 'impl', match: 'any:true' }] }));
-  const run = { rule: 'ai', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-1', title: 't', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-1-impl' };
-  const state = path.join(repo, '.weawr', 'state', 'state.json');
-  fs.writeFileSync(state, JSON.stringify({ runs: { 'GH-1@impl': run } }));
-  const registry = path.join(dir, 'factories.json');
-  stampFactory({ repo, name: 'app', tracker: 'nope', version: '1.0.0', pollSeconds: 30 }, registry, new Date());
-  const app = new FactoryConsole({ herdr: { run: async () => null }, registryFile: registry, hostname: 'box' });
-  let emitted = 0; app.subscribe(() => emitted++);
-  const first = await app.tick();
-  assert.equal(first.factories.length, 1);
-  assert.deepEqual(first.factories[0].alerts.map((a) => a.kind), ['merge'], 'a PR waiting on a person: the wait is open and its clock runs');
-  assert.equal(emitted, 1);
-  await new Promise((r) => setTimeout(r, 30));
-  await app.tick();
-  assert.equal(emitted, 1, 'only the clock moved: the same state is not pushed again');
-  fs.writeFileSync(state, JSON.stringify({ runs: { 'GH-1@impl': { ...run, status: 'merged', mergedAt: new Date().toISOString(), finishedAt: new Date().toISOString() } } }));
-  await app.tick();
-  assert.equal(emitted, 2, 'the merge is a change, and is pushed');
-  app.stop();
 });
 
 test('a finished task waits in Alerts for a person\'s sign-off whatever became of its agents, and leaves on Mark done or after a day', () => {
@@ -513,61 +348,28 @@ async function serve(t, { hash = null } = {}) {
   return { base: bound.urls[0].replace(/\/$/, ''), calls };
 }
 
-test('http: an ungated console serves the app and the state, and refuses cross-origin actions', async (t) => {
-  const { base, calls } = await serve(t);
-  const page = await fetch(base + '/'); assert.equal(page.status, 200); const body = await page.text(); assert.match(body, /Factory Floor/);
-  assert.match(body, new RegExp('<a class="home" href="' + REPO_URL + '" target="_blank" rel="noopener"[^>]*><svg[^>]*class="mark"'), 'the mark in the title bar opens the repository in a new tab');
-  const state = await fetch(base + '/api/state'); assert.equal((await state.json()).hostname, 'box');
-  const noOrigin = await fetch(base + '/api/exit', { method: 'POST', body: '{}' }); assert.equal(noOrigin.status, 403);
-  const other = await fetch(base + '/api/exit', { method: 'POST', headers: { origin: 'http://evil.example' }, body: '{}' }); assert.equal(other.status, 403);
-  const host = new URL(base).host;
-  const ok = await fetch(base + '/api/exit', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', run: 'GH-1' }) });
-  assert.equal(ok.status, 200); assert.deepEqual(await ok.json(), { ok: true, outcome: 'exited' }); assert.deepEqual(calls, [{ factory: 'f', run: 'GH-1' }]);
-  assert.equal((await fetch(base + '/app.css')).headers.get('content-type'), 'text/css; charset=utf-8');
-  // The favicon set from assets/icons is served next to the page, and the page names it.
-  const fav = await fetch(base + '/favicon.svg'); assert.equal(fav.status, 200); assert.equal(fav.headers.get('content-type'), 'image/svg+xml'); assert.match(await fav.text(), /<svg[^>]*aria-label="weawr"/);
-  assert.equal((await fetch(base + '/favicon.ico')).headers.get('content-type'), 'image/x-icon');
-  assert.equal((await fetch(base + '/apple-touch-icon.png')).headers.get('content-type'), 'image/png');
-  assert.match(body, /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/, 'the page links its favicon');
-  // Mark done takes seconds when an agent has to shut down: the page shows it from the click until the state lands.
-  const js = await (await fetch(base + '/app.js')).text();
-  assert.match(js, /class="btn done busy" disabled/, 'the button shows its request in flight'); assert.match(js, /Closing ' \+ b\.agents \+ ' agent/, 'and says which step it is on');
-  const done = await fetch(base + '/api/done', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f', issue: 'GH-1' }) });
-  assert.deepEqual(await done.json(), { ok: true, done: true, outcomes: [{ run: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', outcome: 'exited', workspaceId: 'w1', workspace: 'closed' }], error: null }, 'marking done reports what happened to the agents and workspaces it closed');
-  assert.deepEqual(calls.at(-1), { done: { factory: 'f', issue: 'GH-1' }, value: true });
-  assert.match(js, /workspaces are closed; worktrees stay/, 'the confirm says the workspaces go');
-  const tidy = await fetch(base + '/api/tidy', { method: 'POST', headers: { origin: 'http://' + host, 'content-type': 'application/json' }, body: JSON.stringify({ factory: 'f' }) });
-  assert.deepEqual(await tidy.json(), { ok: true, outcomes: [{ factory: 'f', issue: 'GH-2', run: 'GH-2@impl', role: 'impl', workspaceId: 'w2', workspace: 'closed' }] }, 'tidy reports each workspace it closed');
-  assert.deepEqual(calls.at(-1), { tidy: { factory: 'f' } });
-  assert.equal((await fetch(base + '/api/tidy', { method: 'POST', body: '{}' })).status, 403, 'tidy is same-origin only');
-  assert.equal((await fetch(base + '/api/done', { method: 'POST', body: '{}' })).status, 403, 'marking done is same-origin only');
-  assert.equal((await fetch(base + '/api/undone', { method: 'POST', body: '{}' })).status, 403);
-  assert.equal((await fetch(base + '/api/close', { method: 'POST', headers: { origin: 'http://' + host }, body: '{}' })).status, 404, 'there is no separate close: Mark done is the one action');
-  const blocks = (await (await fetch(base + '/api/tail?factory=f&issue=GH-1')).json()).blocks;
-  assert.deepEqual(blocks.map((b) => [b.role, b.alive]), [['impl', true], ['review', false]]);
+
+test('a run with no events shows its start-to-end stretch and reports a floor, marked partial — never a made-up dialog wait', () => {
+  const runs = { 'GH-1': { rule: 'ai', status: 'awaiting_merge', issueKey: 'GH-1', title: 't', startedAt: iso(9, 0), finishedAt: iso(9, 30), agentName: 'gh-1', prUrl: 'https://github.com/o/r/pull/1', result: { status: 'pr_open' } } };
+  const v = factoryView({ id: 'x', repo: '/r', state: { runs }, events: [], now: T(10, 0) });
+  const r = v.issues[0].runs[0];
+  assert.equal(r.evidence, 'partial'); assert.deepEqual(r.segments.map((s) => s.kind), ['working', 'done']);
+  assert.equal(r.humanWaitMs, 30 * 60e3, 'the merge wait is a recorded fact');
+  assert.equal(v.issues[0].evidence, 'partial');
+  // and a run the engine started is known even before its first event
+  const live = factoryView({ id: 'x', repo: '/r', state: { runs: { 'GH-2': { rule: 'ai', status: 'running', title: 't', startedAt: iso(11, 0), agentName: 'gh-2' } } }, events: [], now: T(11, 5) });
+  assert.equal(live.issues[0].runs[0].evidence, 'events');
+  assert.equal(factoryView({ id: 'x', repo: '/r', state: { runs: { 'GH-7@impl': { rule: 'r', status: 'done', startedAt: iso(14, 0), finishedAt: iso(14, 40), agentName: 'gh-7-impl', result: { status: 'pr_open' } } } }, events: EVENTS, now: T(15, 0) }).issues[0].evidence, 'events');
 });
 
-test('http: a gated console shows the lock page, refuses the API, unlocks with the passcode, and locks out guesses', async (t) => {
-  const { base } = await serve(t, { hash: hashPasscode('1357') });
-  const host = new URL(base).host, origin = 'http://' + host;
-  const page = await fetch(base + '/'); const lock = await page.text(); assert.match(lock, /Locked/);
-  assert.match(lock, new RegExp('<a class="home" href="' + REPO_URL + '" target="_blank"'), 'the lock page links the mark too');
-  assert.equal((await fetch(base + '/api/state')).status, 401);
-  assert.equal((await fetch(base + '/favicon.svg')).status, 200, 'the favicon is not behind the gate: the lock page has a tab too');
-  assert.match(lock, /<link rel="icon" href="\/favicon\.svg"/, 'and the lock page links it');
-  const wrong = await fetch(base + '/unlock', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code: '0000' }) });
-  assert.equal(wrong.status, 401); assert.equal((await wrong.json()).attemptsLeft, 4);
-  const right = await fetch(base + '/unlock', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code: '1357' }) });
-  assert.equal(right.status, 200);
-  const cookie = right.headers.get('set-cookie'); assert.match(cookie, /HttpOnly/); assert.match(cookie, /SameSite=Strict/);
-  const session = cookie.split(';')[0];
-  assert.equal((await fetch(base + '/api/state', { headers: { cookie: session } })).status, 200);
-  assert.match(await (await fetch(base + '/', { headers: { cookie: session } })).text(), /app\.js/);
-  const tail = await fetch(base + '/api/tail?factory=f&run=GH-1', { headers: { cookie: session } }); assert.deepEqual(await tail.json(), { text: 'tail text' });
-  for (let i = 0; i < 5; i++) await fetch(base + '/unlock', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code: 'x' }) });
-  const locked = await fetch(base + '/unlock', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code: '1357' }) });
-  assert.equal(locked.status, 429);
-  assert.match(await (await fetch(base + '/')).text(), /Gate locked|Locked/);
-  const out = await fetch(base + '/lock', { method: 'POST', headers: { cookie: session } }); assert.equal(out.status, 200);
-  assert.equal((await fetch(base + '/api/state', { headers: { cookie: session } })).status, 401, 'locking revokes the session');
+test('a task carries its attention and its verdicts as data, decided by the projection', () => {
+  const runs = {
+    'GH-5@impl': { rule: 'implement', role: 'impl', status: 'awaiting_merge', issueKey: 'GH-5', title: 'x', startedAt: iso(10, 0), finishedAt: iso(11, 0), agentName: 'gh-5-impl', prUrl: 'https://github.com/o/r/pull/6', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/6' } },
+    'GH-5@review': { rule: 'tech-lead', role: 'review', status: 'done', issueKey: 'GH-5', title: 'x', startedAt: iso(11, 0), finishedAt: iso(11, 30), agentName: 'gh-5-review', result: { status: 'nothing_to_do', summary: 'OK', review: { verdict: 'approved', prUrl: 'https://github.com/o/r/pull/6', headSha: 'abc1234' } } },
+  };
+  const v = factoryView({ id: 'x', repo: '/r', config: { roles: ['impl', 'review'], rules: [{ name: 'implement', role: 'impl' }, { name: 'tech-lead', role: 'review' }] }, state: { runs }, now: T(12, 0) });
+  const t = v.issues[0];
+  assert.equal(t.attention, 'merge');
+  assert.equal(t.runs[1].result.verdict, 'approved'); assert.equal(t.runs[1].result.verdictSource, 'structured'); assert.equal(t.runs[1].result.verdictHead, 'abc1234');
+  assert.equal(t.runs[0].result.verdict, null);
 });

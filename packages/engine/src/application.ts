@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import type { FactoryEngine } from './factory.js';
 import { isDurable } from './store/index.js';
 import type { OperationRecord } from './store/sqlite.js';
+import { exitRun, markDone, stopTask, tailTask, tidy, undoDone } from './actions.js';
 import * as _claim from './claim.mjs';
 const { issueKeyOf } = _claim as Record<string, any>;
 
@@ -21,10 +22,18 @@ export type Command =
   | { type: 'recipe.show' }
   | { type: 'recipe.upgrade'; to?: number; dryRun?: boolean }
   | { type: 'attempt.list'; key: string }
+  | { type: 'factory.snapshot' }
+  | { type: 'capabilities' }
+  | { type: 'task.done'; issueKey: string; requestId?: string; by?: string }
+  | { type: 'task.undo'; issueKey: string; requestId?: string }
+  | { type: 'task.stop'; issueKey: string; requestId?: string }
+  | { type: 'task.tail'; issueKey: string; lines?: number }
+  | { type: 'run.exit'; runKey: string; requestId?: string }
+  | { type: 'factory.tidy'; requestId?: string }
   | { type: 'events.after'; cursor: number; limit?: number }
   | { type: 'ping' };
 
-export type CommandResult<T = unknown> = { ok: true; result: T } | { ok: false; error: { code: string; message: string } };
+export type CommandResult<T = unknown> = { ok: true; result: T } | { ok: false; error: { code: string; message: string; retryable?: boolean; details?: unknown } };
 
 export interface Application {
   dispatch(cmd: Command): Promise<CommandResult>;
@@ -110,6 +119,29 @@ export function createApplication(engine: FactoryEngine): Application {
     },
     async 'recipe.upgrade'({ to, dryRun = false }) { return engine.upgradeRecipe(to, { dryRun }); },
     async 'attempt.list'({ key }) { return { attempts: isDurable(engine.store) ? engine.store.attempts(key) : [] }; },
+    async 'factory.snapshot'() { return engine.snapshot(); },
+    async capabilities() { return { protocolVersions: [1], version: engine.version, commands: Object.keys(handlers), features: { durableStore: isDurable(engine.store), merge: !!engine.cfg.mergeLabel, recipeRevision: engine.recipeRevision } }; },
+    async 'task.done'({ issueKey, requestId, by = 'console' }) {
+      return serialized(issueKey, () => operation(`factory:${engine.ids.factoryId}`, requestId, 'task.done', { issueKey }, () => markDone(engine, issueKey, { by })))
+        .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
+    },
+    async 'task.undo'({ issueKey, requestId }) {
+      return serialized(issueKey, () => operation(`factory:${engine.ids.factoryId}`, requestId, 'task.undo', { issueKey }, async () => undoDone(engine, issueKey)))
+        .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
+    },
+    async 'task.stop'({ issueKey, requestId }) {
+      return serialized(issueKey, () => operation(`factory:${engine.ids.factoryId}`, requestId, 'task.stop', { issueKey }, () => stopTask(engine, issueKey)))
+        .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
+    },
+    async 'task.tail'({ issueKey, lines }) { return { blocks: await tailTask(engine, issueKey, lines) }; },
+    async 'run.exit'({ runKey, requestId }) {
+      return serialized(issueKeyOf(runKey), () => operation(`factory:${engine.ids.factoryId}`, requestId, 'run.exit', { runKey }, () => exitRun(engine, runKey)))
+        .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
+    },
+    async 'factory.tidy'({ requestId }) {
+      return operation(`factory:${engine.ids.factoryId}`, requestId, 'factory.tidy', {}, () => tidy(engine))
+        .then(({ result, operation: op, replayed }) => ({ outcomes: result, operationId: op?.id ?? null, replayed }));
+    },
     async 'operation.show'({ id }) {
       if (!isDurable(engine.store)) throw new ApplicationError('not_tracked', 'this factory has no durable store, so operations are not tracked');
       const op = engine.store.operation(id);

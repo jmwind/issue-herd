@@ -273,3 +273,7 @@ button{font:inherit;color:inherit}
 .lock .note{font-size:12px;color:var(--dim);min-height:1.4em}
 .lock .note.bad{color:var(--red-2)}
 .toast{position:fixed;left:50%;bottom:max(16px,env(safe-area-inset-bottom));transform:translateX(-50%);padding:8px 14px;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge);font-weight:600;z-index:20}
+
+/* a factory whose owner is not running, and a page whose link is down: shown, and said */
+.pill.stale { background: #3a2a10; color: var(--orange-2, #e39827); border-color: #6b4a14; }
+.tick em.stale { font-style: normal; opacity: .75; margin-left: .4em; }

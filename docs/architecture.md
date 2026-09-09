@@ -166,6 +166,53 @@ merges head B); the PR is open with no conflicts. Then it asks GitHub to merge *
 branch protection enforced on top, and says on the issue what allowed it. Nothing in a brief
 claims to enforce this; the command does.
 
+## The CLI interface: `weawr serve`, the protocol and the client
+
+Every UI reads canonical facts and asks for actions through the CLI. A browser or a phone cannot
+run a local binary, so `weawr serve` (and `weawr console`, the same command by its older name) is
+the CLI's transport host: HTTP and server-sent events over `/api/v1`, mapped onto the same
+application commands the terminal uses, plus the bundled web console unless `--no-web`. It
+forwards commands to each factory's owner over the private socket and gathers their snapshots; it
+parses no logs, decides no lifecycle policy and enriches nothing. Killing it stops nothing —
+owners keep running — and starting it again restores the view. `apps/cli/src/transports/http.ts`,
+`hub.ts`, `commands/serve.ts`.
+
+| Route | Answer |
+| --- | --- |
+| `GET /api/v1/capabilities` | protocol versions, commands, features, how to authenticate (ungated) |
+| `GET /api/v1/snapshot` | the host snapshot: every factory, each the owner's snapshot or the store's last word marked `offline`/`stale` |
+| `GET /api/v1/factories`, `…/:id/snapshot`, `…/:id/tasks/:key`, `…/tasks/:key/tail`, `…/runs/:key/tail`, `…/operations/:id`, `…/events?after=` | one factory's facts, always with `owner` and `freshness` |
+| `GET /api/v1/events?cursors=<factoryId>:<seq>,…` | SSE: a `snapshot` whenever what is shown changed, `event`s per factory in order with `id: <factoryId>:<seq>`, `resnapshot` when a cursor is older than the events an owner keeps |
+| `POST /api/v1/commands/<name>` | `task.done`, `task.undo`, `task.stop`, `task.reset`, `task.tail`, `run.exit`, `run.tail`, `factory.tidy` — bodies checked against `packages/protocol/src/envelope.ts`; every mutation carries a `requestId` |
+
+Answers are envelopes (`{ protocolVersion, ok, result | error }`); errors carry a code
+(`owner_offline`, `unauthorized`, `bad_request`, …) and whether a retry is sensible. A mutation
+returns the tracked operation (accepted → running → completed/failed/partial) and its result; a
+repeated request id returns the original operation, and an id reused for different input is
+refused. Request ids are scoped to the factory and the caller. Every mutation against a factory
+whose owner is away is refused with `owner_offline` — the UI shows the last recorded state and
+says so; nothing is started because a phone asked for a snapshot. A client that asks for another
+major protocol version (`x-weawr-protocol`) gets `unsupported_protocol` with the fix.
+
+Authentication belongs to the transport. A browser is a session (the passcode cookie) and may
+mutate only from the console's own origin; a native client is a **device**: `weawr console device
+add <name>` mints a token once, stores only its salted hash, and the client sends it as
+`Authorization: Bearer …` with no origin. Devices are listed and revoked by name. An Origin header
+is never native-client authentication. Snapshots and tails carry no credentials; worktree paths are
+display metadata.
+
+`@weawr/client` (`packages/client`) is the portable transport for those clients: envelopes and
+error codes, commands with request ids, operations polled to a terminal state, and a subscription
+over fetch's byte stream (no `EventSource`, so it runs in a browser, in Node and in a native
+shell) that keeps a cursor per factory, resumes after it on reconnect, refetches a factory when
+told its cursor expired, and reports its link state — a lost connection is shown as staleness,
+never read as success. The console page (`apps/web`) uses it as a classic script (`client.js`)
+and holds no lifecycle rule of its own: attention, verdicts and phrases come from the snapshot.
+
+The pre-v1 console routes (`/api/state`, `/api/events`, `/api/tail`, `/api/done`, `/api/undone`,
+`/api/tidy`, `/api/exit`) are served as compatibility adapters over the same handlers and will be
+removed in the next minor release.
+
 ## Identities
 
 Records are keyed by stable ids; `GH-7` and role names stay what a person reads.

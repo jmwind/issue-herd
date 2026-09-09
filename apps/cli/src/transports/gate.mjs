@@ -80,3 +80,25 @@ export class Gate {
 
   revoke(token) { this.sessions.delete(token); }
 }
+
+// ---------------------------------------------------------------- device tokens
+//
+// A phone or another native client cannot send an Origin header a server should believe, and it
+// has no cookie jar worth the name. It authenticates with a device token instead: made once with
+// `weawr console device add <name>`, shown once, stored here only as a salted hash, sent as
+// `Authorization: Bearer …`, and revocable by name.
+
+/** A new token and the record to keep for it. The token itself is never stored. */
+export function newDeviceToken(name) {
+  const token = 'wd_' + crypto.randomBytes(24).toString('base64url');
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(token, salt, 32, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p });
+  return { token, record: { name, hash: `scrypt$${salt.toString('base64')}$${hash.toString('base64')}`, createdAt: new Date().toISOString() } };
+}
+
+/** The device a bearer token belongs to, or null. `devices` is { [name]: record }. */
+export function deviceFor(token, devices = {}) {
+  if (!token || typeof token !== 'string') return null;
+  for (const [name, rec] of Object.entries(devices)) if (rec?.hash && verifyPasscode(token, rec.hash)) return { name, ...rec };
+  return null;
+}

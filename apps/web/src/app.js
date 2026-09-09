@@ -2,13 +2,17 @@
 //   #/                     every factory on this machine, one plant each, belts between them
 //   #/f/<factory>          one factory's floor: alerts, assembling, output
 //   #/i/<factory>/<issue>  one issue
-// No framework, no build step. Everything shown comes from /api/state.
+// No framework, no build step. Everything shown comes from weawr serve through @weawr/client
+// (window.WeawrClient): one host snapshot over SSE, commands with request ids, operations.
 (function () {
   'use strict';
   var root = document.getElementById('app');
   var GEAR = '<svg class="gear" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm9.4 5.3-2.1-.4a7.5 7.5 0 0 0-.6-1.5l1.2-1.8-1.9-1.9-1.8 1.2c-.5-.3-1-.5-1.5-.6l-.4-2.1h-2.6l-.4 2.1c-.5.1-1 .3-1.5.6L8 6.7 6.1 8.6l1.2 1.8c-.3.5-.5 1-.6 1.5l-2.1.4v2.6l2.1.4c.1.5.3 1 .6 1.5l-1.2 1.8 1.9 1.9 1.8-1.2c.5.3 1 .5 1.5.6l.4 2.1h2.6l.4-2.1c.5-.1 1-.3 1.5-.6l1.8 1.2 1.9-1.9-1.2-1.8c.3-.5.5-1 .6-1.5l2.1-.4z"/></svg>';
   var INSERTER = '<div class="inserter"><svg viewBox="0 0 32 30"><rect x="10" y="22" width="12" height="6" fill="#4A4A4A" stroke="#0A0A0A"/><g class="arm"><rect x="14" y="4" width="4" height="22" fill="#E39827" stroke="#0A0A0A"/><rect x="10" y="1" width="12" height="5" fill="#5C5C5C" stroke="#0A0A0A"/></g></svg></div>';
   var view = null, sheet = false, showAll = false, tails = {}, expanded = {}, receivedAt = 0;
+  var client = new WeawrClient({ baseUrl: '' });
+  // The stream's state: when it is down, everything shown is as old as receivedAt says.
+  var link = { connected: false, retryInMs: null, error: null };
   // Mark done / Undo in flight, by task: the button and card show it until the console's state
   // reflects the decision (the task in output, or back), not just until the request returns.
   var busy = {};
@@ -69,12 +73,21 @@
   function shown() { var f = current(); return f ? [f] : factories(); }
   function pct(a, b) { return a + b > 0 ? Math.round(a / (a + b) * 100) : null; }
   function factoryOf(issueKey, id) { return factories().filter(function (f) { return f.id === id; })[0]; }
+  // The route names a factory by its display id; commands name it by its stable factoryId.
+  function factoryIdOf(id) { var f = factories().filter(function (x) { return x.id === id; })[0]; return f ? f.factoryId : id; }
+  // A factory whose owner is not running shows its last recorded state, and says so.
+  function ownerLine(f) {
+    if (!f.owner || f.owner.status === 'online') return '';
+    var when = f.owner.observedAt ? ' · last seen ' + dur(Date.now() - Date.parse(f.owner.observedAt)) + ' ago' : '';
+    return '<span class="pill stale">' + (f.owner.status === 'stale' ? 'watcher not answering' : 'watcher offline') + when + '</span>';
+  }
 
   // ------------------------------------------------------------ pieces
   // `below` hangs off the bar: the factory picker drops from it, directly under the picker button.
   function titlebar(inner, below) {
-    var ok = view && view.herdr.connected;
-    return '<div class="titlebar' + (below ? ' open' : '') + '">' + MARK + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + (ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering') + '">' + GEAR + esc(document.body.dataset.hostname) + '</span>' + (below || '') + '</div>';
+    var ok = view && view.herdr.connected && link.connected;
+    var why = !link.connected ? 'the link to weawr is down' + (link.retryInMs ? ', retrying' : '') + ' — shown as of ' + dur(drift()) + ' ago' : ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering';
+    return '<div class="titlebar' + (below ? ' open' : '') + '">' + MARK + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + why + '">' + GEAR + esc(document.body.dataset.hostname) + (!link.connected && view ? ' <em class="stale">' + dur(drift()) + ' old</em>' : '') + '</span>' + (below || '') + '</div>';
   }
   function belt() {
     var fs = shown(), today = 0, assembling = 0, wait = 0, alerts = 0;
@@ -224,7 +237,7 @@
       '<div class="floor">' + gears + '<span class="panel"><span class="state">' + lights + '<span class="ph">' + esc(phrase) + '</span></span>' +
       '<span class="crew">' + crew + (agents.length ? '<span class="who">' + esc(agents.join(', ')) + '</span>' : '') + '</span>' + (working ? '<span class="craft"><i></i></span>' : '') + '</span></div>' +
       prod +
-      '<div class="needs"><span class="pill' + (alerts ? ' hot' : '') + '">' + (alerts ? alerts + ' alert' + (alerts > 1 ? 's' : '') : 'nothing needs you') + '</span><span class="pill">' + f.counts.inflight + ' assembling</span>' + (f.watcher.lastPoll && alive ? '<span class="m">polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago</span>' : '') + '</div></a>';
+      '<div class="needs"><span class="pill' + (alerts ? ' hot' : '') + '">' + (alerts ? alerts + ' alert' + (alerts > 1 ? 's' : '') : 'nothing needs you') + '</span><span class="pill">' + f.counts.inflight + ' assembling</span>' + ownerLine(f) + (f.watcher.lastPoll && alive ? '<span class="m">polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago</span>' : '') + '</div></a>';
   }
   // The belt from one plant down to the next: chevrons always run; cargo rides it only when a plant at either end is working.
   function link(above, below) {
@@ -328,17 +341,17 @@
     else if (t.id === 'tidy') {
       if (!confirm(t.textContent + '? These are herdr workspaces of exited agents on tasks you already marked done. Their worktrees and archived results stay.')) return;
       t.disabled = true;
-      fetch('/api/tidy', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: chosen }) })
-        .then(function (r) { return r.json(); }).then(function (j) {
-          if (!j.ok) { render(); return toast('Could not: ' + (j.error || 'unknown')); }
+      client.tidy(chosen ? factoryIdOf(chosen) : null)
+        .then(function (r) { var j = r.result || {}; j.ok = true;
+          if (r.operation && r.operation.status === 'failed') { render(); return toast('Could not: ' + (r.operation.error || 'unknown')); }
           var closed = (j.outcomes || []).filter(function (o) { return o.workspace === 'closed' || o.workspace === 'was already closed'; }).length;
           var stuck = (j.outcomes || []).filter(function (o) { return /^is still open/.test(o.workspace); });
           toast(closed + ' workspace' + (closed === 1 ? '' : 's') + ' closed' + (stuck.length ? ' · ' + stuck.map(function (o) { return o.workspaceId + ' ' + o.workspace; }).join(' · ') : ''));
-        }).catch(function () { render(); toast('The console did not answer.'); });
+        }).catch(function (e) { render(); toast(e.code === 'owner_offline' ? 'That factory\'s watcher is not running; nothing was changed.' : 'Could not: ' + e.message); });
     }
     else if (t.id === 'lockbtn') { fetch('/lock', { method: 'POST' }).then(function () { location.replace('/'); }); }
     else if (t.dataset.choose) { sheet = false; var to = t.dataset.choose === 'all' ? '#/' : '#/f/' + encodeURIComponent(t.dataset.choose); if (location.hash === to || (to === '#/' && !location.hash)) render(); else location.hash = to; }
-    else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; fetch('/api/tail?factory=' + encodeURIComponent(p[0]) + '&issue=' + encodeURIComponent(p[1])).then(function (r) { return r.json(); }).then(function (j) { tails[t.dataset.tail] = j.blocks || '(empty)'; render(); }); }
+    else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; client.tail(factoryIdOf(p[0]), p[1]).then(function (j) { tails[t.dataset.tail] = j.blocks || '(empty)'; render(); }).catch(function (e) { tails[t.dataset.tail] = '(' + e.message + ')'; render(); }); }
     else if (t.dataset.done || t.dataset.undone) {
       var d = (t.dataset.done || t.dataset.undone).split('|'), undo = !!t.dataset.undone, agents = t.dataset.agents, workspaces = Number(t.dataset.workspaces) || 0;
       var closing = agents ? 'Every agent still up on it (' + agents + ') is sent its exit command and shuts down the way it wants, and its herdr workspaces are closed; worktrees stay. ' : workspaces ? 'Its herdr workspaces (' + workspaces + ') are closed; worktrees stay. ' : '';
@@ -346,26 +359,35 @@
       var key = d[0] + '|' + d[1];
       busy[key] = { undo: undo, agents: undo || !agents ? 0 : agents.split(', ').length, workspaces: undo ? 0 : workspaces };
       render();
-      fetch(undo ? '/api/undone' : '/api/done', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: d[0], issue: d[1] }) })
-        .then(function (r) { return r.json(); }).then(function (j) {
-          if (!j.ok || j.error) { delete busy[key]; render(); return toast('Could not: ' + (j.error || 'unknown')); }
+      var fid = factoryIdOf(d[0]);
+      (undo ? client.taskUndo(fid, d[1]) : client.taskDone(fid, d[1]))
+        .then(function (r) {
+          // A long action comes back accepted; its real outcome is the operation's, polled to the end.
+          if (r.operation && r.operation.status !== 'completed' && r.operation.status !== 'failed' && r.operation.status !== 'partial') return client.waitForOperation(fid, r.operation.id).then(function (op) { return { operation: op, result: op.result }; });
+          return r;
+        }).then(function (r) {
+          var j = r.result || {};
+          if (r.operation && r.operation.status === 'failed') { delete busy[key]; render(); return toast('Could not: ' + (r.operation.error || 'unknown')); }
+          if (j.error) { delete busy[key]; render(); return toast('Could not: ' + j.error); }
           var closed = (j.outcomes || []).map(function (o) { return o.agent + ' ' + o.outcome + (o.workspace ? ', ' + o.workspaceId + ' ' + o.workspace : ''); }).join(' · ');
           toast(undo ? d[1] + ' is back' : d[1] + ' marked done' + (closed ? ' · ' + closed : ''));
           // The console said yes; the button keeps turning until the state that moves the task lands.
           if (busy[key]) { busy[key].settled = Date.now(); busy[key].agents = 0; busy[key].workspaces = 0; }
           render(); settle();
           setTimeout(settle, SETTLE_MS + 50);
-        }).catch(function () { delete busy[key]; render(); toast('The console did not answer.'); });
+        }).catch(function (e) { delete busy[key]; render(); toast(e.code === 'owner_offline' ? 'That factory\'s watcher is not running; nothing was changed.' : e.code === 'transport' ? 'The console did not answer; the action may still have happened — watch the task.' : 'Could not: ' + e.message); });
     }
   });
   document.getElementById('app').addEventListener('click', function (e) { if (e.target.id === 'dim') { sheet = false; render(); } });
   window.addEventListener('hashchange', render);
   setInterval(function () { if (view && !sheet) render(); }, 30000); // elapsed times tick even when nothing changed
 
-  function connect() {
-    var es = new EventSource('/api/events');
-    es.addEventListener('state', function (ev) { view = JSON.parse(ev.data); receivedAt = Date.now(); render(); settle(); });
-    es.onerror = function () { es.close(); fetch('/api/state').then(function (r) { if (r.status === 401) location.replace('/'); }).catch(function () {}); setTimeout(connect, 3000); };
-  }
-  connect();
+  // One subscription for the life of the page: snapshots as they change, reconnection with the
+  // cursors it had, and a link state the title bar shows. A lost connection never means anything
+  // succeeded or failed; it means what is shown is as old as receivedAt.
+  client.subscribe({
+    onSnapshot: function (s) { view = s; receivedAt = Date.now(); render(); settle(); },
+    onResnapshot: function () { client.hostSnapshot().then(function (s) { view = s; receivedAt = Date.now(); render(); }).catch(function () {}); },
+    onStatus: function (st) { link = st; if (st.error && /answered 401/.test(st.error)) location.replace('/'); render(); },
+  });
 })();

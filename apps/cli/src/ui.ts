@@ -13,9 +13,11 @@ a git worktree and a herdr workspace, start a coding agent in it, brief it, and 
   weawr logout [tracker]  forget the saved token
   weawr smoke             end-to-end test against herdr with a fake issue (no tracker calls)
   weawr init [--tracker linear|github]  scaffold .weawr/ in this repo
-  weawr console [--port N] [--host ADDR]  the factory floor: every factory on this machine, in a browser (phone first)
+  weawr serve [--port N] [--host ADDR] [--no-web]  the CLI interface (/api/v1, events) for every factory here, with the web console
+  weawr console [--port N] [--host ADDR]  the same, by its older name: the factory floor in a browser (phone first)
   weawr console set-passcode  set the passcode (digits) the console asks for; also serves it over Tailscale
   weawr console clear-passcode  forget the passcode; the console goes back to loopback only
+  weawr console device add|list|revoke <name>  device tokens for native clients (a phone)
   weawr migrate [--dry-run] move a factory's state.json into the durable store (the watcher does this on start)
   weawr recipe [show|upgrade [--to N] [--dry-run]]  which briefs agents get; move to a newer bundled revision (new tasks only)
   weawr merge <run-key>   merge a run's PR if the issue carries the merge label and every reviewer approved its current head

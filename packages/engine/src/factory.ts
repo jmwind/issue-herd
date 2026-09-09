@@ -45,6 +45,14 @@ import type { PendingAction } from './store/sqlite.js';
 import { attemptId, roleRunId, taskId, trackerScope } from './identity.js';
 import { LATEST_REVISION, RECIPE_ID, contentHash, diffTemplates, revision as recipeRevisionInfo } from '@weawr/recipes';
 import { describeIssues, validateResult, verdictOf } from '@weawr/protocol';
+import type { FactorySnapshot } from '@weawr/protocol';
+import { Enricher } from './enrich.js';
+import { factoryView, indexSnapshot, timelineOf } from './projection.js';
+import { trackerScope as scopeOf } from './identity.js';
+import * as _gitSize from './adapters/git-size.mjs';
+const { complexity, runSize } = _gitSize as Record<string, any>;
+import * as _ghTracker from './adapters/trackers/github.mjs';
+const { repoFromGit } = _ghTracker as Record<string, any>;
 import type { FactoryState, StateStore } from './state.js';
 import type { Ownership } from './ownership.js';
 
@@ -126,6 +134,15 @@ export class FactoryEngine {
   stopping = false;
   /** The recipe revision this factory renders new work with. Pinned in the store; changed only by upgradeRecipe(). */
   recipeRevision: number;
+  /** Observations for the snapshot: herdr's index (cached briefly), sizes, enrichment, the settle memory. */
+  private herdrCache: { at: number; index: any; snapshot: any } | null = null;
+  private sizes = new Map<string, { at: number; value: any }>();
+  private seen: Record<string, any> = {};
+  private enricher: Enricher | null = null;
+  private snapshotCache: { at: number; value: FactorySnapshot } | null = null;
+  /** How long a snapshot is served from memory before it is recomputed. */
+  static readonly SNAPSHOT_TTL_MS = 1500;
+  static readonly HERDR_TTL_MS = 2000;
   private wake: (() => void) | null = null;
   /** How many times a pending external action is tried before it is left for a person. */
   static readonly MAX_PENDING_ATTEMPTS = 3;
@@ -1475,6 +1492,82 @@ export class FactoryEngine {
     this.saveState();
   }
 
+  /** Drop the memoised snapshot so the next request recomputes it (after an action). */
+  invalidateSnapshot(): void { this.snapshotCache = null; this.herdrCache = null; }
+
+  /** herdr's whole snapshot as an index, asked at most every couple of seconds. null index when herdr is away. */
+  async herdrIndex(): Promise<{ index: any; observedAt: string | null }> {
+    const now = this.clock().getTime();
+    if (this.herdrCache && now - this.herdrCache.at < FactoryEngine.HERDR_TTL_MS) return { index: this.herdrCache.index, observedAt: this.herdrCache.snapshot ? new Date(this.herdrCache.at).toISOString() : null };
+    let snapshot: any = null;
+    try { snapshot = await this.herdr.run(['api', 'snapshot'], { timeoutMs: 10_000 }); } catch { snapshot = null; }
+    const index = indexSnapshot(snapshot);
+    this.herdrCache = { at: now, index, snapshot };
+    return { index, observedAt: snapshot ? new Date(now).toISOString() : null };
+  }
+
+  /** The enricher, built once from what this owner holds: its tracker and this machine's GitHub token. */
+  enrichment(): Enricher {
+    if (this.enricher) return this.enricher;
+    const host = process.env.WEAWR_GITHUB_HOST || 'github.com';
+    let ghToken: string | null = null;
+    try { ghToken = this.tracker instanceof GitHubTracker ? this.tracker.token : resolveCredential(GitHubTracker, { options: { cwd: this.paths.repo } })?.credential?.token || null; } catch { ghToken = null; }
+    this.enricher = new Enricher({ tracker: this.tracker, ghRepo: repoFromGit(this.paths.repo, host), ghToken, host, fetchImpl: this.fetchImpl, log: (m) => this.log(m), clock: () => this.clock().getTime() });
+    return this.enricher;
+  }
+
+  async sizeFor(key: string, run: any, now: number): Promise<any> {
+    const LIVE = new Set(['running', 'starting', 'awaiting_merge', 'done']);
+    if (!run.branch || !LIVE.has(run.status)) return this.sizes.get(key)?.value || null;
+    const c = this.sizes.get(key);
+    if (c && now - c.at < 30_000) return c.value;
+    const cwd = [run.workDir, run.worktreePath, this.paths.repo].find((d) => d && fs.existsSync(d));
+    const value = await runSize({ cwd, base: run.base || this.cfg.baseBranch || 'main', branch: run.branch });
+    const out = value ? { ...value, complexity: complexity(value) } : null;
+    this.sizes.set(key, { at: now, value: out });
+    return out;
+  }
+
+  /**
+   * The canonical snapshot of this factory: what every client renders. Computed from the store's
+   * runs and events, herdr's index, the sizes and the enrichment; memoised briefly. `owner` says
+   * this process is online; a reader building a snapshot for an offline factory uses
+   * projectOffline() instead.
+   */
+  async snapshot(): Promise<FactorySnapshot> {
+    const nowMs = this.clock().getTime();
+    if (this.snapshotCache && nowMs - this.snapshotCache.at < FactoryEngine.SNAPSHOT_TTL_MS) return this.snapshotCache.value;
+    const { index, observedAt: herdrAt } = await this.herdrIndex();
+    const runs: Record<string, any> = {};
+    for (const [key, run] of Object.entries<any>(this.state.runs)) runs[key] = liveResult(run);
+    const sizes: Record<string, any> = {};
+    for (const [key, run] of Object.entries(runs)) { const sz = await this.sizeFor(key, run, nowMs); if (sz) sizes[key] = sz; }
+    const events = isDurable(this.store) ? timelineOf(this.store.eventsAfter(0, 100_000)) : [];
+    const cleared: Record<string, number> = {};
+    if (isDurable(this.store)) for (const a of this.store.acknowledgements()) cleared[a.issueKey] = Date.parse(a.at) || 0;
+    const enricher = this.enrichment();
+    const view = factoryView({
+      id: slug(this.cfg.name), factoryId: this.ids.factoryId, repo: this.paths.repo, config: this.cfg, state: { runs }, events, index, sizes,
+      registry: this.lastRegistration, stale: false, enrich: enricher.view(), cleared, seen: this.seen, now: nowMs,
+      recipeRevision: this.recipeRevision, trackerScope: scopeOf(this.cfg.trackerSpec),
+    });
+    enricher.refresh(view.issues, nowMs);
+    if (!view.watcher.workspaceId && process.env.HERDR_WORKSPACE_ID) view.watcher.workspaceId = process.env.HERDR_WORKSPACE_ID;
+    view.watcher.pid = process.pid; view.watcher.version = this.version;
+    const snapshot: FactorySnapshot = {
+      ...view,
+      protocolVersion: 1,
+      generatedAt: new Date(nowMs).toISOString(),
+      revision: isDurable(this.store) ? this.store.lastEventSeq() : 0,
+      owner: { status: 'online', pid: process.pid, version: this.version, hostname: os.hostname(), heartbeatAt: new Date(nowMs).toISOString(), observedAt: new Date(nowMs).toISOString() },
+      freshness: { herdrAt, trackerAt: enricher.lastAskedAt ? new Date(enricher.lastAskedAt).toISOString() : (this.lastRegistration?.lastSuccessfulPoll ?? null), trackerError: enricher.lastError ?? this.lastRegistration?.lastPollError ?? null },
+      live: { tracker: !!this.tracker, github: !!enricher.sources.ghToken, why: this.tracker ? null : 'no tracker in this process' },
+      capabilities: ['task.done', 'task.undo', 'task.stop', 'task.tail', 'task.reset', 'run.exit', 'run.tail', 'factory.tidy', 'run.merge', 'recipe.upgrade'],
+    } as FactorySnapshot;
+    this.snapshotCache = { at: nowMs, value: snapshot };
+    return snapshot;
+  }
+
   /** The stable ids for a run, recorded on it at pickup. */
   idsFor(issue: any, rule: any, key: string, run: any) {
     const task = taskId(this.ids.factoryId, trackerScope(this.cfg.trackerSpec), issue.identifier);
@@ -1541,3 +1634,17 @@ export function policyOf(rule: any): Record<string, unknown> {
   for (const k of PINNED_POLICY) out[k] = rule?.[k] === undefined ? null : JSON.parse(JSON.stringify(rule[k]));
   return out;
 }
+
+/**
+ * The watcher reads a run's result once, when the agent first stops. An agent that keeps going and
+ * rewrites it (a plan that became a PR) leaves the record behind; the file in the worktree is the
+ * agent's latest word, so when it parses, checks and differs, it wins in the view.
+ */
+function liveResult(run: any): any {
+  if (!run.resultPath || !(run.status === 'done' || run.status === 'awaiting_merge')) return run;
+  const live = readJson(run.resultPath, null);
+  if (!live || typeof live !== 'object' || !(live as any).status || !validateResult(live).ok || JSON.stringify(live) === JSON.stringify(run.result)) return run;
+  return { ...run, result: live, prUrl: run.prUrl || (live as any).prUrl || null, resultIsLive: true };
+}
+
+function slug(name: string): string { return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'factory'; }

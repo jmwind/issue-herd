@@ -115,6 +115,7 @@ export class SqliteStore implements StateStore {
       this.db.exec('DELETE FROM nudges');
       const ins = this.db.prepare('INSERT INTO nudges (issue_key, json) VALUES (?, ?)');
       for (const [issue, list] of Object.entries(state.nudges || {})) for (const e of list) ins.run(issue, JSON.stringify(e));
+      this.setMeta('last_saved_at', now.toISOString());
     });
   }
 

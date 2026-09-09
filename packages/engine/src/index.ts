@@ -21,4 +21,9 @@ export type { AttemptRecord, EventRecord, OperationRecord, PendingAction, Acknow
 export { inventory, migrateLegacyState } from './store/migrate.js';
 export type { Inventory, MigrationResult } from './store/migrate.js';
 export { isDurable, openOwnerStore, readFactoryState, storeStatus } from './store/index.js';
+export { factoryView, humanWaitMs, indexSnapshot, ownsPr, production, productionWindows, runState, segments, timelineOf, watchWorkspaces, SETTLE_MS } from './projection.js';
+export type { HerdrIndex, ProjectionInput, TimelineEvent } from './projection.js';
+export { projectOffline } from './offline.js';
+export { Enricher } from './enrich.js';
+export { HERDR_AWAY, closeTask, exitRun, markDone, stopTask, tailTask, tidy, undoDone } from './actions.js';
 export type { StoreKind } from './store/index.js';
