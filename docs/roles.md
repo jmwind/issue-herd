@@ -244,6 +244,27 @@ The briefs that ship all teach it (through `{{nudgeLines}}`, which the watcher r
 role with somebody to nudge). A brief of your own that drops the placeholder simply does not offer
 the move. Turns started by a nudge are not held by `maxConcurrent`: the session is already there.
 
+## Verdicts as data, and `weawr merge` (recipe revision 2)
+
+The briefs above are recipe revision 1: a reviewer's verdict is the first line of its `summary`,
+and when the issue's text grants it, the implementer merges its own PR after reading those lines.
+Revision 2 makes both of those facts checkable. A reviewer's result carries
+
+```json
+"review": { "verdict": "approved", "prUrl": "https://github.com/org/repo/pull/123", "headSha": "0123abcd…" }
+```
+
+— `approved`, `changes_requested` or `unable_to_review`, for one pull request at one commit. And
+the implementer never merges by hand: when the issue carries the `mergeLabel` (`auto-merge`
+unless configured), it runs `weawr merge <run key>`, which checks, at that moment, that the label
+is on the issue, that every reviewing role's latest verdict approves the PR's *current* head, and
+that the PR is open with no conflicts — then asks GitHub to merge that head (so a push in between
+is refused by GitHub itself, and branch protection still applies), and says on the issue what
+allowed it. A verdict without a commit, including every revision-1 prose verdict, authorises
+nothing; an approval of one head never merges another. `weawr recipe show` says which revision a
+factory runs; `weawr recipe upgrade --dry-run` shows the difference and `weawr recipe upgrade`
+moves new tasks to it.
+
 ## Three roles on GitHub: what this repository runs
 
 weawr works its own issues, so `.weawr/config.json` in this repository is a worked

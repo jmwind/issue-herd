@@ -229,6 +229,17 @@ herdr agent names are the run key plus the factory's short hash (`gh-7-impl-a1b2
 repositories on one machine with `GH-7@impl` are two agents. A run that already has an agent keeps
 its recorded name: live sessions are never renamed. `packages/engine/src/identity.ts`.
 
+## A mobile client
+
+A phone app needs nothing this document has not already described: `@weawr/client` (or any HTTP
+client speaking the same envelopes), a device token from `weawr console device add`, and the
+host's address on the tailnet. It reads `GET /api/v1/capabilities`, then the host snapshot, then
+subscribes to `/api/v1/events` with a cursor per factory; it shows `owner.status`,
+`freshness` and its own link state as staleness; it sends commands with request ids and follows
+their operations. It never holds a GitHub or tracker credential, never reads a worktree, and
+never decides what a task needs. `apps/mobile/` is reserved for it; `docs/mobile.md` is the
+handoff.
+
 ## Where things are
 
 | Concern | Module |
@@ -240,4 +251,7 @@ its recorded name: live sessions are never renamed. `packages/engine/src/identit
 | State: the store, migration, read-only views | `packages/engine/src/store/` (`state.ts` is the interface and the legacy JSON reader) |
 | Trackers, herdr, git, PRs, credentials | `packages/engine/src/adapters/` |
 | Terminal commands | `apps/cli/src/commands/` |
-| The console (moving into the versioned interface) | `apps/cli/src/console/`, `apps/web/src/` |
+| The transport: `/api/v1`, SSE, the gate, the hub | `apps/cli/src/transports/` |
+| The console page | `apps/web/src/` |
+| The client library | `packages/client/src/` |
+| Canonical projection, enrichment, task actions | `packages/engine/src/projection.ts`, `enrich.ts`, `actions.ts` |

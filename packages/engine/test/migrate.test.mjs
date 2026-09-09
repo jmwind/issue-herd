@@ -70,3 +70,49 @@ test('a factory that never had state gets an empty store, marked migrated from n
   assert.equal(view.kind, 'sqlite'); assert.equal(view.store.meta('migrated_from'), 'none');
   view.store.close();
 });
+
+// ---------------------------------------------------------------- a live legacy factory
+import { FactoryEngine } from '../dist/factory.js';
+import { loadConfig } from '../dist/config.js';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+const PROMPTS = fileURLToPath(new URL('../../recipes/prompts', import.meta.url));
+
+test('a legacy factory with a live session is migrated and resumed: the result is read once, nothing is picked up twice, the agent is untouched', async () => {
+  // As an existing install looks the morning after `weawr update`: state.json with a run whose
+  // agent is still up in herdr and whose result.json it has just written.
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-legacy-live-')));
+  execFileSync('git', ['init', '-q', repo]);
+  fs.mkdirSync(path.join(repo, '.weawr', 'state', 'runs', 'GH-3@impl'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.weawr', 'config.json'), JSON.stringify({ tracker: 'linear', roles: ['impl'], defaults: { worktree: 'none', onPickup: { comment: false }, onDone: { comment: true, notify: false }, onBlocked: { comment: false, notify: false }, onIdle: { comment: false, notify: false }, onMerged: null }, rules: [{ name: 'impl', role: 'impl', match: 'any:true' }] }));
+  const paths = factoryPaths(repo);
+  const runDir = path.join(paths.runsDir, 'GH-3@impl');
+  const issue = { id: 'i3', identifier: 'GH-3', ref: 'GH-3', title: 'Live one', description: '', url: 'u', labels: ['ai'], comments: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', project: null, team: null, assignee: null, assignees: [], state: { name: 'open', type: 'started' }, priority: 3 };
+  fs.writeFileSync(path.join(runDir, 'issue.json'), JSON.stringify(issue));
+  fs.writeFileSync(path.join(runDir, 'result.json'), JSON.stringify({ status: 'pr_open', prUrl: 'https://github.com/o/r/pull/3', summary: 'done it' }));
+  const legacyRun = { rule: 'impl', role: 'impl', pass: 1, status: 'running', claimed: 'herdr:impl', issueId: 'i3', issueKey: 'GH-3', title: 'Live one', startedAt: '2026-09-08T10:00:00Z', archiveDir: runDir, worktree: 'none', agentName: 'gh-3-impl', notified: {}, workspaceId: 'w3', paneId: 'p3', workDir: repo, dir: runDir, resultPath: path.join(runDir, 'result.json'), briefPath: path.join(runDir, 'brief.md') };
+  fs.writeFileSync(paths.statePath, JSON.stringify({ runs: { 'GH-3@impl': legacyRun }, nudges: {} }));
+  // the owner starts: migration under its lock, then resume
+  const r = migrateLegacyState({ paths });
+  assert.equal(r.migrated, true); assert.equal(r.runs, 1);
+  const view = readFactoryState(paths); view.store.close();
+  const herdr = { prompts: [], stops: [], async agentGet(n) { return n === 'gh-3-impl' ? { name: n, agent_status: 'idle', cwd: repo, workspace_id: 'w3' } : null; }, async prompt(n, t) { this.prompts.push([n, t]); }, async startAgent() { throw new Error('must not start a second agent'); }, async createWorkspace() { throw new Error('must not make a second workspace'); }, waitAgent() { return new Promise(() => {}); }, async readAgent() { return ''; }, async notify() {}, async stopAgent(n) { this.stops.push(n); return 'exited'; }, async closeWorkspace() {} };
+  const tracker = { comments: [], async me() { return { id: 'me', name: 'me' }; }, async openIssues() { return [issue]; }, async issueByKey() { return issue; }, async comment(id, body) { this.comments.push(body); }, async addLabel() { throw new Error('must not claim again'); }, async removeLabel() {}, async assign() {}, async setState() {} };
+  const { SqliteStore, storePath } = await import('../dist/store/sqlite.js');
+  const store = SqliteStore.open(storePath(paths.stateDir));
+  const e = new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: PROMPTS }), tracker, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'f' }, log: () => {} });
+  assert.equal(e.recipeRevision, 1, 'a migrated factory keeps the briefs it was running');
+  assert.equal(e.state.runs['GH-3@impl'].agentName, 'gh-3-impl', 'the live agent keeps its name');
+  await e.resume();
+  const run = e.state.runs['GH-3@impl'];
+  assert.equal(run.status, 'done', 'the result it had written was read');
+  assert.equal(tracker.comments.length, 1, 'reported once');
+  assert.match(tracker.comments[0], /finished GH-3 as `impl`/);
+  assert.deepEqual(herdr.stops, [], 'the session is left as it was');
+  // the next poll sees the same issue and picks nothing up again
+  const poll = await e.pollOnce();
+  assert.deepEqual(poll.picked, []); assert.equal(poll.candidates, 0);
+  assert.equal(tracker.comments.length, 1, 'no second report');
+  assert.equal(store.attempts('GH-3@impl').length, 1); assert.equal(store.attempts('GH-3@impl')[0].spec.provenance, 'legacy');
+  store.close();
+});

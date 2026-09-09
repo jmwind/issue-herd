@@ -112,6 +112,11 @@ The same fields work on every tracker; what they map to on GitHub is in
   "pullBase": true,           // fast-forward the checkout you started the watcher in onto that branch, at
                               // pickup and when one of its PRs is merged. Only forwards, only when the checkout
                               // is clean and standing on it; anything else is reported and left alone
+  "mergeLabel": "auto-merge", // the label on an issue that lets `weawr merge <run key>` merge its PR once every
+                              // reviewing role has approved the PR's current head (recipe revision 2). null turns
+                              // unattended merging off entirely. See Roles.
+  "mergeMethod": "squash",    // how `weawr merge` merges: "squash", "merge" or "rebase". GitHub's branch
+                              // protection still applies on top.
   "maxNudges": 6,             // how many times, per issue, the roles may hand work to each other (a result's
                               // "nudge" gives another role its next turn) before a person is asked in. 0 turns
                               // it off. See Roles, "Working together"
@@ -177,6 +182,23 @@ The same fields work on every tracker; what they map to on GitHub is in
 
 The repository is always the one you run `weawr` in (its git top level); rules do not name
 a repo.
+
+## Prompt templates
+
+`prompt` names a template: a file in `.weawr/prompts/` (yours), else one of the bundled briefs
+(`prompts/default.md`, `prompts/review-lead.md`, …) at the recipe revision the factory is pinned
+to (`weawr recipe show`). Every template is checked when the config loads: a placeholder weawr
+does not fill (`{{titel}}`) or a missing `{{resultPath}}` is an error naming the file, so a typo
+is found now rather than as a hole in a brief at 3am. A template of your own may say which
+template protocol it was written for — `<!-- weawr-template: protocol=1 -->` on a line of its own;
+one that says nothing is taken as protocol 1 and never handed obligations it did not sign up for.
+
+What changes when reaches a running attempt is deliberate. Scheduling limits (`maxConcurrent`,
+`pollSeconds`, `lookbackDays`, `maxNudges`, `roles`, a rule's `enabled`) apply live. A rule's
+lifecycle policy — worktree mode, agent and model, `onDone`/`onMerged` and the rest — is recorded
+on each attempt when it starts and stays with it: editing or removing the rule does not change what
+a running attempt does at the end. `weawr task reconfigure <run key>` moves one onto the current
+policy, on purpose; `weawr task attempts <run key>` shows what each attempt was given.
 
 ## Per-machine overrides: `config.local.json`
 

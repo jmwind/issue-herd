@@ -26,7 +26,7 @@ process.on('warning', (w) => { if (w.name === 'ExperimentalWarning' && /SQLite/.
 export async function main(argv: string[]): Promise<void> {
   const ctx = createContext({ ui: terminal() });
   if (argv[0] === '--version' || argv[0] === '-V' || argv[0] === 'version') { console.log(ctx.version); return; }
-  if (argv[0] === 'update' || argv[0] === 'upgrade') return update(ctx);
+  if (argv[0] === 'update' || argv[0] === 'upgrade') return update(ctx, argv.slice(1));
   if ((argv[0] || '') === 'init') return init(ctx, argv.slice(1));
   if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(HELP); return; }
   ctx.loadEnv();
