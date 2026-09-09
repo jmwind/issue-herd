@@ -1,7 +1,7 @@
 {
-  "title": "squad — a developer, a reviewer on another provider, and a designer on a smaller model",
+  "title": "squad — a developer, a reviewer on another provider, and a designer, all on small models",
   "summary": "three roles on one issue: Claude builds, astra reviews the code, Sonnet reviews the experience; the PR merges itself once both approve",
-  "description": "One issue carries the auto-merge label, so the whole loop runs without you: the developer (Claude) implements and opens a PR, then labels the issue ready-for-review, which dispatches two reviewers into worktrees cut from the developer's branch — a tech lead on codex/astra reading the code, and a designer on Sonnet walking the README and the command line as a newcomer. A reviewer that wants something changed nudges the developer, whose fix nudges both reviewers back. When both have approved the PR's current head, the developer runs `weawr merge`, which checks the label and the verdicts and merges. The second issue has no auto-merge label: the same review round happens, and the merge is yours.",
+  "description": "One issue carries the auto-merge label, so the whole loop runs without you: the developer (Sonnet) implements and opens a PR, then labels the issue ready-for-review, which dispatches two reviewers into worktrees cut from the developer's branch — a tech lead on codex/astra reading the code, and a designer on Sonnet walking the README and the command line as a newcomer. A reviewer that wants something changed nudges the developer, whose fix nudges both reviewers back. When both have approved the PR's current head, the developer runs `weawr merge`, which checks the label and the verdicts and merges. The second issue has no auto-merge label: the same review round happens, and the merge is yours.",
   "labels": ["ai", "ready-for-review", "auto-merge"],
   "config": {
     "name": "weawr-demo (squad)",
@@ -25,9 +25,9 @@
     },
     "rules": [
       { "name": "implement", "role": "dev", "match": "label:ai",
-        "model": "claude-fable-5-1", "instructionsFile": "instructions-dev.md" },
+        "model": "claude-sonnet-5", "instructionsFile": "instructions-dev.md" },
       { "name": "tech-lead", "role": "review", "match": "label:ai and label:ready-for-review",
-        "basedOn": "dev", "passes": 3, "agentKind": "codex", "model": "gpt-6-astra", "effort": "high",
+        "basedOn": "dev", "passes": 3, "agentKind": "codex", "model": "gpt-6-astra", "effort": "low",
         "prompt": "prompts/review-lead.md" },
       { "name": "designer", "role": "design", "match": "label:ai and label:ready-for-review",
         "basedOn": "dev", "passes": 3, "model": "claude-sonnet-5", "effort": "medium",

@@ -1,7 +1,7 @@
 {
   "title": "basic — one senior developer",
-  "summary": "one rule, one strong model: pick up the issue, implement it, open a PR, report back",
-  "description": "The plain loop with nothing else in the way. Two issues are filed on the tally app, one bug and one small feature. A single implementer on a strong model takes each, works in its own worktree, opens a pull request, and writes its result; you review and merge the PRs yourself.",
+  "summary": "one rule, one small model: pick up the issue, implement it, open a PR, report back",
+  "description": "The plain loop with nothing else in the way. Two issues are filed on the tally app, one bug and one small feature. A single implementer on Sonnet takes each, works in its own worktree, opens a pull request, and writes its result; you review and merge the PRs yourself.",
   "labels": ["ai"],
   "config": {
     "name": "weawr-demo (basic)",
@@ -24,7 +24,7 @@
       "onIdle": { "comment": true, "notify": true }
     },
     "rules": [
-      { "name": "implement", "match": "label:ai", "model": "claude-fable-5-1" }
+      { "name": "implement", "match": "label:ai", "model": "claude-sonnet-5" }
     ]
   },
   "issues": [

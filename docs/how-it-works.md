@@ -378,9 +378,9 @@ shipped with weawr (`apps/cli/demos/<name>/`). Three ship:
 
 | scenario | what runs |
 |---|---|
-| `basic` | one senior developer on a strong model: pick up, implement, open a PR, report. You merge. |
-| `squad` | a developer on Claude, a tech lead on codex/astra, a designer on Sonnet. The developer labels the issue `ready-for-review` when its PR is open, which dispatches both reviewers into worktrees cut from its branch; findings go back and forth as nudges; when both approve, the developer runs `weawr merge` on the issue that carries `auto-merge`. |
-| `bake-off` | two developers on different models implement the same issue and open draft PRs; a judge that started with them waits for both, gives each up to two rounds of feedback through nudges, then promotes the better PR and closes the other. You merge. |
+| `basic` | one developer on Sonnet: pick up, implement, open a PR, report. You merge. |
+| `squad` | a developer on Sonnet, a tech lead on codex/astra at low effort, a designer on Sonnet. The developer labels the issue `ready-for-review` when its PR is open, which dispatches both reviewers into worktrees cut from its branch; findings go back and forth as nudges; when both approve, the developer runs `weawr merge` on the issue that carries `auto-merge`. |
+| `bake-off` | two developers, Sonnet and codex, implement the same issue and open draft PRs; a judge on Sonnet that started with them waits for both, gives each up to two rounds of feedback through nudges, then promotes the better PR and closes the other. You merge. |
 
 The first run pushes a small starter app (`tally`, a command-line counter) to the demo
 repository, because the issues need code to work on. The scenario's `.weawr/` stays in the clone
@@ -389,8 +389,10 @@ next scenario. `--into DIR` puts the factory somewhere else; `--repo owner/name`
 repository of your own; `--dry-run` says what would be filed and files nothing.
 
 `reset` closes only what the ledger says this factory filed (`.weawr/demo.json`): those issues,
-the pull requests and branches that grew from them, and the claim labels. The local state is set
-aside, not deleted, and the worktrees are removed. `reset --all --yes` closes every open `ai`
+the pull requests and branches that grew from them, and the claim labels. It also puts the app
+back to the starter — a new commit on `main` that restores the starter's files, so a feature a
+demo merged is missing again for the next run and history is kept; `--keep-code` skips that. The
+local state is set aside, not deleted, and the worktrees are removed. `reset --all --yes` closes every open `ai`
 issue, every open PR and every branch but the default one, for a repository that exists for demos
 and nothing else.
 

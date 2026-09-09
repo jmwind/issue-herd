@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { SqliteStore, factoryPaths, loadConfig, storePath } from '@weawr/engine';
 import { GitHubTracker } from '@weawr/engine/adapters/trackers/github.mjs';
 import { validateTemplate } from '@weawr/recipes';
-import { defaultDemoDir, fileIssues, listScenarios, parseOpts, pushStarter, readLedger, resetLocal, resetRemote, writeScenario } from '../build/commands/demo.js';
+import { defaultDemoDir, fileIssues, listScenarios, parseOpts, pushStarter, readLedger, resetLocal, resetRemote, restoreStarter, writeScenario } from '../build/commands/demo.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, '..', 'dist', 'weawr.mjs');
@@ -110,6 +110,27 @@ test('the starter is committed and pushed to a repository that has none', (t) =>
   assert.match(git(bare, ['ls-tree', '--name-only', 'main']), /AGENTS\.md/);
 });
 
+test('reset puts main back to the starter with a new commit, and says so when it already is', (t) => {
+  const bare = tmp(t, 'weawr-demo-origin-'); git(bare, ['init', '-q', '--bare', '-b', 'main']);
+  const clone = tmp(t, 'weawr-demo-clone-'); git(clone, ['clone', '-q', bare, '.']); git(clone, ['checkout', '-q', '-b', 'main']);
+  fs.writeFileSync(path.join(clone, 'README.md'), '# demo\n'); git(clone, ['add', '-A']); git(clone, ['-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '-m', 'readme']); git(clone, ['push', '-q', '-u', 'origin', 'main']);
+  git(clone, ['remote', 'set-head', 'origin', 'main']);
+  pushStarter(clone, path.join(DEMOS, 'starter'), () => {});
+  // A demo merged a feature: a file changed, a file added.
+  fs.appendFileSync(path.join(clone, 'src', 'store.mjs'), '\nexport const top = () => [];\n'); fs.writeFileSync(path.join(clone, 'test', 'top.test.mjs'), '');
+  git(clone, ['add', '-A']); git(clone, ['-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '-m', 'feature']); git(clone, ['push', '-q', 'origin', 'main']);
+  const lines = [];
+  restoreStarter(clone, path.join(DEMOS, 'starter'), (m) => lines.push(m));
+  assert.match(lines.join('\n'), /put back to the starter/);
+  const tree = git(bare, ['ls-tree', '-r', '--name-only', 'main']).split('\n').sort();
+  assert.ok(!tree.includes('test/top.test.mjs'), 'the added file is gone');
+  assert.equal(git(bare, ['show', 'main:src/store.mjs']), fs.readFileSync(path.join(DEMOS, 'starter', 'src', 'store.mjs'), 'utf8'), 'the changed file is the starter\'s again');
+  assert.match(git(bare, ['log', '--oneline', 'main']), /Demo reset: the app back to the starter\n.*feature/s, 'a new commit on top; the feature stays in history');
+  lines.length = 0;
+  restoreStarter(clone, path.join(DEMOS, 'starter'), (m) => lines.push(m));
+  assert.match(lines.join('\n'), /is the starter already/);
+});
+
 test('filing writes the issues in order and the ledger remembers their numbers', async () => {
   let n = 40;
   const t = tracker(({ method, url }) => (method === 'POST' && url.endsWith('/issues') ? { status: 201, json: { number: ++n, html_url: `https://github.com/jmwind/weawr-demo/issues/${n}` } } : null));
@@ -165,7 +186,7 @@ test('the local reset closes the runs\' workspaces, sets the state aside, remove
 
 test('options: --into, --repo, --dry-run; an unknown option is refused; the default directory is per user and repo', () => {
   const o = parseOpts(['--into', '/tmp/x', '--repo', 'me/demo', '--dry-run']);
-  assert.deepEqual(o, { into: '/tmp/x', repo: 'me/demo', dryRun: true, yes: false, all: false });
+  assert.deepEqual(o, { into: '/tmp/x', repo: 'me/demo', dryRun: true, yes: false, all: false, keepCode: false });
   assert.throws(() => parseOpts(['--repo', 'nope']), /owner\/name/);
   assert.throws(() => parseOpts(['--bogus']), /unknown option/);
   assert.equal(defaultDemoDir('/u', 'jmwind/weawr-demo'), '/u/demos/weawr-demo');

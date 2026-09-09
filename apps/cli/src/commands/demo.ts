@@ -37,7 +37,7 @@ export interface Ledger {
   createdAt: string;
   issues: Array<{ number: number; title: string; url: string }>;
 }
-interface Opts { into: string | null; repo: string; dryRun: boolean; yes: boolean; all: boolean }
+interface Opts { into: string | null; repo: string; dryRun: boolean; yes: boolean; all: boolean; keepCode: boolean }
 
 /** The scenarios that ship: every directory under `root` with a scenario.json. */
 export function listScenarios(root: string): Scenario[] {
@@ -53,7 +53,7 @@ export function listScenarios(root: string): Scenario[] {
 export function defaultDemoDir(userDir: string, repo: string): string { return path.join(userDir, 'demos', repo.split('/')[1]); }
 
 export function parseOpts(args: string[]): Opts {
-  const opts: Opts = { into: null, repo: DEMO_REPO, dryRun: false, yes: false, all: false };
+  const opts: Opts = { into: null, repo: DEMO_REPO, dryRun: false, yes: false, all: false, keepCode: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--into') { opts.into = args[++i] || null; if (!opts.into) throw new Error('--into needs a directory'); }
@@ -61,6 +61,7 @@ export function parseOpts(args: string[]): Opts {
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--yes') opts.yes = true;
     else if (a === '--all') opts.all = true;
+    else if (a === '--keep-code') opts.keepCode = true;
     else if (a.startsWith('--')) throw new Error(`unknown option ${a}`);
   }
   return opts;
@@ -71,7 +72,7 @@ export async function demo(ctx: Context, args: string[]): Promise<void> {
   const sub = args[0];
   if (!sub || sub === 'list' || sub === '--help') {
     console.log(`weawr demo <scenario> [--into DIR] [--repo owner/name] [--dry-run]   set a demo factory up and file its issues`);
-    console.log(`weawr demo reset [--into DIR] [--repo owner/name] [--all --yes]      close what the last demo filed and clear the local state\n`);
+    console.log(`weawr demo reset [--into DIR] [--repo owner/name] [--keep-code] [--all --yes]  close what the last demo filed, put the app back to the starter, clear the local state\n`);
     for (const s of scenarios) console.log(`${s.name.padEnd(10)} ${s.title}\n${' '.repeat(11)}${s.summary}\n`);
     console.log(`the demo repository is ${DEMO_REPO}; a factory directory is made under ${defaultDemoDir(ctx.userDir, DEMO_REPO)} unless --into says where`);
     return;
@@ -169,6 +170,24 @@ export function pushStarter(dir: string, starter: string, log: (m: string) => vo
   if (ahead) { log('pushing the starter app'); git(dir, ['push', '-q', '-u', 'origin', 'HEAD']); }
 }
 
+/**
+ * Put the app back to the starter: a demo that merged a feature has changed `main`, and the next
+ * scenario's issues describe the starter. A new commit that restores the starter's files, so
+ * history stays and nothing is force-pushed; nothing to commit when `main` already is the starter.
+ */
+export function restoreStarter(dir: string, starter: string, log: (m: string) => void): void {
+  const branch = git(dir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim().replace(/^origin\//, '') || 'main';
+  try { git(dir, ['checkout', '-q', branch]); git(dir, ['pull', '-q', '--ff-only']); } catch (e: any) { log(`could not bring ${branch} up to date (${e.message.split('\n')[0]}); leaving the code as it is`); return; }
+  git(dir, ['rm', '-rq', '--cached', '.']);
+  for (const f of git(dir, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean)) fs.rmSync(path.join(dir, f), { force: true, recursive: true });
+  fs.cpSync(starter, dir, { recursive: true });
+  git(dir, ['add', '-A']);
+  if (!git(dir, ['status', '--porcelain']).trim()) { log(`${branch} is the starter already`); return; }
+  git(dir, ['-c', 'user.name=weawr demo', '-c', 'user.email=weawr-demo@users.noreply.github.com', 'commit', '-q', '-m', 'Demo reset: the app back to the starter']);
+  git(dir, ['push', '-q', 'origin', branch]);
+  log(`${branch} put back to the starter (a new commit; the demo's merges stay in history)`);
+}
+
 /** Write the scenario's `.weawr/` into the clone: config, instructions, briefs, and the ignore rules that keep it out of the repository. */
 export function writeScenario(paths: FactoryPaths, scenario: Scenario, repo: string): void {
   fs.mkdirSync(paths.configDir, { recursive: true });
@@ -220,6 +239,7 @@ async function reset(ctx: Context, opts: Opts): Promise<void> {
   const closed = await resetRemote(tracker, ledger, { all: opts.all, log });
   log(`closed ${closed.issues} issue(s), ${closed.prs} pull request(s); deleted ${closed.branches} branch(es)`);
   await resetLocal(ctx, paths, log);
+  if (!opts.keepCode) restoreStarter(dir, path.join(ctx.demosRoot, 'starter'), log);
   fs.rmSync(path.join(paths.configDir, LEDGER), { force: true });
   log(`reset; \`weawr demo <scenario> --into ${dir}\` starts again`);
 }
