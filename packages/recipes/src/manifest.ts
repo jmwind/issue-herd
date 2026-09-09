@@ -30,7 +30,7 @@ export const RECIPE_REVISIONS: readonly RecipeRevision[] = [
       'the implementer never merges by hand; when the issue carries the merge label it runs `weawr merge <run key>`, which checks the label, every reviewing role\'s verdict against the PR\'s current head, and mergeability',
       'reviewers put their verdict in `review: { verdict, prUrl, headSha }` as well as in words; a verdict without a head counts for nothing at merge time',
       'results are written whole (temporary file, then rename) and are checked against the schema; an unreadable result does not finish a turn',
-      'new placeholders: {{runKey}}, {{mergeLabel}}',
+      'new placeholders: {{runKey}}, {{mergeLabel}}, {{worktree}} (the run\'s own working tree, which the briefs now name as the only place to read, run and edit)',
     ],
   },
 ];
@@ -43,7 +43,7 @@ export function revision(n: number): RecipeRevision | null { return RECIPE_REVIS
 export const KNOWN_PLACEHOLDERS: readonly string[] = [
   'tracker', 'identifier', 'ref', 'title', 'description', 'url', 'labels', 'project', 'team', 'priority', 'state', 'assignee', 'comments',
   'repo', 'branch', 'basedOn', 'worktreeMode', 'resultPath', 'runDir', 'rule', 'role', 'pass', 'passes', 'runLines', 'nudgeLines', 'instructions', 'date',
-  'runKey', 'mergeLabel',
+  'runKey', 'mergeLabel', 'worktree',
 ];
 
 /** What a brief cannot do without: the agent has to know where to write its result. */

@@ -6,7 +6,9 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
 
 - Issue: {{url}}
 - Team: {{team}} · Project: {{project}} · Priority: {{priority}} · Labels: {{labels}}
-- Repository: `{{repo}}` (you were started in it; worktree mode: {{worktreeMode}})
+- Working tree: `{{worktree}}` — your own checkout of `{{repo}}`, on branch `{{branch}}` (worktree mode:
+  {{worktreeMode}}). Read, run and edit **here and nowhere else**: the repository's main checkout is on
+  another branch and is not yours, and reading outside this directory stops you on a permission prompt.
 - Branch: `{{branch}}` — already created and checked out for you; commit on it, do not create another
 - Run directory: `{{runDir}}`
 - **Result file you must write when finished: `{{resultPath}}`**

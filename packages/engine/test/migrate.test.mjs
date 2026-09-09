@@ -107,7 +107,7 @@ test('a legacy factory with a live session is migrated and resumed: the result i
   const run = e.state.runs['GH-3@impl'];
   assert.equal(run.status, 'done', 'the result it had written was read');
   assert.equal(tracker.comments.length, 1, 'reported once');
-  assert.match(tracker.comments[0], /finished GH-3 as `impl`/);
+  assert.match(tracker.comments[0], /as `impl` finished GH-3/);
   assert.deepEqual(herdr.stops, [], 'the session is left as it was');
   // the next poll sees the same issue and picks nothing up again
   const poll = await e.pollOnce();

@@ -379,7 +379,7 @@ shipped with weawr (`apps/cli/demos/<name>/`). Three ship:
 | scenario | what runs |
 |---|---|
 | `basic` | one senior developer on a strong model: pick up, implement, open a PR, report. You merge. |
-| `squad` | a developer on Claude, a tech lead on codex/astra, a designer on Haiku. The developer labels the issue `ready-for-review` when its PR is open, which dispatches both reviewers into worktrees cut from its branch; findings go back and forth as nudges; when both approve, the developer runs `weawr merge` on the issue that carries `auto-merge`. |
+| `squad` | a developer on Claude, a tech lead on codex/astra, a designer on Sonnet. The developer labels the issue `ready-for-review` when its PR is open, which dispatches both reviewers into worktrees cut from its branch; findings go back and forth as nudges; when both approve, the developer runs `weawr merge` on the issue that carries `auto-merge`. |
 | `bake-off` | two developers on different models implement the same issue and open draft PRs; a judge that started with them waits for both, gives each up to two rounds of feedback through nudges, then promotes the better PR and closes the other. You merge. |
 
 The first run pushes a small starter app (`tally`, a command-line counter) to the demo

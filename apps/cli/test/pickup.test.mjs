@@ -20,6 +20,9 @@ const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
  *   mode "stalled-first": `agent prompt --wait` reports agent_prompt_stalled once, as it does when
  *     the text was typed into a Claude Code that was still redrawing after the dialog; the second
  *     prompt is taken.
+ *   mode "quiet-first": the first `agent prompt --wait` is accepted but nothing comes of it — the
+ *     agent is idle again at once with no result, as codex is when briefed the second it comes up;
+ *     the second prompt is taken.
  *   mode "adopt": `agent get` always finds an agent, as it does when an earlier attempt at this
  *     issue left its session running.
  *   mode "working": `agent wait` never sees the agent settle — it times out every time, as it does
@@ -48,6 +51,7 @@ if (noun === 'agent' && verb === 'prompt') {
   const n = bump('prompts');
   if (mode === 'blocked-first' && n === 1) no('agent_blocked', 'agent ' + rest[0] + ' is blocked and requires interactive input');
   if (mode === 'stalled-first' && n === 1 && rest.includes('--wait')) no('agent_prompt_stalled', 'agent ' + rest[0] + ' did not start working within 5000ms');
+  if (mode === 'quiet-first' && n === 1) ok({});
   const brief = /is in (\\S+brief\\.md)/.exec(rest[1] || '');
   // mode "nudge": the first result is a reviewer's, and it asks the implementer to act; whatever
   // turn that starts answers with a plain result, as an implementer that fixed the findings would.
@@ -111,6 +115,19 @@ test('a brief the agent did not start on is sent again, and only counts once it 
   assert.equal(herdr.prompts(), 2, 'offered again after the stall');
   assert.match(herdr.calls(), /agent prompt \S+ .*--wait/, 'the brief is submitted with herdr confirming the uptake');
   assert.doesNotMatch(r.out, /probably asking a question/);
+  assert.match(r.out, /done/);
+  assert.equal(r.status, 0);
+});
+
+test('a brief the agent went quiet on, with nothing written, is sent again', (t) => {
+  // Reproduced in the squad demo: codex, briefed the second it came up, was seen "working" by
+  // herdr for a moment and then sat at its empty prompt; weawr had logged "briefed".
+  const dir = repo(t);
+  const herdr = fakeHerdr(t, { mode: 'quiet-first', cwd: dir });
+  const r = smoke(dir, herdr);
+  assert.match(r.out, /went quiet right after the brief without starting on it; sending it again/);
+  assert.equal(herdr.prompts(), 2);
+  assert.match(r.out, /briefed/);
   assert.match(r.out, /done/);
   assert.equal(r.status, 0);
 });

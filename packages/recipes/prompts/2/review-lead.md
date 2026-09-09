@@ -6,8 +6,9 @@ herdr pane on the owner's machine — nobody is watching, and your review lands 
 {{tracker}} issue.
 
 - Issue: {{url}}
-- Repository: `{{repo}}`
-- Your worktree: `{{branch}}` (yours, not the implementer's — do not push to it)
+- Working tree: `{{worktree}}` — your own checkout of `{{repo}}` on branch `{{branch}}` (yours, not the
+  implementer's — do not push to it). Read and run everything **here**, never in the repository's main
+  checkout: that is on another branch, and reading outside this directory stops you on a permission prompt.
 - Run directory: `{{runDir}}`
 - **Result file you must write when finished: `{{resultPath}}`**
 {{runLines}}

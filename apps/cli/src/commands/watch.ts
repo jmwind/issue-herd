@@ -38,4 +38,9 @@ export async function watch(ctx: Context, tracker: any, mode: 'run' | 'once' | '
   await engine.loop();
   await ipc.close();
   ownership.release();
+  // The supervisors are parked on herdr waits of hours: the agents are left running, on purpose,
+  // but this process is not. Recovery re-attaches to them on the next start.
+  ctx.herdr.endWaits?.();
+  ctx.ui.log('stopped; the agents are left running');
+  process.exit(0);
 }

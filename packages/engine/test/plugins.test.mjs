@@ -71,7 +71,7 @@ test('intake from a plugin: the file tracker feeds a pickup, and the claim goes 
   const tracker = new cfg.Tracker({ token: 'none' }, { options: { ...cfg.trackerSpec, cwd: dir } });
   tracker.check();
   const started = new Set();
-  const herdr = { async agentGet(n) { return started.has(n) ? { name: n, agent_status: 'idle', cwd: dir, workspace_id: 'w' } : null; }, async prompt() {}, async startAgent({ name }) { started.add(name); return {}; }, async createWorkspace() { return { workspaceId: 'w', tabId: 't', paneId: 'p' }; }, waitAgent(n, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : new Promise(() => {}); }, async readAgent() { return ''; }, async notify() {} };
+  const herdr = { async agentGet(n) { return started.has(n) ? { name: n, agent_status: 'idle', cwd: dir, workspace_id: 'w' } : null; }, async prompt() {}, async startAgent({ name }) { started.add(name); return {}; }, async createWorkspace() { return { workspaceId: 'w', tabId: 't', paneId: 'p' }; }, waitAgent(n, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : until.includes('idle') ? Promise.resolve('timeout') : new Promise(() => {}); }, async readAgent() { return ''; }, async notify() {} };
   const e = new FactoryEngine({ cfg, tracker, herdr, paths, promptsRoot: PROMPTS, ids: { hostId: 'h', factoryId: 'f' }, log: () => {} });
   const r = await e.pollOnce();
   assert.deepEqual(r.picked, ['F-1@impl']); assert.equal(r.scanned, 2);
@@ -98,7 +98,7 @@ test('a role preset from a plugin becomes a rule with the plugin\'s brief and de
   assert.throws(() => loadConfig({ paths, promptsRoot: PROMPTS, plugins: { ...reg, roles: {} } }), /"use" is "docs", which no enabled plugin provides/);
   // a pickup renders the plugin's brief
   const started = new Set();
-  const herdr = { async agentGet(n) { return started.has(n) ? { name: n, agent_status: 'idle', cwd: dir, workspace_id: 'w' } : null; }, async prompt() {}, async startAgent({ name }) { started.add(name); return {}; }, async createWorkspace() { return { workspaceId: 'w', tabId: 't', paneId: 'p' }; }, waitAgent(n, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : new Promise(() => {}); }, async readAgent() { return ''; }, async notify() {} };
+  const herdr = { async agentGet(n) { return started.has(n) ? { name: n, agent_status: 'idle', cwd: dir, workspace_id: 'w' } : null; }, async prompt() {}, async startAgent({ name }) { started.add(name); return {}; }, async createWorkspace() { return { workspaceId: 'w', tabId: 't', paneId: 'p' }; }, waitAgent(n, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : until.includes('idle') ? Promise.resolve('timeout') : new Promise(() => {}); }, async readAgent() { return ''; }, async notify() {} };
   const { SqliteStore, storePath } = await import('../dist/store/sqlite.js');
   const store = SqliteStore.open(storePath(paths.stateDir));
   const e = new FactoryEngine({ cfg, tracker: null, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'f' }, log: () => {} });

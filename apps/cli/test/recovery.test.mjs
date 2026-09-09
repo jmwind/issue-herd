@@ -31,7 +31,8 @@ function fakeHerdr(repo, { gone = [] } = {}) {
     async prompt(name, text) { this.prompts.push({ name, text }); },
     async startAgent({ name }) { started.add(name); return {}; },
     async createWorkspace() { return { workspaceId: 'w2', tabId: 't2', paneId: 'p2' }; },
-    waitAgent(name, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : new Promise(() => {}); },
+    // Working: a wait for it answers at once. Idle/done (the settle check after a brief): the agent kept working, so that wait runs out. Anything else parks the supervisor, as a live agent would.
+    waitAgent(name, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : until.includes('idle') ? Promise.resolve('timeout') : new Promise(() => {}); },
     async readAgent() { return ''; },
     async notify() {},
     async closeWorkspace() {},
@@ -80,7 +81,7 @@ test('a finish comment the tracker refused is owed, survives the owner, and is s
   const b = engine(dir, { store, tracker: tracker2 });
   await b.resume();
   assert.equal(tracker2.comments.length, 1);
-  assert.match(tracker2.comments[0].body, /finished GH-7 as `impl`/);
+  assert.match(tracker2.comments[0].body, /as `impl` finished GH-7/);
   assert.deepEqual(store.pending(), []);
   // …and a third owner has nothing left to send.
   const c = engine(dir, { store, tracker: tracker2 });
@@ -93,7 +94,7 @@ test('a comment whose send was uncertain is reconciled against the issue before 
   const store = SqliteStore.open(storePath(factoryPaths(dir).stateDir));
   const tracker = fakeTracker();
   // The comment reached the tracker, but the owner died before recording that (the action is still open).
-  const body = '✅ **weawr** finished GH-7 as `impl` with status `pr_open`.\n\nmore';
+  const body = '✅ **weawr** as `impl` finished GH-7 with status `pr_open`.\n\nmore';
   tracker.comments.push({ issueId: 'i7', body, at: new Date().toISOString() });
   const id = store.addPending('tracker.comment', { issueId: 'i7', issueKey: 'GH-7', body }, 'GH-7@impl');
   store.settlePending(id, { done: false, error: 'socket hang up' });

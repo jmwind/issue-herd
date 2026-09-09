@@ -6,7 +6,7 @@ Each folder here is one scenario: a factory config, the briefs it needs, and the
 | scenario | who works |
 |---|---|
 | `basic` | one developer. You merge. |
-| `squad` | a developer, a tech lead (codex), a designer (Haiku). The `auto-merge` issue merges itself. |
+| `squad` | a developer, a tech lead (codex), a designer (Sonnet). The `auto-merge` issue merges itself. |
 | `bake-off` | two developers on different models, and a judge that picks one PR. You merge. |
 
 ## Run one from this checkout (the branch you are on)

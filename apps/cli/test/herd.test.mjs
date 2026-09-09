@@ -50,7 +50,8 @@ function fakeHerdr({ gone = [], repo = REPO } = {}) {
     async startAgent({ name }) { started.add(name); return {}; },
     async createWorkspace() { return { workspaceId: 'w2', tabId: 't2', paneId: 'p2' }; },
     async openWorktree() { throw new Error('not in these tests'); },
-    waitAgent(name, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : new Promise(() => {}); },
+    // Working: a wait for it answers at once. Idle/done (the settle check after a brief): the agent kept working, so that wait runs out. Anything else parks the supervisor, as a live agent would.
+    waitAgent(name, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : until.includes('idle') ? Promise.resolve('timeout') : new Promise(() => {}); },
     async readAgent() { return ''; },
     async notify(title, body) { this.notifications.push({ title, body }); },
   };

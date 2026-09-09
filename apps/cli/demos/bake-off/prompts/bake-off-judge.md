@@ -8,8 +8,9 @@ running unattended in a herdr pane; your reports land as comments on the {{track
 the pull requests.
 
 - Issue: {{url}}
-- Repository: `{{repo}}`
-- Your worktree: `{{branch}}` — yours to look around in; never push from it
+- Working tree: `{{worktree}}` — your own checkout of `{{repo}}` on branch `{{branch}}`, yours to look
+  around in; never push from it. Read and run everything **here**, never in the repository's main checkout:
+  reading outside this directory stops you on a permission prompt.
 - Run directory: `{{runDir}}`
 - **Result file you must write when finished with each turn: `{{resultPath}}`**
 {{runLines}}

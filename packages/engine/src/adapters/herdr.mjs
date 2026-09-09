@@ -29,6 +29,15 @@ export class Herdr {
     }
   }
 
+  /**
+   * End every `agent wait` still running. A watcher that is stopping has supervisors parked on
+   * waits of hours; left alone they keep the process alive, and an exit around them leaves
+   * orphaned herdr processes waiting for agents nobody is supervising.
+   */
+  endWaits() {
+    for (const child of this.waits || []) { try { child.kill(); } catch { /* already gone */ } }
+  }
+
   async serverRunning() {
     try { await this.run(['workspace', 'list']); return true; } catch { return false; }
   }
@@ -200,6 +209,8 @@ export class Herdr {
     this.log(`herdr ${args.join(' ')}`);
     return new Promise((resolve) => {
       const child = spawn(this.bin, args, { env: this.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      (this.waits ??= new Set()).add(child);
+      child.once('close', () => this.waits.delete(child));
       let out = ''; let err = '';
       child.stdout.on('data', (d) => { out += d; });
       child.stderr.on('data', (d) => { err += d; });

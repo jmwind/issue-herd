@@ -62,6 +62,9 @@ export function briefVars({ issue, rule, run, tracker, nudging = null, now = new
     assignee: issue.assignee?.displayName || issue.assignee?.name || 'unassigned',
     comments,
     repo: rule.repo,
+    // Where the agent actually is. Named, because "the repository" alone sent agents to the main
+    // checkout — another branch, and a permission prompt away.
+    worktree: run.workDir || rule.repo,
     branch: run.branch || '(current branch)',
     basedOn: run.basedOn || '',
     // A worktree started from another role's branch already holds the code under review, which is

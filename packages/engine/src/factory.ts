@@ -105,6 +105,8 @@ const sleep = (ms: number) => new Promise((r?: any) => setTimeout(r, ms));
 const PROMPT_UPTAKE_MS = 20_000;
 const PROMPT_ATTEMPTS = 3;
 const PROMPT_RETRY_MS = 4_000;
+/** How long a brief that landed keeps an agent busy, at the least: quiet again inside this is a brief that did not land. */
+const PROMPT_SETTLE_MS = 8_000;
 function ts(d: Date) { const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 function hms(d: Date) { return d.toTimeString().slice(0, 8); }
 /** The sidebar label for the watcher's own herdr workspace. */
@@ -665,7 +667,7 @@ export class FactoryEngine {
         });
         await sleep(1500); // let the shell reach its prompt
         await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs, kind: rule.agentKind || 'claude' });
-        this.log(`${key}: claude started as agent "${run.agentName}"`);
+        this.log(`${key}: ${rule.agentKind || 'claude'} started as agent "${run.agentName}"`);
       }
 
       // 4. brief — written INSIDE the working tree the agent actually uses, under the gitignored
@@ -925,6 +927,15 @@ export class FactoryEngine {
     for (let attempt = 1; ; attempt++) {
       try {
         await this.herdr.prompt(run.agentName, run.promptText, { wait: true, until: ['working', 'blocked'], timeoutMs: PROMPT_UPTAKE_MS });
+        // herdr saw it start; a brief that landed keeps it busy for longer than a startup screen's
+        // flicker does (codex, briefed the second it came up, reported working and sat at its
+        // empty prompt). Back at idle within moments, with no result written, means it never had it.
+        const settled = await this.herdr.waitAgent(run.agentName, { until: ['idle', 'done'], timeoutMs: PROMPT_SETTLE_MS });
+        if ((settled === 'idle' || settled === 'done') && !fs.existsSync(run.resultPath)) {
+          if (attempt < PROMPT_ATTEMPTS) { this.log(`${key}: the agent went quiet right after the brief without starting on it; sending it again`); await sleep(PROMPT_RETRY_MS); continue; }
+          this.log(`${key}: the agent has not taken the brief yet (it did not start on it); will try again when it takes input`);
+          return false;
+        }
         run.pendingPrompt = false; this.commit(() => { this.saveState(); this.emit('run.prompted', key, {}); });
         this.log(`${key}: briefed`);
         return true;
@@ -1045,7 +1056,7 @@ export class FactoryEngine {
     const status = result.status || 'unknown';
     const icon = status === 'pr_open' ? '✅' : status === 'needs_human' ? '🙋' : status === 'nothing_to_do' ? '🤷' : '❌';
     const verdict = result.review?.verdict ? `\`${result.review.verdict}\`${result.review.headSha ? ` at \`${String(result.review.headSha).slice(0, 7)}\`` : ''}${result.review.prUrl ? ` for ${result.review.prUrl}` : ''}` : null;
-    const lines = [`${icon} ${roleByline(run.role)} finished ${run.issueKey || key}${run.role ? ` as \`${run.role}\`` : ''} with status \`${status}\`.`];
+    const lines = [`${icon} ${roleByline(run.role)} finished ${run.issueKey || key} with status \`${status}\`.`];
     const facts: Array<[string, unknown]> = [
       ['Role', run.role ? `\`${run.role}\` — ${agentOf(rule)}` : agentOf(rule)],
       ['Turn', (run.pass || 1) > 1 || passLimit(rule) > 1 ? `${run.pass || 1}${passLimit(rule) > 1 ? ` of ${passLimit(rule)}` : ''}` : null],
