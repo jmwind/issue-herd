@@ -17,7 +17,7 @@ fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(dist, { recursive: true });
 
 await build({
-  entryPoints: [path.join(here, 'src', 'main.mjs')],
+  entryPoints: [path.join(here, 'build', 'main.js')],
   outfile: path.join(dist, 'weawr.mjs'),
   bundle: true,
   platform: 'node',

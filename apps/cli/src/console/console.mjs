@@ -15,7 +15,8 @@ import { trackerClass, trackerSpec } from '@weawr/engine/adapters/trackers/index
 import { GitHubTracker, repoFromGit } from '@weawr/engine/adapters/trackers/github.mjs';
 import { prForBranch, prState } from '@weawr/engine/adapters/pr.mjs';
 import { credentialsPath } from '@weawr/engine/adapters/auth.mjs';
-import { isStale, loadRegistry } from './registry.mjs';
+import { isStale, loadRegistry, registryPath } from './registry.mjs';
+import { listRegistrations, registrationsDir, userDir } from '@weawr/engine';
 import { factoryView, indexSnapshot, parseLog, watchWorkspaces } from './model.mjs';
 import { complexity, runSize } from './git.mjs';
 
@@ -64,8 +65,8 @@ class Cached {
 }
 
 export class FactoryConsole {
-  constructor({ herdr, registryFile, log = () => {}, intervalMs = 2000, hostname = os.hostname(), version = null }) {
-    this.herdr = herdr; this.registryFile = registryFile; this.log = log; this.intervalMs = intervalMs; this.hostname = hostname; this.version = version;
+  constructor({ herdr, registryFile = registryPath(), registrationsDir: regDir = registrationsDir(userDir()), log = () => {}, intervalMs = 2000, hostname = os.hostname(), version = null }) {
+    this.herdr = herdr; this.registryFile = registryFile; this.registrationsDir = regDir; this.log = log; this.intervalMs = intervalMs; this.hostname = hostname; this.version = version;
     this.caches = new Map(); // repo → { config, local, state, seen, log }
     this.live = new Map();   // repo → { tracker, ghToken, issues: Map, prs: Map, busy }
     // Tasks a person marked done in the console. The console's own file, never the watcher's
@@ -87,9 +88,12 @@ export class FactoryConsole {
 
   /** Registry entries plus watcher workspaces herdr shows, merged by repository path. */
   discover(index) {
-    const reg = loadRegistry(this.registryFile);
     const found = new Map();
+    // The shared registry an older watcher still stamps, then the per-factory registrations a
+    // current owner writes; the newer record wins for a repository that has both.
+    const reg = loadRegistry(this.registryFile);
     for (const [repo, entry] of Object.entries(reg)) found.set(path.resolve(repo), { repo: path.resolve(repo), registry: entry, stale: isStale(entry) });
+    for (const entry of listRegistrations(this.registrationsDir)) found.set(path.resolve(entry.repo), { repo: path.resolve(entry.repo), registry: entry, stale: isStale(entry), factoryId: entry.factoryId });
     for (const w of watchWorkspaces(index)) {
       if (!w.cwd) continue;
       const repo = path.resolve(w.cwd);
@@ -137,13 +141,15 @@ export class FactoryConsole {
   }
 
   async sizeFor(key, run, repo, now) {
-    if (!run.branch || !LIVE.has(run.status)) return this.sizes.get(key)?.value || null;
-    const c = this.sizes.get(key);
+    // Keyed by factory and run: two repositories can both have a GH-7@impl.
+    const k = `${repo}|${key}`;
+    if (!run.branch || !LIVE.has(run.status)) return this.sizes.get(k)?.value || null;
+    const c = this.sizes.get(k);
     if (c && now - c.at < SIZE_TTL) return c.value;
     const cwd = [run.workDir, run.worktreePath, repo].find((d) => d && fs.existsSync(d));
     const value = await runSize({ cwd, base: run.base || 'main', branch: run.branch });
     const out = value ? { ...value, complexity: complexity(value) } : null;
-    this.sizes.set(key, { at: now, value: out });
+    this.sizes.set(k, { at: now, value: out });
     return out;
   }
 
@@ -264,9 +270,9 @@ export class FactoryConsole {
 
   /** Send the agent its own exit command and let it shut down the way it wants. */
   async exit({ factory, run }) {
-    const { r } = this.findRun({ factory, run });
+    const { f, r } = this.findRun({ factory, run });
     const outcome = await this.herdr.stopAgent(r.agent, { exitCommand: exitCommandFor(r.agentKind) });
-    this.sizes.delete(run);
+    this.sizes.delete(`${f.repo}|${run}`);
     setTimeout(() => this.tick().catch(() => {}), 500);
     return outcome;
   }
@@ -324,7 +330,7 @@ export class FactoryConsole {
    * 'is still open (why)') — null when the run never had one.
    */
   async closeTask({ factory, issue }) {
-    const { iss } = this.findTask({ factory, issue });
+    const { f, iss } = this.findTask({ factory, issue });
     const outcomes = [];
     for (const r of iss.runs) {
       const hasWorkspace = !!r.workspaceId && r.workspaceOpen !== false;
@@ -333,7 +339,7 @@ export class FactoryConsole {
       let workspace = null;
       if (hasWorkspace) workspace = outcome === 'is still running' ? 'left open' : await this.closeWorkspace(r.workspaceId);
       outcomes.push({ run: r.key, role: r.role, agent: r.agent, outcome, workspaceId: r.workspaceId || null, workspace });
-      this.sizes.delete(r.key);
+      this.sizes.delete(`${f.repo}|${r.key}`);
     }
     return outcomes;
   }

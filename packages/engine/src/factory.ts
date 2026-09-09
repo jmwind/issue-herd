@@ -1,0 +1,1148 @@
+// The factory engine: what used to be the `Weawr` class inside the CLI, with every dependency
+// handed in — repository paths, config sources, the state store, the clock, git, herdr, the
+// tracker, the logger — so two engines for two repositories can share one process, and a test
+// can drive one without standing in its repository.
+//
+// The lifecycle itself is unchanged by the move: pickup → supervise → finalize → (awaiting merge →)
+// merged, with claims, nudges and turns exactly as documented in docs/how-it-works.md.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import * as _tracker from './adapters/tracker.mjs';
+import * as _claim from './claim.mjs';
+import * as _auth from './adapters/auth.mjs';
+import * as _herdr from './adapters/herdr.mjs';
+import * as _branch from './adapters/branch.mjs';
+import * as _worktree from './adapters/worktree.mjs';
+import * as _agents from './agents.mjs';
+import * as _pr from './adapters/pr.mjs';
+import * as _nudge from './nudge.mjs';
+import * as _github from './adapters/trackers/github.mjs';
+// The adapters are still JavaScript. Their inferred types (a `= null` default infers `null`) are
+// worse than none, so they are used untyped here until each is converted.
+const { userDisplay, slugify } = _tracker as Record<string, any>;
+const { alreadyTaken, claimLabelFor, heldByAPerson, issueKeyOf, passLimit, pickCandidates, pickupMarker, runKeyFor, workspaceLabel } = _claim as Record<string, any>;
+const { resolveCredential } = _auth as Record<string, any>;
+const { agentPlacement, isBlocked, isNameTaken } = _herdr as Record<string, any>;
+const { desiredBranch, reconcileBranch } = _branch as Record<string, any>;
+const { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } = _worktree as Record<string, any>;
+const { agentArgv, describeAgent, exitCommandFor } = _agents as Record<string, any>;
+const { conflictPrompt, keepMergeable, parsePrUrl, prState, watchesMerge } = _pr as Record<string, any>;
+const { nudgedByLabel, nudgesIn, nudgesLeft, nudgesSent, planNudge } = _nudge as Record<string, any>;
+const { GitHubTracker } = _github as Record<string, any>;
+import { briefVars, renderBrief } from './brief.js';
+import { configStamp, expandConfigPath, loadConfig } from './config.js';
+import type { ConfigSources, FactoryConfig } from './config.js';
+import { agentNameFor } from './identity.js';
+import type { Identities } from './identity.js';
+import type { FactoryPaths } from './paths.js';
+import { writeRegistration } from './registration.js';
+import type { Registration } from './registration.js';
+import { JsonStateStore, readJson } from './state.js';
+import type { FactoryState, StateStore } from './state.js';
+import type { Ownership } from './ownership.js';
+
+/** Run git in `cwd`. Returns trimmed stdout, or null if git failed — callers must tolerate null. */
+export type GitRunner = (args: string[], cwd: string) => string | null;
+
+/** The default git runner: bounded in time and output, never throws. */
+export const defaultGit: GitRunner = (args?: any, cwd?: any) => {
+  try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }).trim(); }
+  catch { return null; }
+};
+
+export interface EngineHooks {
+  /** The heartbeat line, rewritten in place on a TTY. */
+  live?: (text: string) => void;
+  /** Once a day from the loop: is a newer weawr available? The CLI decides how to say so. */
+  updateReminder?: () => Promise<unknown>;
+}
+
+export interface RegistrationTarget { dir: string; socketPath?: string | null; ownership?: Ownership | null }
+
+export interface EngineOptions {
+  cfg: FactoryConfig;
+  tracker: any;
+  herdr: any;
+  dry?: boolean;
+  paths: FactoryPaths;
+  /** Where the bundled prompt templates live. */
+  promptsRoot: string;
+  store?: StateStore;
+  ids: Identities;
+  version?: string;
+  git?: GitRunner;
+  clock?: () => Date;
+  log?: (line: string) => void;
+  live?: (text: string) => void;
+  hooks?: EngineHooks;
+  registration?: RegistrationTarget | null;
+}
+
+/** How long one `herdr agent wait` may block before the supervisor re-reads result.json. */
+const RESULT_CHECK_MS = 60_000;
+/** How often the watcher may ask GitHub about the same pull request, whatever `pollSeconds` says. */
+const PR_POLL_MS = 60_000;
+const sleep = (ms: number) => new Promise((r?: any) => setTimeout(r, ms));
+function ts(d: Date) { const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
+function hms(d: Date) { return d.toTimeString().slice(0, 8); }
+/** The sidebar label for the watcher's own herdr workspace. */
+export function watchLabel(name: string) { return `${name}Watch`; }
+export function trackerBanner(tracker?: any) { const what = tracker.describe?.(); return `${tracker.constructor.label}${what ? ` ${what}` : ''}`; }
+
+export class FactoryEngine {
+  cfg: FactoryConfig;
+  tracker: any;
+  herdr: any;
+  dry: boolean;
+  state: FactoryState;
+  supervising = new Set<string>();
+  /** Run keys promised a nudged turn that has not started yet — see planNudges. */
+  reserved = new Set<string>();
+  resupervise?: Set<string>;
+  warned?: Set<string>;
+  pr: { host: string; token: string | null } | null = null;
+  readonly paths: FactoryPaths;
+  readonly sources: ConfigSources;
+  readonly store: StateStore;
+  readonly ids: Identities;
+  readonly version: string;
+  readonly git: GitRunner;
+  readonly clock: () => Date;
+  readonly hooks: EngineHooks;
+  private readonly logger: (line: string) => void;
+  /** Where the process announces itself on this machine; null for an engine that should not (a test, a dry run). */
+  registration: RegistrationTarget | null;
+
+  constructor({ cfg, tracker, herdr, dry = false, paths, promptsRoot, store, ids, version = '0.0.0', git = defaultGit, clock = () => new Date(), log, live, hooks = {}, registration = null }: EngineOptions) {
+    this.cfg = cfg;
+    this.tracker = tracker; // null in smoke mode
+    this.herdr = herdr;
+    this.dry = dry;
+    this.paths = paths;
+    this.sources = { paths, promptsRoot };
+    this.store = store ?? new JsonStateStore(paths.statePath);
+    this.ids = ids;
+    this.version = version;
+    this.git = git;
+    this.clock = clock;
+    this.hooks = { live: live ?? (() => {}), ...hooks };
+    this.logger = log ?? ((line?: any) => console.log(line));
+    this.registration = registration;
+    this.state = this.store.load();
+  }
+
+  /** An event: its own line, on screen (through the injected logger) and in the factory's log file. */
+  log(...a: unknown[]): void {
+    const line = `[${ts(this.clock())}] ${a.join(' ')}`;
+    this.logger(line);
+    try { fs.mkdirSync(this.paths.logDir, { recursive: true }); fs.appendFileSync(this.paths.logPath, line + '\n'); } catch { /* ignore */ }
+  }
+
+  saveState(): void { this.store.save(this.state); }
+
+  /** The template a rule names, read from the repository's .weawr/ or the bundled prompts. */
+  readTemplate(name: string): string { return fs.readFileSync(expandConfigPath(this.sources, name), 'utf8'); }
+
+  runningCount(ruleName?: any) {
+    return Object.values(this.state.runs).filter((r?: any) => r.status === 'running' && (!ruleName || r.rule === ruleName)).length;
+  }
+
+  async pollOnce() {
+    if (!this.dry) await this.checkMerges();
+    const since = new Date(this.clock().getTime() - this.cfg.lookbackDays * 86400e3).toISOString();
+    const viewer = await this.tracker.me();
+    const issues = await this.tracker.openIssues({ sinceIso: since });
+    const ctx = { viewer, now: this.clock().getTime() };
+    const candidates = pickCandidates({
+      issues, rules: this.cfg.rules, viewer,
+      matches: (issue?: any, rule?: any) => { try { return rule.compiled.test(issue, ctx); } catch (e: any) { this.log(`rule ${rule.name}: ${e.message}`); return false; } },
+      runFor: (key?: any) => this.state.runs[key] || null,
+      onSkip: (key?: any, rule?: any, why?: any) => this.warnOnce(`taken:${key}`, `${key} matches ${rule.name} but is skipped: ${why}`),
+    });
+    // urgent first, then oldest first
+    candidates.sort((a?: any, b?: any) => (prio(a.issue) - prio(b.issue)) || (Date.parse(a.issue.createdAt) - Date.parse(b.issue.createdAt)));
+    const picked = []; const waiting = [];
+    for (const c of candidates) {
+      if (this.runningCount() >= this.cfg.maxConcurrent) { waiting.push(c.key); this.warnOnce(`cap:${c.key}`, `${c.key} matches but waits: global cap ${this.cfg.maxConcurrent} reached`); continue; }
+      if (this.runningCount(c.rule.name) >= c.rule.maxConcurrent) { waiting.push(c.key); this.warnOnce(`cap:${c.key}`, `${c.key} matches but waits: rule ${c.rule.name} cap ${c.rule.maxConcurrent} reached`); continue; }
+      if (this.dry) { this.log(`DRY would pick ${c.key} "${c.issue.title}" via rule ${c.rule.name}${c.rule.role ? ` as ${c.rule.role}` : ''}${c.pass > 1 ? ` (pass ${c.pass})` : ''}`); continue; }
+      try { await this.pickUp(c.issue, c.rule, { pass: c.pass, holdsClaim: c.holdsClaim }); picked.push(c.key); }
+      catch (e: any) { this.log(`pickup ${c.key} failed: ${e.message}`); }
+    }
+    return { scanned: issues.length, candidates: candidates.length, picked, waiting };
+  }
+
+  warnOnce(key: string, msg: string) { (this.warned ??= new Set()); if (!this.warned.has(key)) { this.warned.add(key); this.log(msg); } }
+
+  /** How many runs are done but still waiting for their pull request to be merged. */
+  awaitingMerge() { return Object.values(this.state.runs).filter((r?: any) => r.status === 'awaiting_merge').length; }
+  /** ...and how many of those GitHub currently reports as conflicting with their base. */
+  inConflict() { return Object.values(this.state.runs).filter((r?: any) => r.status === 'awaiting_merge' && r.conflictHead).length; }
+
+  /** "DEV-12 w3 working · DEV-15 w4 blocked" for the heartbeat and `status`. */
+  async runningSummary() {
+    const parts = [];
+    for (const [key, run] of Object.entries(this.state.runs)) {
+      if (run.status !== 'running') continue;
+      const a = await this.herdr.agentGet(run.agentName).catch(() => null);
+      parts.push(`${key} ${run.workspaceId || '?'} ${a?.agent_status || 'gone'}`);
+    }
+    return parts;
+  }
+
+  /**
+   * Start a run, or another turn of one. `pass` numbers the turn; `holdsClaim` says the claim label
+   * is already ours (a later turn) so only the person guard is re-read; `nudges` is what woke a
+   * turn another role asked for — [{ from, message }] — and goes into the brief.
+   */
+  async pickUp(issue?: any, rule?: any, { pass = 1, holdsClaim = false, nudges = [] }: any = {}) {
+    // The run key carries the role, so two roles on one issue are two runs: two state entries, two
+    // agent names, two worktrees, two run directories. `issue.identifier` is still what the tracker
+    // is asked about — never the run key. A retry of *this* role finds its own previous run, and
+    // with it the session that may still be up; another role's run is a different key entirely.
+    const key = runKeyFor(issue.identifier, rule.role);
+    const previous = this.state.runs[key]; // a run we are retrying; its session may still be up
+    // Whatever woke this turn, the nudges held for the run while it was busy are answered by it
+    // too: they are asks about this issue, and the next turn is the next turn.
+    if (previous?.queuedNudges?.length) nudges = [...nudges, ...previous.queuedNudges];
+    const slug = `${slugify(key, 48)}-${slugify(issue.title, 32)}`.replace(/-+$/, '');
+    const archiveDir = path.join(this.paths.runsDir, key); // in the watcher's checkout: issue.json now, result.json copied on finish
+    fs.mkdirSync(archiveDir, { recursive: true });
+    const run: any = {
+      rule: rule.name, role: rule.role || null, pass, status: 'starting',
+      issueId: issue.id, issueKey: issue.identifier, title: issue.title, url: issue.url,
+      startedAt: this.clock().toISOString(), archiveDir,
+      // `wantBranch` is what we want it called; `branch` is what git says it is, filled in by
+      // settleBranch once the worktree exists. Nothing downstream may report a name we only guessed.
+      wantBranch: desiredBranch({ template: rule.branch, issue, slug, worktree: rule.worktree, role: rule.role }),
+      branch: null,
+      worktree: rule.worktree, agentName: previous?.agentName || agentNameFor(key, this.ids.factoryId), notified: {},
+      // The nudges this turn answers, if it is one another role asked for. And the pull request the
+      // previous turn opened: a turn spent answering a reviewer ends with the same PR, and the
+      // watch on it must not be lost to a result that forgot to repeat the URL.
+      nudges: nudges.length ? nudges : undefined,
+      prUrl: previous?.prUrl || undefined,
+    };
+    this.state.runs[key] = run; this.saveState();
+    const turn = nudges.length ? `, turn ${pass}, nudged by ${nudgedByLabel(nudges)}` : pass > 1 ? `, pass ${pass} of ${passLimit(rule)}` : '';
+    this.log(`picking up ${key} "${issue.title}" (rule ${rule.name}${rule.role ? `, role ${rule.role}` : ''}${turn})`);
+
+    // Claim on Linear first, so a second watcher (or this one after a crash) sees it before any work starts.
+    // Nothing has been built yet, so if the claim cannot be made the run is forgotten rather than left
+    // behind as `starting` — a stale `starting` run is what resume() trips over on the next start.
+    const claimLabel = claimLabelFor(rule);
+    if (this.tracker && claimLabel) {
+      try {
+        // The fresh fetch happens either way — this is the last look before any work starts. What
+        // changes is what counts as taken: a further turn of a role whose claim never came off must
+        // not be refused by its own label and its own pickup comment, but a person who took the
+        // issue over since the last turn still ends it.
+        const fresh = await this.tracker.issueByKey(issue.identifier);
+        const why = fresh && (holdsClaim ? heldByAPerson(fresh, rule, await this.tracker.me()) : alreadyTaken(fresh, rule, await this.tracker.me()));
+        if (why) throw new Error(`skipped, ${why}`);
+        await this.tracker.addLabel(issue.id, claimLabel);
+      } catch (e: any) {
+        delete this.state.runs[key]; this.saveState();
+        throw e;
+      }
+      run.claimed = claimLabel; this.saveState();
+    }
+
+    try {
+      // 0. Whatever mode this rule runs in, the checkout the watcher lives in is about to be the
+      //    starting point for a run — literally so in "none" and "herdr" modes — and merges land on
+      //    the remote, not here. This is the moment it is worth being current.
+      this.freshenCheckout(key);
+
+      // 1. An earlier attempt at this issue may have left its session running: a start that failed
+      //    after `agent start` succeeded, or an `weawr reset` followed by another pickup. herdr
+      //    agent names are unique, so building a second workspace and starting a second agent under
+      //    the same name cannot work — it is refused with `agent_name_taken`, and what it leaves
+      //    behind is an empty workspace and a live session nobody is watching. That session is this
+      //    issue's session, and it is the one the owner has been typing into. Take it back.
+      const found = await this.herdr.agentGet(run.agentName).catch((e?: any) => { this.log(`${key}: could not ask herdr about agent ${run.agentName}: ${e.message}`); return null; });
+      const existing = found && isOurAgent(found, rule.repo, previous) ? found : null;
+      if (found && !existing) this.log(`${key}: an agent called "${run.agentName}" is running in ${found.foreground_cwd || found.cwd}, which is not this repository; leaving it alone`);
+
+      // 2. workspace (+ worktree)
+      // "GH-7 review Fix the thing" — the role sits right after the key so the sidebar shows who
+      // is doing what without opening anything.
+      const label = workspaceLabel({ key: issue.identifier, role: rule.role, title: issue.title });
+      let ws;
+      if (existing) {
+        ws = agentPlacement(existing);
+        run.adopted = true;
+        run.worktreePath = ws.cwd;
+        this.log(`${key}: agent "${run.agentName}" is already running (${existing.agent_status}) in ${ws.cwd}; reusing that session`);
+        // A reviewer's session that is still up is the common case for a later turn, and the whole
+        // reason there is a later turn is that the implementer pushed something since. Its worktree
+        // has to move too, or it re-reads the code it already reviewed. Only a worktree weawr
+        // made for this role, and only while the agent is not typing in it.
+        if (rule.worktree === 'self' && rule.basedOn && ws.cwd) {
+          run.basedOn = this.baseBranchFor(issue, rule, key);
+          const ours = previous?.worktreePath && path.resolve(previous.worktreePath) === path.resolve(ws.cwd);
+          if (run.basedOn && ours && existing.agent_status !== 'working') {
+            const r = catchUp({ git: this.git, repo: rule.repo, at: ws.cwd, base: run.basedOn });
+            this.log(`${key}: ${r.moved ? `caught up to ${run.basedOn} (${String(r.from).slice(0, 7)} → ${String(r.at).slice(0, 7)})` : `not moved onto ${run.basedOn}: ${r.reason}`}`);
+          } else if (run.basedOn) {
+            this.log(`${key}: not catching ${ws.cwd} up to ${run.basedOn}: ${ours ? 'the agent is working in it' : 'it is not a worktree weawr made for this role'}`);
+          }
+        }
+      } else if (rule.worktree === 'herdr') {
+        ws = await this.herdr.createWorktree({ cwd: rule.repo, branch: run.wantBranch || `herd/${slug}`, label });
+        run.worktreePath = ws.path;
+      } else if (rule.worktree === 'self') {
+        // `basedOn` is a role's branch and stays that way — it is what a later turn is caught up
+        // to, and catching an implementer up to main would throw its commits away. With no role
+        // base the start point is the default branch, which is what the config has always promised
+        // and what `git worktree add` on its own does not do: its default is this checkout's HEAD.
+        run.basedOn = this.baseBranchFor(issue, rule, key);
+        const from = run.basedOn || this.baseBranch();
+        const made = makeWorktree({ git: this.git, repo: rule.repo, dir: rule.worktreeDir, slug, branch: run.wantBranch || `herd/${slug}`, base: from });
+        run.worktreePath = made.path;
+        this.log(`${key}: worktree ${made.created ? 'created' : 'reused'} at ${made.path}${made.base ? ` from ${made.base}` : ''}`);
+        // Anything but a worktree we just cut from the base is potentially behind it: a directory
+        // reused from an earlier turn, and also a fresh directory put back on a branch that already
+        // existed (the worktree was removed but the branch survived). Both leave this turn reading
+        // the last turn's code, which is how a reviewer confirms its own findings were ignored.
+        if (run.basedOn && !made.base) {
+          const r = catchUp({ git: this.git, repo: rule.repo, at: made.path, base: run.basedOn });
+          this.log(`${key}: ${r.moved ? `caught up to ${run.basedOn} (${String(r.from).slice(0, 7)} → ${String(r.at).slice(0, 7)})` : `not moved onto ${run.basedOn}: ${r.reason}`}`);
+        }
+        ws = await this.workspaceIn(made.path, rule.repo, label);
+      } else {
+        ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { HERD_ISSUE: key } });
+      }
+      Object.assign(run, { workspaceId: ws.workspaceId, tabId: ws.tabId, paneId: ws.paneId });
+      this.saveState();
+      this.log(`${key}: workspace ${ws.workspaceId} pane ${ws.paneId}`);
+
+      fs.writeFileSync(path.join(archiveDir, 'issue.json'), JSON.stringify(issue, null, 2));
+
+      // 3. start claude (an adopted session is already up)
+      if (!existing) {
+        const agentArgs = agentArgv({
+          kind: rule.agentKind, name: key, permissionMode: rule.permissionMode,
+          model: rule.model, effort: rule.effort,
+          extra: [...(rule.agentArgs || []), ...(rule.claudeArgs || [])],
+        });
+        await sleep(1500); // let the shell reach its prompt
+        await this.startAgentWithRetry({ name: run.agentName, paneId: ws.paneId, agentArgs, kind: rule.agentKind || 'claude' });
+        this.log(`${key}: claude started as agent "${run.agentName}"`);
+      }
+
+      // 4. brief — written INSIDE the working tree the agent actually uses, under the gitignored
+      // .weawr/state/, so reading and writing it needs no permission dialog. A path in the main
+      // checkout does not work from a worktree.
+      let workDir = run.worktreePath;
+      if (workDir) {
+        // We know where we put it, but a Claude Code setting that forces its own worktree can still
+        // move the agent, and the brief has to be written where the agent really is. herdr wins.
+        const seen = await this.herdr.agentGet(run.agentName).then((a?: any) => a?.foreground_cwd || a?.cwd).catch(() => null);
+        if (seen && path.resolve(seen) !== path.resolve(workDir)) {
+          this.log(`${key}: the agent is in ${seen}, not the worktree we made; using that`);
+          workDir = seen;
+        }
+      } else {
+        workDir = await this.agentCwd(run.agentName, rule);
+      }
+      run.workDir = workDir;
+      // Settle the branch before the brief is rendered and before the tracker is told: both quote it.
+      this.settleBranch(key, run, rule, workDir);
+      run.dir = path.join(workDir, '.weawr', 'state', 'runs', key);
+      run.resultPath = path.join(run.dir, 'result.json');
+      fs.mkdirSync(run.dir, { recursive: true });
+      // A further pass reuses the worktree, so the last pass's result.json is still sitting there.
+      // Left alone, the supervisor would read it the moment this agent paused and finalize the new
+      // pass with the old pass's answer. Move it aside — under a name the agent can still read,
+      // because "what did I say last time" is the whole point of having another turn.
+      if (pass > 1 && fs.existsSync(run.resultPath)) {
+        run.previousResultPath = path.join(run.dir, `result.pass${pass - 1}.json`);
+        try { fs.renameSync(run.resultPath, run.previousResultPath); }
+        catch (e: any) { this.log(`${key}: could not set the previous result aside (${e.message}); removing it instead`); fs.rmSync(run.resultPath, { force: true }); run.previousResultPath = null; }
+      }
+      const brief = renderBrief(this.readTemplate(rule.prompt), briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, nudging: this.nudging(issue.identifier) }));
+      run.briefPath = path.join(run.dir, 'brief.md');
+      fs.writeFileSync(run.briefPath, brief);
+      this.saveState();
+      this.log(`${key}: working tree ${workDir}`);
+
+      // 5. prompt. The session is up and briefed, so from here on the run is the supervisor's:
+      // a prompt herdr will not take yet (Claude Code came up on its trust dialog, say) is a run
+      // waiting for its owner, not a failed one. Failing here used to abandon a live agent that had
+      // never been told what to do, and then collide with it on the retry.
+      run.promptText = `You are working ${this.cfg.Tracker.label} issue ${key}. Your full brief is in ${run.briefPath} — read that file first and follow it exactly.`;
+      run.pendingPrompt = true;
+      run.status = 'running'; this.saveState();
+      const sent = await this.deliverPrompt(key, run);
+      if (sent) {
+        const st = await this.herdr.waitAgent(run.agentName, { until: ['working'], timeoutMs: 30_000 });
+        this.log(`${key}: prompted (state ${st})`);
+      }
+
+      // 5. tell the tracker. The session is up and briefed by now, so nothing here may fail the run.
+      if (this.tracker && rule.onPickup.comment) {
+        // pickupMarker() writes the role into the first words, because this comment is also the
+        // guard: a reader sees who holds which role, and alreadyTaken() greps for its own.
+        const held = [`herdr workspace \`${run.workspaceId}\``, `agent \`${run.agentName}\``, `rule \`${rule.name}\``];
+        if (nudges.length) held.unshift(`turn ${pass}, nudged by ${nudges.map((n?: any) => `\`${n.from}\``).join(' and ')}`);
+        else if (passLimit(rule) > 1) held.unshift(`pass ${pass} of ${passLimit(rule)}`);
+        if (run.branch) held.push(`branch \`${run.branch}\``);
+        // A nudged turn is expected to find its session up, so "took this back over" — the words
+        // for a session an earlier attempt left adrift — would be the wrong story. The marker stays
+        // a prefix either way, because alreadyTaken() greps for it.
+        const how = nudges.length ? `${pickupMarker(rule.role)} again`
+          : run.adopted ? pickupMarker(rule.role).replace('picked this up', 'took this back over') : pickupMarker(rule.role);
+        try { await this.tracker.comment(issue.id, `🧵 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`); }
+        catch (e: any) { this.log(`${key}: pickup comment failed: ${e.message}`); }
+      }
+      if (!sent) {
+        run.notified.blocked = true; this.saveState();
+        await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is not taking input yet — answer whatever it is showing in herdr workspace \`${run.workspaceId}\` and weawr will send it the brief.${await this.tail(run.agentName, 12)}`, 'request');
+      }
+      if (this.tracker && rule.onPickup.assignToMe) { try { await this.tracker.assign(issue, await this.tracker.me()); } catch (e: any) { this.log(`${key}: assign failed: ${e.message}`); } }
+      if (this.tracker && rule.onPickup.state) { try { await this.tracker.setState(issue, rule.onPickup.state); } catch (e: any) { this.log(`${key}: state failed: ${e.message}`); } }
+
+      this.supervise(key);
+    } catch (e: any) {
+      run.status = 'failed'; run.error = e.message; run.finishedAt = this.clock().toISOString(); this.saveState();
+      if (this.tracker) {
+        try { await this.tracker.comment(issue.id, `⚠️ weawr failed to start a session: ${e.message}`); } catch { /* ignore */ }
+        await this.releaseClaim(key, run);
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * After a failed start: give the claim label back so the issue can be taken again, and record
+   * the issue's updatedAt as it stands *after* our own cleanup. nextPass() compares against that,
+   * so our comment and label removal do not count as the user changing the issue.
+   */
+  async releaseClaim(key?: any, run?: any) {
+    if (!this.tracker) return;
+    if (run.claimed) {
+      try { await this.tracker.removeLabel(run.issueId, run.claimed); this.log(`${key}: removed the '${run.claimed}' claim label`); }
+      catch (e: any) { this.log(`${key}: could not remove the '${run.claimed}' claim label: ${e.message}`); }
+    }
+    try { run.issueUpdatedAt = (await this.tracker.issueByKey(run.issueKey || issueKeyOf(key)))?.updatedAt || null; } catch { /* finishedAt is the fallback */ }
+    this.saveState();
+  }
+
+  /**
+   * The branch this rule's worktree should start from, or null for the default branch.
+   *
+   * `basedOn` names another *role*, and the branch is read from that role's run on this same
+   * issue — which is the only place the truth lives, because it is what git reported after that
+   * worktree was made rather than what its template asked for. No such run, or a run that never
+   * settled a branch, is a log line and a normal worktree: a reviewer looking at the default
+   * branch is a poor review, and a failed run is no review at all.
+   */
+  baseBranchFor(issue?: any, rule?: any, key?: any) {
+    if (!rule.basedOn) return null;
+    const from = this.state.runs[runKeyFor(issue.identifier, rule.basedOn)];
+    if (!from) { this.log(`${key}: no '${rule.basedOn}' run on ${issue.identifier} yet, so its worktree starts from the default branch`); return null; }
+    if (!from.branch) { this.log(`${key}: the '${rule.basedOn}' run has no branch of its own, so this worktree starts from the default branch`); return null; }
+    return from.branch;
+  }
+
+  /**
+   * The branch a run is cut from when no role says otherwise, and the branch this checkout is meant
+   * to be standing on. Asked each time rather than remembered: it is two cheap git calls, and a
+   * config reload can change `baseBranch` under us.
+   */
+  baseBranch() {
+    return this.cfg.baseBranch || defaultBranch({ git: this.git, repo: this.paths.repo });
+  }
+
+  /**
+   * Keep the watcher's own checkout on the tip of that branch.
+   *
+   * A "self" worktree does not need this — it is cut from the tip whatever this checkout says — but
+   * everything else does: a `worktree: "none"` run works in this directory, `"herdr"` cuts from its
+   * HEAD, the config reloaded before every poll is read out of it, and it is the directory its
+   * owner opens. Nothing here can lose work (see pullBase), so the only thing to report is movement:
+   * a refusal is warned about once, because "you are on a branch of your own" is a state, not an
+   * event, and it would otherwise be a line in the log for every pickup for the rest of the day.
+   */
+  freshenCheckout(why?: any) {
+    if (!this.cfg.pullBase) return null;
+    // One thing a fast-forward can disturb: a `worktree: "none"` run has an agent working in this
+    // directory right now, and moving the floor under it is not the sort of help anybody wants.
+    const busy = Object.values(this.state.runs).find((r?: any) => r.status === 'running' && r.workDir && path.resolve(r.workDir) === this.paths.repo);
+    if (busy) return { pulled: false, reason: `${busy.issueKey} is working in it` };
+    const base = this.baseBranch();
+    const r = pullBase({ git: this.git, repo: this.paths.repo, base });
+    if (r.pulled) this.log(`${why}: this checkout fast-forwarded onto ${r.ref} (${String(r.from).slice(0, 7)} → ${String(r.at).slice(0, 7)})`);
+    else if (r.reason !== 'already up to date') this.warnOnce(`pullBase:${r.reason}`, `this checkout is not being pulled onto ${base}: ${r.reason}`);
+    return r;
+  }
+
+  /** The directory Claude is working in: the worktree it created, or the repo. Polls herdr until it settles. */
+  async agentCwd(name?: any, rule?: any) {
+    const deadline = this.clock().getTime() + (rule.worktree === 'none' ? 4_000 : 25_000);
+    let last = rule.repo;
+    while (this.clock().getTime() < deadline) {
+      const a = await this.herdr.agentGet(name);
+      const cwd = a?.foreground_cwd || a?.cwd;
+      if (cwd && cwd !== rule.repo) return cwd;   // worktree mode: Claude moved
+      if (cwd) last = cwd;
+      await sleep(1000);
+    }
+    return last;
+  }
+
+  /**
+   * Reconcile the branch we wanted with the branch that exists, and record the truth in run.branch.
+   *
+   * We create the worktree on the branch we want, so this is normally just the confirmation step:
+   * ask this.git, record what it says, move on. It still matters. A Claude Code setting that forces its
+   * own worktree can put the agent somewhere we did not choose, and then renaming onto the name we
+   * promised is how the brief, the pickup comment and the PR keep telling the same story. Anything
+   * that goes wrong is a log line, never a failed run — a run on an unexpected branch name is fine,
+   * a run whose brief lies is not.
+   *
+   * The one thing it must never do is rename a branch in the maintainer's own checkout, which is
+   * why a workDir equal to the repo is read but never renamed.
+   */
+  settleBranch(key?: any, run?: any, rule?: any, workDir?: any) {
+    if (rule.worktree === 'none') { run.branch = null; return null; }
+    if (path.resolve(workDir) === path.resolve(rule.repo)) this.log(`${key}: no worktree of its own; leaving the branch in ${workDir} alone`);
+    // An adopted session may already have commits and an upstream on the branch it is on, so the
+    // name it is standing on wins over the one this pickup would have chosen. Only a session we
+    // just started is renameable.
+    const { branch, action, from, want } = reconcileBranch({ git: this.git, cwd: workDir, want: run.adopted ? null : run.wantBranch, repo: rule.repo });
+    run.branch = branch;
+    this.saveState();
+    if (action === 'renamed') this.log(`${key}: branch ${from} → ${branch}`);
+    else if (action === 'taken') this.log(`${key}: branch ${want} already exists, staying on ${branch}`);
+    else if (action === 'failed') this.log(`${key}: could not rename ${branch} → ${want}, staying on ${branch}`);
+    else if (action === 'unreadable') this.log(`${key}: no branch readable in ${workDir}; the brief will not name one`);
+    else if (action === 'detached') this.log(`${key}: ${workDir} is on a detached HEAD; the brief will not name a branch`);
+    else this.log(`${key}: branch ${branch}`);
+    return branch;
+  }
+
+  /**
+   * A herdr workspace sitting in `dir`. `worktree open` is preferred because herdr then shows the
+   * run's real branch and groups it under the repo, and it hands back a fresh shell pane to start
+   * the agent in. A plain workspace is the fallback: if you already had that checkout open, herdr
+   * returns your workspace and your shell, which is not ours to start an agent in.
+   */
+  async workspaceIn(dir?: any, repo?: any, label?: any) {
+    try {
+      const wt = await this.herdr.openWorktree({ cwd: repo, path: dir, label });
+      if (wt.paneId && !wt.alreadyOpen) return wt;
+      if (wt.alreadyOpen) this.log(`  ${dir} is already open in herdr; giving the run its own workspace`);
+    } catch (e: any) {
+      this.log(`  herdr worktree open failed (${e.message}); using a plain workspace`);
+    }
+    return this.herdr.createWorkspace({ cwd: dir, label });
+  }
+
+  async startAgentWithRetry(opts?: any) {
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { return await this.herdr.startAgent(opts); }
+      catch (e: any) {
+        lastErr = e;
+        if (e.code === 'agent_not_ready') return; // started but sitting on a startup dialog; supervise() will see 'blocked'
+        // Our own previous attempt in this loop may have started it after all; anyone else's agent
+        // by that name is not ours to prompt.
+        if (isNameTaken(e) && (await this.herdr.agentGet(opts.name).catch(() => null))?.pane_id === opts.paneId) return;
+        if (!/pane_not_ready|not at.*prompt|busy|shell/i.test(e.message)) throw e;
+        await sleep(2000 * (attempt + 1));
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
+   * Hand the agent the one prompt that makes it a run: "your brief is in <file>". Returns true when
+   * herdr took it.
+   *
+   * herdr will not type into an agent that is showing a dialog — `agent prompt` answers
+   * `agent_blocked` and sends nothing — and Claude Code shows one the first time it runs in a
+   * directory. So the prompt is kept on the run and tried again by the supervisor as soon as the
+   * agent takes input, which is the whole difference between a session that carries on once its
+   * owner answers the dialog and one that sits there forever having never been told what to do.
+   */
+  async deliverPrompt(key?: any, run?: any) {
+    if (!run.pendingPrompt) return true;
+    try {
+      await this.herdr.prompt(run.agentName, run.promptText);
+      run.pendingPrompt = false; this.saveState();
+      this.log(`${key}: briefed`);
+      return true;
+    } catch (e: any) {
+      this.log(`${key}: the agent has not taken the brief yet (${isBlocked(e) ? 'it is showing a dialog' : e.message}); will try again when it takes input`);
+      return false;
+    }
+  }
+
+  /** Follow a run until it produces result.json or the agent disappears. Safe to call again after restart. */
+  supervise(key?: any) {
+    // A turn started while this key's supervisor is still finishing — the queued nudge a run hands
+    // over as its own finish ends — must not be lost to "already supervised": the loop that is
+    // leaving was watching the previous turn. Note it, and start again once that loop is gone.
+    if (this.supervising.has(key)) { (this.resupervise ??= new Set()).add(key); return; }
+    this.supervising.add(key);
+    this.superviseLoop(key).catch((e?: any) => this.log(`${key}: supervisor crashed: ${e.stack || e.message}`)).finally(() => {
+      this.supervising.delete(key);
+      if (this.resupervise?.delete(key) && this.state.runs[key]?.status === 'running') this.supervise(key);
+    });
+  }
+
+  async superviseLoop(key?: any) {
+    const run = this.state.runs[key];
+    const rule = this.cfg.rules.find((r?: any) => r.name === run.rule) || this.cfg.defaults;
+    const name = run.agentName;
+    while (run.status === 'running') {
+      // A brief herdr would not take at pickup is owed to the agent; give it the moment it will.
+      if (run.pendingPrompt && await this.deliverPrompt(key, run)) run.notified.blocked = false;
+      // Bounded, not "until it settles": a result is read on every turn of this loop, so an agent
+      // that writes result.json and keeps working — the implementer the issue let merge, waiting
+      // for the reviewers' verdicts — is finalized within a minute rather than when it finally
+      // stops. Otherwise the handoff its result was meant to make would wait on the reviews it
+      // is waiting for. A `timeout` answer just comes back round.
+      const st = await this.herdr.waitAgent(name, { timeoutMs: RESULT_CHECK_MS });
+      const result = readJson(run.resultPath, null);
+      if (result) { await this.finalize(key, result, rule); return; }
+      if (st === 'gone') {
+        run.status = 'stopped'; run.finishedAt = this.clock().toISOString(); this.saveState();
+        this.log(`${key}: agent exited without a result`);
+        await this.report(key, rule, rule.onIdle, `🛑 The agent session for ${key} ended without writing a result. Workspace \`${run.workspaceId}\` is still open for inspection.`);
+        // Stamp for the same reason finalize does, and here it matters more: a rule with turns left
+        // would otherwise read our own "the agent died" comment as the issue moving on and start
+        // the next turn immediately, burning every turn on a session that keeps dying.
+        await this.stampAnswered(key, run, rule);
+        // A nudge held for this turn still stands, and a fresh session in the same worktree can
+        // answer it — that is what a nudged turn of a stopped run does.
+        await this.deliverQueuedNudges(key);
+        return;
+      }
+      if (st === 'timeout') continue;
+      if (st === 'blocked') {
+        this.log(`${key}: blocked — waiting for approval or input in ${run.workspaceId}`);
+        if (!run.notified.blocked) {
+          run.notified.blocked = true; this.saveState();
+          const tail = await this.tail(name, 12);
+          await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is waiting for approval or input in herdr workspace \`${run.workspaceId}\`.${tail}`, 'request');
+        }
+        const next = await this.herdr.waitAgent(name, { until: ['working', 'idle', 'done'], timeoutMs: 6 * 3600e3 });
+        this.log(`${key}: unblocked → ${next}`);
+        run.notified.blocked = false;
+        continue;
+      }
+      if (st === 'idle' || st === 'done' || st === 'unknown') {
+        // Claude finished a turn without writing result.json — probably asked a question in chat.
+        this.log(`${key}: ${st} without a result — probably asking a question in ${run.workspaceId}`);
+        if (!run.notified.idle) {
+          run.notified.idle = true; this.saveState();
+          const tail = await this.tail(name, 15);
+          await this.report(key, rule, rule.onIdle, `💬 The agent for ${key} stopped without a result and is probably asking a question. Answer it in herdr workspace \`${run.workspaceId}\`.${tail}`, 'request');
+        }
+        await this.herdr.waitAgent(name, { until: ['working'], timeoutMs: 6 * 3600e3 });
+        this.log(`${key}: working again`);
+        run.notified.idle = false;
+        continue;
+      }
+      this.log(`${key}: unexpected wait result ${st}; retrying in 30s`);
+      await sleep(30_000);
+    }
+  }
+
+  async tail(name?: any, lines?: any) {
+    try {
+      const text = (await this.herdr.readAgent(name, lines + 20)).trim().split('\n').filter((l?: any) => l.trim()).slice(-lines).join('\n');
+      return text ? `\n\n\`\`\`\n${text}\n\`\`\`` : '';
+    } catch { return ''; }
+  }
+
+  async finalize(key?: any, result?: any, rule?: any) {
+    const run = this.state.runs[key];
+    run.status = 'done'; run.result = result; run.finishedAt = this.clock().toISOString(); this.saveState();
+    // keep a copy in the watcher's checkout; the worktree may be removed later
+    // `result.json` and `brief.md` are always the latest pass; a rule that chimes in more than once
+    // also keeps each pass under its own name, so the record of what it said when survives.
+    try {
+      fs.mkdirSync(run.archiveDir, { recursive: true });
+      for (const f of ['result.json', 'brief.md']) {
+        const src = path.join(run.dir, f);
+        if (!fs.existsSync(src)) continue;
+        fs.copyFileSync(src, path.join(run.archiveDir, f));
+        if ((run.pass || 1) > 1) fs.copyFileSync(src, path.join(run.archiveDir, f.replace(/\.(\w+)$/, `.pass${run.pass}.$1`)));
+      }
+    } catch { /* best effort */ }
+    const status = result.status || 'unknown';
+    const icon = status === 'pr_open' ? '✅' : status === 'needs_human' ? '🙋' : status === 'nothing_to_do' ? '🤷' : '❌';
+    const lines = [`${icon} **weawr** finished ${run.issueKey || key}${run.role ? ` as \`${run.role}\`` : ''} with status \`${status}\`.`];
+    if (result.prUrl) lines.push(`\nPR: ${result.prUrl}`);
+    if (result.branch) lines.push(`Branch: \`${result.branch}\``);
+    if (result.summary) lines.push(`\n${result.summary}`);
+    if (result.testing) lines.push(`\n**How to test**\n${result.testing}`);
+    if (result.notes) lines.push(`\n**Notes**\n${result.notes}`);
+    // A merged PR is what says the run is over; until then the workspace and the worktree stay up
+    // for whoever reviews it. A prUrl that is not a pull request URL is not followed — the agent
+    // wrote it, and the watcher will not sit waiting for a merge that can never be seen.
+    // A turn spent answering a reviewer ends with the PR it already had, so a result that leaves
+    // the URL out keeps the watch the previous turn started.
+    const prUrl = parsePrUrl(result.prUrl) ? result.prUrl : parsePrUrl(run.prUrl) ? run.prUrl : null;
+    const watch = status === 'pr_open' && watchesMerge(rule) && prUrl ? prUrl : null;
+    lines.push(watch
+      ? `\n_herdr workspace \`${run.workspaceId}\` and the run's worktree stay up until ${watch} is merged._`
+      : `\n_herdr workspace \`${run.workspaceId}\` is still open._`);
+    // What the agent asked of the other roles, and what will happen to each ask. Decided here, and
+    // said in this comment, so the issue records the handoff next to the report that made it; the
+    // turns themselves start after the comment is up, so their pickup comments follow it.
+    const relay = this.planNudges(key, run, rule, result);
+    if (relay.lines.length) lines.push('', ...relay.lines);
+    this.log(`${key}: done (${status}) ${result.prUrl || ''}`);
+    await this.report(key, rule, rule.onDone, lines.join('\n'), 'done');
+    await this.carryOutNudges(key, run, rule, relay);
+    if (this.tracker && rule.onDone.state && status === 'pr_open') {
+      try { await this.tracker.setState({ ...readJson(path.join(run.archiveDir, 'issue.json'), {}), id: run.issueId }, rule.onDone.state); }
+      catch (e: any) { this.log(`${key}: onDone state failed: ${e.message}`); }
+    }
+    if (rule.onDone.closeWorkspace && run.workspaceId) { try { await this.herdr.closeWorkspace(run.workspaceId); } catch { /* ignore */ } }
+    if (watch) {
+      run.prUrl = watch; run.status = 'awaiting_merge'; this.saveState();
+      this.log(`${key}: waiting for ${watch} to be merged before shutting the run down`);
+    }
+    await this.stampAnswered(key, run, rule);
+    // Nudges that arrived while this turn was running were held for it. It is over: hand them over.
+    await this.deliverQueuedNudges(key);
+  }
+
+  /**
+   * What the run is called when it says who it is nudging, and what the brief says about nudging:
+   * every role the project runs, and how many nudges this issue has left.
+   */
+  nudging(issueKey: string): { roles: string[]; left: number; max: number } {
+    const roles = [...new Set(this.cfg.rules.filter((r?: any) => r.enabled !== false && r.role).map((r?: any) => r.role))];
+    return { roles, left: nudgesLeft(this.state.nudges[issueKey], this.cfg.maxNudges), max: this.cfg.maxNudges };
+  }
+
+  /**
+   * Decide what happens to each nudge a result asked for, without doing any of it yet. Returns
+   * { lines, turns, queued }: the lines for the finish comment, the nudged turns to start, and the
+   * nudges to hold for a run that is busy. Every decision is written into state.nudges as it is
+   * made, because the cap is counted from there and a decision is a decision whether or not the
+   * herdr call after it works.
+   */
+  planNudges(key?: any, run?: any, rule?: any, result?: any) {
+    const { nudges, rejected } = nudgesIn(result);
+    const lines = rejected.map((r?: any) => `⚠️ Nudge ignored: ${r}.`);
+    const plan: { lines: string[]; turns: any[]; queued: any[]; capped: any } = { lines, turns: [], queued: [], capped: null };
+    if (!nudges.length) return plan;
+    const issueKey = run.issueKey || issueKeyOf(key);
+    const from = run.role || null;
+    const entries = (this.state.nudges[issueKey] ??= []);
+    for (const nudge of nudges) {
+      const targetKey = runKeyFor(issueKey, nudge.role);
+      const targetRun = this.state.runs[targetKey] || null;
+      // A target is busy when its status says so, and also when its status says done but it is
+      // spoken for: its supervisor is still writing up its finish, or another nudge — the other
+      // reviewer's, planned a moment ago — has already promised it a turn that has not started.
+      // Either way a second turn started now would land on top of the first and replace it, so
+      // the ask is held and coalesced into the turn after. The promise is made here, at planning
+      // time, because the comments between planning and starting take seconds.
+      const busy = this.supervising.has(targetKey) || this.reserved.has(targetKey);
+      const { outcome, reason, capped } = planNudge({ nudge, from, targetRun, sent: nudgesSent(entries), max: this.cfg.maxNudges, busy });
+      entries.push({ from, to: nudge.role, at: this.clock().toISOString(), outcome, message: nudge.message.slice(0, 200) });
+      const icon = outcome === 'refused' ? '🙋' : '👉';
+      lines.push(`${icon} **Nudge → \`${nudge.role}\`** — ${reason}.\n> ${nudge.message.replace(/\r?\n/g, '\n> ')}`);
+      this.log(`${key}: nudge → ${targetKey}: ${outcome} (${reason.replace(/`/g, '')})`);
+      const held = { from: from || rule.name, message: nudge.message, at: this.clock().toISOString() };
+      if (outcome === 'turn') { this.reserved.add(targetKey); plan.turns.push({ targetKey, nudge: held }); }
+      else if (outcome === 'queue') plan.queued.push({ targetKey, nudge: held });
+      else if (capped && !plan.capped) plan.capped = { to: nudge.role, nudge: held, reason };
+    }
+    this.saveState();
+    return plan;
+  }
+
+  /**
+   * Do what planNudges decided: hold the nudges for busy runs, start the turns, and if the cap
+   * ended the conversation, say so where a person will hear it — the finish comment already says
+   * it, but that is one comment among several, and this is the moment somebody is needed.
+   */
+  async carryOutNudges(key?: any, run?: any, rule?: any, plan?: any) {
+    for (const { targetKey, nudge } of plan.queued) {
+      const target = this.state.runs[targetKey];
+      if (!target) continue;
+      (target.queuedNudges ??= []).push(nudge); this.saveState();
+      // The turn it was waiting on may have ended between the decision and now, in which case
+      // nobody else is going to hand this over.
+      if (!this.supervising.has(targetKey)) await this.deliverQueuedNudges(targetKey);
+    }
+    for (const { targetKey, nudge } of plan.turns) await this.startNudgedTurn(targetKey, [nudge], key);
+    if (plan.capped) {
+      const issueKey = run.issueKey || issueKeyOf(key);
+      await this.report(key, rule, rule.onBlocked, `🙋 The agents on ${issueKey} have nudged each other ${this.cfg.maxNudges} times, which is the limit (\`maxNudges\`), and \`${run.role || rule.name}\` still needs \`${plan.capped.to}\` to act. A person needs to step in: read the reports on the issue and answer in the workspace of whichever agent should go next, or raise \`maxNudges\` in \`.weawr/config.local.json\` to let them carry on.`, 'request');
+    }
+  }
+
+  /**
+   * Another turn of `targetKey`, asked for by another role. The same pickup as any later turn —
+   * same run key, claim, worktree and (when it is still up) session; the previous result is set
+   * aside and the brief carries the nudge. `askedBy` is the run that asked, for the log.
+   *
+   * A failure here is reported and swallowed: the nudging run is already over, and the fact that
+   * its ask could not be delivered is what the owner needs to hear, not a crashed supervisor.
+   */
+  async startNudgedTurn(targetKey?: any, nudges?: any, askedBy?: any) {
+    const target = this.state.runs[targetKey];
+    if (!target) { this.reserved.delete(targetKey); return false; }
+    // Last look before the turn starts: another handoff may have started one since this was
+    // planned (a start sets the status before it does anything else). Then this ask joins the
+    // queue and rides the turn after, rather than landing on top of a turn in progress.
+    if (target.status === 'running' || target.status === 'starting') {
+      (target.queuedNudges ??= []).push(...nudges); this.saveState();
+      this.log(`${targetKey}: nudged by ${askedBy} while a turn is in progress; held for its next turn`);
+      return false;
+    }
+    try { return await this.startNudgedTurnNow(targetKey, target, nudges, askedBy); }
+    finally { this.reserved.delete(targetKey); }
+  }
+
+  async startNudgedTurnNow(targetKey?: any, target?: any, nudges?: any, askedBy?: any) {
+    const rule = this.cfg.rules.find((r?: any) => r.name === target.rule);
+    const issueKey = target.issueKey || issueKeyOf(targetKey);
+    let why = null;
+    if (!rule) why = `its rule "${target.rule}" is no longer in the config`;
+    else if (rule.enabled === false) why = `its rule "${rule.name}" is disabled${rule.disabledReason ? ` (${rule.disabledReason})` : ''}`;
+    let issue = null;
+    if (!why) {
+      // The issue as it is now, so the brief quotes the reports that led here. The archived copies
+      // are the fallback for a tracker that is not answering, and the only copies in smoke mode:
+      // the target's own, else the nudging run's — it is the same issue.
+      if (this.tracker) { try { issue = await this.tracker.issueByKey(issueKey); } catch (e: any) { this.log(`${targetKey}: could not re-read ${issueKey} for the nudged turn (${e.message}); using the archived copy`); } }
+      for (const dir of [target.archiveDir, this.state.runs[askedBy]?.archiveDir]) issue ||= dir ? readJson(path.join(dir, 'issue.json'), null) : null;
+      if (!issue) why = 'the issue could not be read';
+    }
+    if (why) {
+      this.log(`${targetKey}: nudged by ${askedBy}, but no turn can start: ${why}`);
+      if (this.tracker) { try { await this.tracker.comment(target.issueId, `⚠️ \`${target.role || target.rule}\` was nudged but cannot take a turn: ${why}.`); } catch { /* ignore */ } }
+      return false;
+    }
+    try {
+      await this.pickUp(issue, rule, { pass: (target.pass || 1) + 1, holdsClaim: Boolean(target.claimed), nudges });
+      return true;
+    } catch (e: any) {
+      this.log(`${targetKey}: the nudged turn could not start: ${e.message}`);
+      return false;
+    }
+  }
+
+  /** Give a run that has just finished the nudges that were held while it was busy. */
+  async deliverQueuedNudges(key?: any) {
+    const run = this.state.runs[key];
+    const held = run?.queuedNudges;
+    if (!held?.length) return;
+    // A turn in progress keeps them: they are delivered when it finishes, never over the top of it.
+    // So does a turn promised but not started — it will pick them up as it starts (see pickUp).
+    if (run.status === 'running' || run.status === 'starting' || this.reserved.has(key)) return;
+    run.queuedNudges = []; this.saveState();
+    this.reserved.add(key);
+    await this.startNudgedTurn(key, held, held.map((n?: any) => n.from).join(', '));
+  }
+
+  /**
+   * The other half of a run. The agent stopped when the PR was open; the workspace and the worktree
+   * are still there because a reviewer may want them. When GitHub says the PR is merged, they are
+   * not needed any more, so the agent is asked to exit, the workspace closes and the worktree goes
+   * back — the part of a run nobody should have to write into their instructions.
+   *
+   * A PR closed without merging is a person's decision about work in progress, so nothing is torn
+   * down: the run simply stops being watched.
+   */
+  async checkMerges() {
+    for (const [key, run] of Object.entries(this.state.runs)) {
+      if (run.status !== 'awaiting_merge' || !run.prUrl) continue;
+      if (run.prCheckedAt && this.clock().getTime() - Date.parse(run.prCheckedAt) < PR_POLL_MS) continue;
+      const rule: any = this.cfg.rules.find((r?: any) => r.name === run.rule) || { ...this.cfg.defaults, repo: this.paths.repo };
+      let pr = null;
+      try { pr = await this.askPr(run.prUrl); }
+      catch (e: any) { this.warnOnce(`pr:${key}:${e.message}`, `${key}: cannot read ${run.prUrl}, so a merge cannot be seen: ${e.message}`); }
+      run.prCheckedAt = this.clock().toISOString(); this.saveState();
+      if (!pr) continue;
+      if (pr.state === 'open') { await this.keepMergeable(key, run, rule, pr); continue; }
+      if (pr.state === 'closed') {
+        run.status = 'done'; run.finishedAt ||= this.clock().toISOString(); this.saveState();
+        this.log(`${key}: ${run.prUrl} was closed without merging; leaving workspace ${run.workspaceId} and the worktree alone`);
+        continue;
+      }
+      run.mergedAt = pr.mergedAt || this.clock().toISOString();
+      this.log(`${key}: ${run.prUrl} is merged`);
+      // That merge is a commit on the base branch that this checkout does not have. Runs are cut
+      // from the tip either way, but the directory you and the "none"/"herdr" modes work in is not.
+      this.freshenCheckout(key);
+      const did = await this.shutdown(key, run, rule);
+      run.status = 'merged'; run.finishedAt = this.clock().toISOString(); this.saveState();
+      // The notification only carries the first line, and with nothing switched on the thing you
+      // need from it is what is still standing — so that goes first and the URL follows.
+      const lines = did.length
+        ? [`🎉 ${key} is finished — ${run.prUrl} is merged, so the run was shut down.`, '', ...did.map((d?: any) => `- ${d}`)]
+        : [`🎉 ${key} is finished — its PR is merged. ${this.leftStanding(run, rule)}`, '', run.prUrl];
+      await this.report(key, rule, rule.onMerged, lines.join('\n'), 'done');
+      await this.stampAnswered(key, run, rule);
+    }
+  }
+
+  /**
+   * An open pull request that has drifted into conflicts is one nobody can merge, and the person
+   * it is waiting on is the one least placed to fix it. The implementer's brief makes the PR its
+   * own to keep mergeable until it is merged or closed; this is the half of that it cannot do
+   * itself — noticing. The watcher is already asking GitHub about the PR once a minute, so when
+   * the answer says "dirty" the implementer's session, still up in its pane, is typed the one
+   * message that sends it back to work. Once per conflict, not once a minute; a session that has
+   * gone — exited by hand, or `onDone.closeWorkspace` — has nobody to tell, so the person is told
+   * instead, through the same channels as a blocked agent. The decisions are in src/pr.mjs; this
+   * is the wiring to herdr, the tracker and state.json.
+   */
+  async keepMergeable(key?: any, run?: any, rule?: any, pr?: any) {
+    const base = pr.baseRef || 'the base branch';
+    const did = await keepMergeable(run, pr, {
+      log: (m?: any) => this.log(`${key}: ${m}`),
+      lookupAgent: () => (run.agentName ? this.herdr.agentGet(run.agentName) : null),
+      nudge: () => this.herdr.prompt(run.agentName, conflictPrompt({ prUrl: run.prUrl, branch: run.branch, baseRef: pr.baseRef, briefPath: run.dir ? path.join(run.dir, 'brief.md') : null })),
+      tellPerson: () => this.report(key, rule, rule.onBlocked, `⚠️ ${run.prUrl} conflicts with \`${base}\` and the implementer's session for ${key} has ended, so nobody is there to bring the branch up to date. Merge \`${base}\` into \`${run.branch || 'the branch'}\` by hand, or open a new session on it.`, 'request'),
+    });
+    if (did && did !== 'retry') this.saveState();
+  }
+
+  /**
+   * Shut a merged run down — only as far as `onMerged` was asked to, which by default is not at all.
+   * When every step is switched on the order is the only one that works: the agent exits first (it
+   * is a process with its own idea of how to stop), then its workspace closes, and only then does
+   * the worktree go, a directory nothing is standing in any more.
+   *
+   * Every step reports rather than throws. A merge has already happened; refusing to do the rest of
+   * the cleanup because herdr was restarted, or because the worktree has scratch files in it, would
+   * be the wrong trade.
+   */
+  async shutdown(key?: any, run?: any, rule?: any) {
+    const policy = rule.onMerged || {};
+    const did = [];
+    if (policy.exitAgent && run.agentName) {
+      const how = await this.herdr.stopAgent(run.agentName, { exitCommand: exitCommandFor(rule.agentKind) });
+      this.log(`${key}: agent ${run.agentName} ${how}`);
+      did.push(`Agent \`${run.agentName}\` ${how}.`);
+    }
+    if (policy.closeWorkspace && run.workspaceId) {
+      try { await this.herdr.closeWorkspace(run.workspaceId); this.log(`${key}: workspace ${run.workspaceId} closed`); did.push(`herdr workspace \`${run.workspaceId}\` closed.`); }
+      catch (e: any) { this.log(`${key}: could not close workspace ${run.workspaceId}: ${e.message}`); did.push(`herdr workspace \`${run.workspaceId}\` is still open (${e.message}).`); }
+    }
+    if (policy.removeWorktree && run.worktree !== 'none') {
+      const at = run.worktreePath || run.workDir;
+      const r = removeWorktree({ git: this.git, repo: rule.repo, at });
+      const where = at ? path.relative(rule.repo, at) || at : '(none)';
+      this.log(`${key}: worktree ${where}: ${r.removed ? 'removed' : `kept — ${r.reason}`}`);
+      did.push(r.removed ? `Worktree \`${where}\` removed.` : `Worktree \`${where}\` kept: ${r.reason}.`);
+    }
+    return did;
+  }
+
+  /**
+   * What a finished run still has open. This is the first line of the merge report, so it is also
+   * the whole herdr notification (120 characters of it) — hence the worktree's directory name
+   * rather than its path: it is what the herdr sidebar shows you anyway.
+   */
+  leftStanding(run?: any, rule?: any) {
+    const bits = [];
+    if (run.workspaceId) bits.push(`workspace \`${run.workspaceId}\``);
+    const at = run.worktree !== 'none' && rule ? run.worktreePath || run.workDir : null;
+    if (at && path.resolve(at) !== path.resolve(rule.repo)) bits.push(`worktree \`${path.basename(at)}\``);
+    return bits.length ? `Its ${bits.join(' and ')} ${bits.length > 1 ? 'are' : 'is'} still open.` : 'Nothing was left open.';
+  }
+
+  /**
+   * Ask GitHub about a run's pull request. The GitHub tracker's own token when that is the tracker,
+   * otherwise whatever this machine has for GitHub (GITHUB_TOKEN, a saved login, `gh auth token`),
+   * because a Linear issue's fix is a GitHub PR too. Resolved once, on the first PR to be watched.
+   */
+  async askPr(url?: any) {
+    if (!this.pr) {
+      const options = { ...(this.cfg.trackerSpec.type === 'github' ? this.cfg.trackerSpec : {}), cwd: this.paths.repo };
+      const token = this.tracker instanceof GitHubTracker
+        ? this.tracker.token
+        : resolveCredential(GitHubTracker, { options })?.credential?.token || null;
+      this.pr = { host: GitHubTracker.host(options), token };
+      this.log(`  pull requests: ${this.pr.host}${token ? '' : ' (no GitHub token on this machine; only public repositories will answer)'}`);
+    }
+    return prState(url, this.pr);
+  }
+
+  /**
+   * Record the issue's own clock as it stands *after* we have finished writing to it.
+   *
+   * This is what stops a role with passes left from answering itself. Its closing comment bumps
+   * the issue's updatedAt, and "the issue moved on since we finished" is exactly the test that
+   * earns the next pass — so without this a reviewer would review its own review, for ever. Only
+   * worth the extra fetch when another pass is actually possible.
+   */
+  async stampAnswered(key?: any, run?: any, rule?: any) {
+    if (!this.tracker || passLimit(rule) <= 1) return;
+    try { run.issueUpdatedAt = (await this.tracker.issueByKey(run.issueKey || issueKeyOf(key)))?.updatedAt || null; this.saveState(); }
+    catch { /* finishedAt is the fallback, and it is already later than everything we wrote */ }
+  }
+
+  async report(key?: any, rule?: any, policy?: any, body?: any, sound = 'none') {
+    const run = this.state.runs[key];
+    if (policy?.comment && this.tracker) { try { await this.tracker.comment(run.issueId, body); } catch (e: any) { this.log(`${key}: comment failed: ${e.message}`); } }
+    if (policy?.notify) await this.herdr.notify(`weawr ${key}`, body.split('\n')[0].replace(/[*`]/g, '').slice(0, 120), { sound });
+  }
+
+  /** After a restart, re-attach to runs that were in flight. */
+  async resume() {
+    for (const [key, run] of Object.entries(this.state.runs)) {
+      // A nudge held for a run that finished while the watcher was down is still owed.
+      if (run.queuedNudges?.length && run.status !== 'running' && run.status !== 'starting') { await this.deliverQueuedNudges(key); continue; }
+      if (run.status !== 'running' && run.status !== 'starting') continue;
+      const rule = this.cfg.rules.find((r?: any) => r.name === run.rule) || this.cfg.defaults;
+      const result = run.resultPath ? readJson(run.resultPath, null) : null;
+      if (result) { await this.finalize(key, result, rule); continue; }
+      let agent;
+      try { agent = await this.herdr.agentGet(run.agentName); }
+      catch (e: any) { this.log(`${key}: could not check agent ${run.agentName}, leaving the run as ${run.status}: ${e.message}`); continue; }
+      if (!agent) {
+        const was = run.status;
+        if (was === 'starting') {
+          // Died mid-start. Treat it like a failed start: hand the claim back so the issue can be
+          // taken again. A start that never even got a workspace left nothing behind, so forget it
+          // outright and let the next poll try again.
+          await this.releaseClaim(key, run);
+          if (!run.workspaceId) { delete this.state.runs[key]; this.saveState(); this.log(`${key}: was starting before restart and never got a workspace; forgetting it`); continue; }
+          run.status = 'failed'; run.error ??= 'the watcher stopped before the session was up';
+        } else {
+          run.status = 'stopped';
+        }
+        run.finishedAt = this.clock().toISOString(); this.saveState();
+        this.log(`${key}: was ${was} before restart, agent is gone → ${run.status}`);
+        // A nudge held for the turn that died is still owed, and with the default one pass no
+        // poll will ever revive this run to answer it. A fresh session in the same worktree does.
+        if (run.status === 'stopped') await this.deliverQueuedNudges(key);
+        continue;
+      }
+      run.status = 'running'; this.saveState();
+      this.log(`${key}: re-attached to agent ${run.agentName}`);
+      this.supervise(key);
+    }
+  }
+
+  /**
+   * Tell the console this factory is alive: one small entry per repository in a per-user file,
+   * stamped every poll. `weawr console` lists the entries and marks one stale when its last
+   * poll is older than a few of its intervals. Best effort; never fails a poll.
+   */
+  register(extra: Partial<Registration> = {}) {
+    if (!this.registration) return;
+    const now = this.clock().toISOString();
+    this.lastRegistration = {
+      factoryId: this.ids.factoryId, repo: this.paths.repo, name: this.cfg.name, tracker: this.cfg.Tracker.id, version: this.version,
+      hostId: this.ids.hostId, pid: process.pid, pollSeconds: this.cfg.pollSeconds, workspaceId: process.env.HERDR_WORKSPACE_ID || null,
+      logPath: this.paths.logPath, socketPath: this.registration.socketPath ?? null, statePath: this.paths.statePath,
+      lastPoll: now, lastSuccessfulPoll: this.lastRegistration?.lastSuccessfulPoll ?? null, lastPollError: this.lastRegistration?.lastPollError ?? null,
+      ...extra,
+    };
+    writeRegistration(this.registration.dir, this.lastRegistration);
+    this.registration.ownership?.heartbeat();
+  }
+  lastRegistration: Registration | null = null;
+
+  /** Rename the herdr workspace this watcher runs in to "<name>Watch" so it is easy to find in the sidebar. */
+  async labelOwnWorkspace() {
+    const id = process.env.HERDR_WORKSPACE_ID;
+    if (!id) return;
+    const label = watchLabel(this.cfg.name);
+    try { await this.herdr.renameWorkspace(id, label); this.log(`  workspace ${id} labelled "${label}"`); }
+    catch (e: any) { this.log(`  could not label workspace ${id} "${label}": ${e.message}`); }
+  }
+
+  /**
+   * Re-read .weawr/config.json (and the instructions files it names) if any of them changed
+   * on disk since the config was last loaded. A config that fails to parse is reported and ignored:
+   * the watcher keeps running on the last good one until the file is fixed. Runs already in flight
+   * keep their rule by name; a rule that was removed falls back to the defaults for its reports.
+   */
+  reloadConfigIfChanged() {
+    const stamp = configStamp(this.sources, this.cfg);
+    if (stamp === this.cfg.stamp) return false;
+    let next;
+    try { next = loadConfig(this.sources); }
+    catch (e: any) {
+      this.cfg.stamp = stamp; // do not re-report the same broken file every poll
+      this.log(`config changed but could not be loaded, keeping the previous one: ${e.message}`);
+      return false;
+    }
+    const before = this.cfg;
+    this.cfg = next;
+    this.warned = new Set(); // rules changed, so "matches but is skipped" notes may no longer apply
+    this.log(`config reloaded: watching ${next.rules.filter((r?: any) => r.enabled !== false).length} rule(s) every ${next.pollSeconds}s`);
+    this.logRules();
+    if (next.name !== before.name) this.labelOwnWorkspace().catch(() => {});
+    return true;
+  }
+
+  logRules() {
+    for (const r of this.cfg.rules) {
+      const off = r.enabled === false ? ` (disabled${r.disabledReason ? `: ${r.disabledReason}` : ''})` : '';
+      const runs = describeAgent(r);
+      this.log(`  rule ${r.name}${r.role ? ` [${r.role}]` : ''}${off}: ${r.match}  →  ${r.repo}${runs === 'claude' ? '' : `  (${runs})`}`);
+    }
+    const roles = [...new Set(this.cfg.rules.filter((r?: any) => r.enabled !== false && r.role).map((r?: any) => r.role))];
+    this.log(`  guards: claim label ${this.cfg.defaults.claimLabel || 'off'}${roles.length ? ` scoped to role(s) ${roles.join(', ')}` : ''}, skip issues assigned to others: ${this.cfg.defaults.skipIfAssignedToOthers ? 'on' : 'off'}; caps: ${this.cfg.maxConcurrent} total`);
+    if (this.cfg.localOverrides.length) this.log(`  overrides from ${path.basename(this.paths.localConfigPath)}: ${this.cfg.localOverrides.join(', ')}`);
+  }
+
+  async loop() {
+    this.log(`weawr ${this.version} in ${this.paths.repo}: watching ${this.cfg.rules.filter((r?: any) => r.enabled !== false).length} rule(s) every ${this.cfg.pollSeconds}s`);
+    this.logRules();
+    const who = await this.tracker.me().then(userDisplay).catch((e?: any) => `NOT REACHABLE (${e.message.slice(0, 80)})`);
+    this.log(`  ${trackerBanner(this.tracker)}: ${who} (token from ${this.tracker.source || '?'}) · herdr: ${await this.herdr.serverRunning() ? 'connected' : 'NOT RUNNING'}`);
+    await this.labelOwnWorkspace();
+    await this.resume();
+    this.register();
+    let nextUpdateCheck = this.clock().getTime() + 24 * 3600e3; // startup already checked
+    let polls = 0;
+    for (;;) {
+      polls++;
+      let summary;
+      try {
+        this.reloadConfigIfChanged();
+        const r = await this.pollOnce();
+        this.register({ lastSuccessfulPoll: this.clock().toISOString(), lastPollError: null });
+        if (r.picked.length) this.log(`poll #${polls}: ${r.scanned} open issues, ${r.candidates} matched, picked ${r.picked.join(', ')}`);
+        const running = await this.runningSummary();
+        summary = `${hms(this.clock())} poll #${polls} · ${r.scanned} open · ${r.candidates} matched · ${r.picked.length} picked${r.waiting.length ? ` · ${r.waiting.length} waiting for a slot` : ''} · running ${running.length}${running.length ? `: ${running.join(' · ')}` : ''}${this.awaitingMerge() ? ` · ${this.awaitingMerge()} awaiting merge${this.inConflict() ? ` (${this.inConflict()} in conflict)` : ''}` : ''} · next in ${this.cfg.pollSeconds}s${this.tracker.budget?.() ? ` · ${this.tracker.budget()}` : ''}`;
+      } catch (e: any) {
+        this.warnOnce(`poll:${e.message}`, `poll #${polls} failed: ${e.message} (further identical failures show only in the live line)`);
+        this.register({ lastPollError: String(e.message).slice(0, 200) });
+        summary = `${hms(this.clock())} poll #${polls} FAILED (${e.message.slice(0, 60)}) · retry in ${this.cfg.pollSeconds}s`;
+      }
+      this.hooks.live?.(summary);
+      if (this.clock().getTime() >= nextUpdateCheck) { nextUpdateCheck = this.clock().getTime() + 24 * 3600e3; await this.hooks.updateReminder?.(); }
+      await sleep(this.cfg.pollSeconds * 1000);
+    }
+  }
+}
+
+function prio(issue?: any) { return issue.priority === 0 ? 5 : issue.priority; }
+
+/**
+ * Is the agent herdr found under this run's name the session for *this* run? Agent names are made
+ * from the run key, so two repositories watched on the same machine can both want "gh-20", and
+ * adopting the other one's would brief an agent working in someone else's checkout. It is ours
+ * when it sits inside this repository, or when it is in the workspace the previous attempt made.
+ * (A different role on the same issue is a different run key, so it is never a candidate here.)
+ */
+function isOurAgent(agent?: any, repo?: any, previous?: any) {
+  const cwd = agent?.foreground_cwd || agent?.cwd;
+  const root = path.resolve(repo);
+  if (cwd && (path.resolve(cwd) === root || path.resolve(cwd).startsWith(root + path.sep))) return true;
+  return !!(previous?.workspaceId && previous.workspaceId === agent?.workspace_id);
+}
+

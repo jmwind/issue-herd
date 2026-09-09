@@ -134,7 +134,8 @@ test('a role reaches the herdr sidebar, the agent name and the run key', (t) => 
   // the sidebar label is "<issue key> <role> <title>"
   assert.match(herdr.calls(), new RegExp(`workspace create .*--label ${key.replace('@review', '')} review weawr smoke test`));
   // the agent is named for the run key, so the two roles on an issue are two agents
-  assert.match(herdr.calls(), new RegExp(`agent start ${key.replace('@', '-').toLowerCase()} --kind claude`));
+  // …with the factory's short hash on the end, so two repositories can both run SMOKE-1@review
+  assert.match(herdr.calls(), new RegExp(`agent start ${key.replace('@', '-').toLowerCase()}-[a-z0-9]{6} --kind claude`));
   // and the rule's model reaches the agent's own command line
   assert.match(herdr.calls(), /--model opus/);
 });
