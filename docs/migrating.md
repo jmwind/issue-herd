@@ -5,8 +5,8 @@
 weawr is issue-herd renamed ([#71](https://github.com/jmwind/weawr/issues/71)). The config shape,
 the state files, the rule language and the tracker labels are what they were; what changed is the
 name, and with it every path, variable and file that carried the name. This page is the whole list
-and the order to do it in. It assumes one person, one machine, and a factory that may have runs in
-flight.
+and the order to do it in. It assumes one person and one machine, and it asks for a factory with
+**nothing in flight** before anything moves — step 1 says why, and it is the one hard rule.
 
 ## What changed name
 
@@ -23,47 +23,79 @@ flight.
 | the update check, `https://raw.githubusercontent.com/jmwind/issue-herd/main/package.json` | `…/jmwind/weawr/main/package.json` |
 
 Unchanged: everything named after **herdr** — the `herdr` claim label, the `herdr:<role>` labels,
-the workspaces and agent names; the `ready-for-review` label; the branch names and pull requests of
-runs in flight; `.env` / `.env.local` and `GITHUB_TOKEN` / `LINEAR_API_KEY`; the version number.
+the workspaces and agent names; the `ready-for-review` label; branch names and pull requests;
+`.env` / `.env.local` and `GITHUB_TOKEN` / `LINEAR_API_KEY`; the version number; and the path of
+the checkout itself, which this migration does not move.
 
 ## The order
 
-1. **Let what is running finish, or be ready to finish it by hand.** Runs in flight keep working
-   through the move (their worktrees and result files are recorded by absolute path in `state.json`),
-   but the watcher has to come down to be restarted under the new name, and it is simpler with
-   nothing to supervise. Then stop the watcher: in herdr, close the pane that runs `issue-herd`.
-   Stop `issue-herd console` if it is up.
+1. **Finish every run first.** A run records where its things are as absolute paths — its
+   worktree, its run directory, its `result.json`, its brief — and step 4 moves the directories
+   those paths point into. When the watcher starts again it reads each live run's result at the
+   recorded path; a path that no longer exists reads as "no result yet", and a live run whose
+   agent is gone is then marked `stopped` with its real result never consumed. (Reproduced twice
+   while reviewing the rename: once by moving `state/`, once by moving the checkout.) So before
+   anything moves,
+
+   ```bash
+   issue-herd status
+   ```
+
+   must show no run in `starting`, `running` or `awaiting_merge`. `done`, `merged`, `failed` and
+   `stopped` are finished: nothing reads their paths again, and they stay in `state.json` as the
+   console's history. For a run that is still live, either let it finish and its PR merge, or open
+   its workspace and finish it by hand, or, when it is not worth keeping, exit the agent, close the
+   workspace and `issue-herd reset <KEY>`. Reset forgets the state entry and nothing else; it does
+   not touch the worktree.
+
+   Then remove the old worktrees yourself. The watcher removes one on merge only when the rule's
+   `onMerged.removeWorktree` is on, and it is off by default, so they are normally all still there:
+
+   ```bash
+   git worktree list                                  # every checkout under .issue-herd/worktrees/
+   git worktree remove .issue-herd/worktrees/<slug>   # one at a time; --force drops uncommitted work
+   ```
+
+   `git worktree remove` refuses a checkout with uncommitted changes, which is the point: commit or
+   move aside what you want to keep, then remove. The branches stay; only the checkouts go. Last,
+   stop the watcher (close its herdr pane) and stop `issue-herd console` if it is up.
 
 2. **Rename the repository on GitHub.** Settings → General → Repository name → `weawr`. GitHub
    redirects the old URL for clones, issues and pull requests, so nothing already linked breaks.
    Do this before the first release under the new name: the update check and `weawr update` read
    `jmwind/weawr`, and until that exists they get a 404, which looks to them like "nothing newer".
 
-3. **Point the clone at the new name.** In the repository (worktrees share the remote):
+3. **Point the clone at the new name**, and leave it where it is:
 
    ```bash
    git remote set-url origin git@github.com:jmwind/weawr.git
    ```
 
-   Renaming the directory (`mv ~/Code/issue-herd ~/Code/weawr`) is optional. If you do, run
-   `git worktree repair` from the new location afterwards, because git registers worktrees by
-   absolute path and the old ones under `.issue-herd/worktrees/` would be lost track of.
+   Renaming the checkout directory (`~/Code/issue-herd` → `~/Code/weawr`) is not part of this
+   migration. The console's registry (`factories.json`) and its marked-done notes (`console.json`)
+   are keyed by the checkout's path, so a moved checkout is a new factory with no history to the
+   console, and every worktree git knows is registered by absolute path. If you want the directory
+   renamed anyway, do it as a separate job later under the same rule as step 1 — nothing in
+   flight, watcher and console down — then `git worktree repair` from the new location, and expect
+   the console to list it as a new factory.
 
 4. **Merge the rename and pull it.** The tracked half of the config directory arrives as `.weawr/`
    (`config.json`, `instructions.md`, `.gitignore`) and git removes the tracked files from
-   `.issue-herd/`. Move the untracked half yourself:
+   `.issue-herd/`. Move the untracked half yourself — safe now, because step 1 left no run that
+   will be read again at its old path:
 
    ```bash
    mv .issue-herd/state .weawr/state
    [ -f .issue-herd/config.local.json ] && mv .issue-herd/config.local.json .weawr/
    [ -d .issue-herd/prompts ] && mv .issue-herd/prompts .weawr/
+   rmdir .issue-herd/worktrees 2>/dev/null; rmdir .issue-herd
    ```
 
-   Leave `.issue-herd/worktrees/` where it is. The runs that own those worktrees know them by
-   absolute path, and weawr removes each one when its PR merges (or `weawr reset <KEY>` does); new
-   runs go to `.weawr/worktrees/`. Until the old directory is empty it shows as untracked, because
-   the `.gitignore` that hid it moved with the config — `echo .issue-herd/ >> .git/info/exclude`
-   keeps it out of `git status` without committing anything. Delete `.issue-herd/` when it is empty.
+   The finished runs in `state.json` keep their old paths as a record; nothing follows them. New
+   runs record `.weawr/…` paths and put their worktrees in `.weawr/worktrees/`. If the last `rmdir`
+   refuses, something is still inside — a worktree step 1 missed (`git worktree list` names it) or a
+   file of yours. Until it is gone the directory shows as untracked, because the `.gitignore` that
+   hid it moved with the config; `echo .issue-herd/ >> .git/info/exclude` hides it meanwhile.
 
 5. **Reinstall the command.**
 
@@ -95,8 +127,9 @@ runs in flight; `.env` / `.env.local` and `GITHUB_TOKEN` / `LINEAR_API_KEY`; the
    herdr pane run <pane-id> "weawr"
    ```
 
-   Its first line says `weawr <version> in <repo>: watching N rule(s)`. The console is
-   `weawr console`, on the same port, with the same passcode if you moved the directory in step 6.
+   Its first line says `weawr <version> in <repo>: watching N rule(s)`, and `weawr status` shows
+   the finished runs it carried over. The console is `weawr console`, on the same port, with the
+   same passcode if you moved the directory in step 6.
 
 9. **Release.** `npm run release` once the GitHub rename is done, so that the version the update
    check finds is one that exists.
@@ -108,5 +141,9 @@ runs in flight; `.env` / `.env.local` and `GITHUB_TOKEN` / `LINEAR_API_KEY`; the
 - `no GitHub credentials` — step 6 was skipped; run `weawr login github`.
 - The console lists no factory — the registry is stamped by the watcher every poll; start the
   watcher (step 8) and it appears on the first one.
-- An old worktree under `.issue-herd/worktrees/` that nothing removes — its run is gone from
-  `state.json`; `git worktree remove <path>` takes it out.
+- A run that came back `stopped` on the restart although its PR is open — it was live when
+  step 4 ran, and its result sat at a path that moved. The PR and the issue's claim are untouched;
+  finish it by hand (merge the PR, `weawr reset <KEY>` to forget the run).
+- A worktree left under `.issue-herd/worktrees/` — nothing removes one by itself unless the rule
+  had `onMerged.removeWorktree` on; `git worktree remove <path>` (with `--force` to drop
+  uncommitted work) takes it out, and `git worktree prune` forgets one already deleted by hand.
