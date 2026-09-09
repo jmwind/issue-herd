@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
 const dist = path.join(here, 'dist');
-fs.rmSync(dist, { recursive: true, force: true });
+fs.rmSync(dist, { recursive: true, force: true, maxRetries: 5 });
 fs.mkdirSync(dist, { recursive: true });
 for (const f of fs.readdirSync(path.join(here, 'src'))) { const p = path.join(here, 'src', f); if (fs.statSync(p).isDirectory()) fs.cpSync(p, path.join(dist, f), { recursive: true }); else fs.copyFileSync(p, path.join(dist, f)); }
 // The client library, as the browser build @weawr/client makes; the page has no bundler of its own.

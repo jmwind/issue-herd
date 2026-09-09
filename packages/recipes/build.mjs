@@ -5,5 +5,5 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const out = path.join(here, 'dist', 'prompts');
-fs.rmSync(out, { recursive: true, force: true });
+fs.rmSync(out, { recursive: true, force: true, maxRetries: 5 });
 fs.cpSync(path.join(here, 'prompts'), out, { recursive: true });

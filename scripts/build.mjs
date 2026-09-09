@@ -29,6 +29,13 @@ if (!fs.existsSync(path.join(root, ORDER[0], 'package.json')) && fs.existsSync(A
   process.exit(0);
 }
 
+// `npm pack --ignore-scripts` still has pacote run `prepare` on the way to the tarball. The flag
+// reaches us as configuration, so it is honoured here: pack what is built.
+if (process.env.npm_lifecycle_event === 'prepare' && process.env.npm_config_ignore_scripts === 'true') {
+  process.stdout.write('build: --ignore-scripts; packing what is built\n');
+  process.exit(0);
+}
+
 // npm's third peculiarity: it exports its own settings into the environment of everything it
 // spawns, so the `npm install` pacote runs inside the clone to prepare a git dependency inherits
 // `--global` — and `npm install -g` with no arguments installs the current directory, as a link.

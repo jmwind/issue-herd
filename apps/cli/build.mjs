@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(here, '..', '..');
 const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 const dist = path.join(here, 'dist');
-fs.rmSync(dist, { recursive: true, force: true });
+fs.rmSync(dist, { recursive: true, force: true, maxRetries: 5 });
 fs.mkdirSync(dist, { recursive: true });
 
 await build({
