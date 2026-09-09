@@ -28,6 +28,22 @@ export const PKG_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION: string = typeof __WEAWR_VERSION__ !== 'undefined' ? __WEAWR_VERSION__ : (() => { try { return JSON.parse(fs.readFileSync(path.join(PKG_DIR, '..', 'package.json'), 'utf8')).version; } catch { return '0.0.0'; } })();
 export const INSTALL_SPEC = 'github:jmwind/weawr';
 
+/**
+ * Where a runtime asset directory is. The assembled artifact keeps each next to itself; a module
+ * run straight from the compiler's output (apps/cli/build — what `pnpm dev` runs, and therefore
+ * the command its briefs tell agents to run) has none there and reads it from the source tree it
+ * was built in. The fallback is what lets `weawr merge` work from an agent's shell, which carries
+ * none of dev.mjs's environment. An environment variable still names another place outright.
+ */
+export function assetDir(name: string, fromSource: string, env: NodeJS.ProcessEnv = process.env, pkgDir: string = PKG_DIR): string {
+  const named = env[`WEAWR_${name.toUpperCase()}_ROOT`];
+  if (named) return named;
+  const beside = path.join(pkgDir, name);
+  if (fs.existsSync(beside)) return beside;
+  const inSource = path.resolve(pkgDir, '..', fromSource);
+  return fs.existsSync(inSource) ? inSource : beside;
+}
+
 export interface Context {
   ui: Ui;
   version: string;
@@ -76,11 +92,10 @@ const quote = (p: string) => (/[\s"']/.test(p) ? JSON.stringify(p) : p);
 
 export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: string }): Context {
   const paths = factoryPaths(findRepoRoot(cwd));
-  // In development (scripts/dev.mjs) the runtime assets are read from the source tree instead of
-  // from next to the artifact.
-  const promptsRoot = process.env.WEAWR_PROMPTS_ROOT || path.join(PKG_DIR, 'prompts');
-  const pluginsRoot = process.env.WEAWR_PLUGINS_ROOT || path.join(PKG_DIR, 'plugins');
-  const demosRoot = process.env.WEAWR_DEMOS_ROOT || path.join(PKG_DIR, 'demos');
+  // Next to the artifact; from the source tree when this is the compiler's output (see assetDir).
+  const promptsRoot = assetDir('prompts', path.join('..', '..', 'packages', 'recipes', 'prompts'));
+  const pluginsRoot = assetDir('plugins', 'plugins');
+  const demosRoot = assetDir('demos', 'demos');
   const sources: ConfigSources = { paths, promptsRoot };
   const uDir = userDir();
   const host = hostId(uDir);

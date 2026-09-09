@@ -104,6 +104,9 @@ after. It is `weawr demo` plus `WEAWR_DEV_FACTORY=<the demo directory> pnpm dev`
 the same weawr as the watcher: a brief names the command that reaches the running program
 (`{{weawr}}` — plain `weawr` when PATH resolves to it, else the explicit invocation), so a
 development build is what `weawr merge` and `weawr result` run even with a release installed.
+That command runs in the agent's own shell, with nothing `dev.mjs` set in its environment, so the
+compiled output has to stand on its own: with no `prompts/`, `plugins/` or `demos/` next to it, it
+reads them from the source tree it was built in (`assetDir` in `apps/cli/src/context.ts`).
 
 Nothing in the loop is cached and nothing goes through the bundled artifact, which is also why the
 built artifact never hot-reloads: it serves copies of the page read once at startup, and Turborepo

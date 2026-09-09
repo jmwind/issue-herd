@@ -44,9 +44,9 @@ const env = {
   WEAWR_WEB_DIR: path.join(root, 'apps', 'web', 'src'),
   WEAWR_CLIENT_JS: path.join(root, 'packages', 'client', 'dist', 'browser', 'weawr-client.js'),
   WEAWR_ASSETS_DIR: path.join(root, 'assets'),
-  WEAWR_PROMPTS_ROOT: path.join(root, 'packages', 'recipes', 'prompts'),
-  WEAWR_PLUGINS_ROOT: path.join(here, 'plugins'),
-  WEAWR_DEMOS_ROOT: path.join(here, 'demos'),
+  // No WEAWR_PROMPTS_ROOT, WEAWR_PLUGINS_ROOT or WEAWR_DEMOS_ROOT: the compiled output finds those
+  // in the source tree by itself (assetDir in src/context.ts), and it has to — the agents run the
+  // command the brief names from their own shell, which carries nothing set here.
   WEAWR_NO_UPDATE_CHECK: '1',
 };
 const port = process.env.WEAWR_DEV_PORT || '8498';

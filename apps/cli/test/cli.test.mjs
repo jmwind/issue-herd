@@ -255,3 +255,24 @@ test('the command an agent is told to run is this weawr: `weawr` when PATH resol
   assert.equal(cliCommand(self, { PATH: '' }), `${process.execPath} ${self}`, 'no weawr on PATH at all');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('the compiler\'s output finds its assets in the source tree, so the command a brief names works from an agent\'s bare shell', async (t) => {
+  const { assetDir } = await import('../build/context.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-cli-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const distPkg = path.join(dir, 'dist'); fs.mkdirSync(path.join(distPkg, 'prompts'), { recursive: true });
+  const buildPkg = path.join(dir, 'build'); fs.mkdirSync(buildPkg); fs.mkdirSync(path.join(dir, 'src-prompts'));
+  assert.equal(assetDir('prompts', 'src-prompts', {}, distPkg), path.join(distPkg, 'prompts'), 'the artifact: next to itself');
+  assert.equal(assetDir('prompts', 'src-prompts', {}, buildPkg), path.join(dir, 'src-prompts'), 'the compiler\'s output: the source tree');
+  assert.equal(assetDir('prompts', 'src-prompts', { WEAWR_PROMPTS_ROOT: '/elsewhere' }, distPkg), '/elsewhere', 'the environment names another place outright');
+  assert.equal(assetDir('prompts', 'nowhere', {}, buildPkg), path.join(buildPkg, 'prompts'), 'neither: the place beside, so the error names where it looked');
+
+  // The real thing: apps/cli/build/main.js, with none of dev.mjs's environment, on a factory whose
+  // rule uses the bundled default prompt — what `weawr merge` is when an agent runs it under `pnpm dev`.
+  const repoDir = repo(t, { '.weawr/config.json': config() });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^WEAWR_.*_ROOT$/.test(k)));
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('../build/main.js', import.meta.url)), 'recipe', 'show'], { cwd: repoDir, encoding: 'utf8', env: { ...env, WEAWR_NO_UPDATE_CHECK: '1' } });
+  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  assert.equal(r.status, 0, out);
+  assert.match(out, /prompts\/default\.md \(bundled/, out);
+});
