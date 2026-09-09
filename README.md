@@ -7,35 +7,17 @@
 </p>
 
 <p align="center">
-  <b>Give your agents a game plan.</b><br>
-  Label an issue. Get a pull request. A software factory that runs on your own machine, out of your
-  own repo, with your own agents.
+  <b>Give your agents a tean and a game plan.</b>
 </p>
 
 ---
 
-weawr watches **Linear** or **GitHub Issues**. When an issue matches one of your rules it cuts
-a git worktree, opens a **herdr** workspace, starts a **coding agent** in it (Claude Code by
-default; codex, gemini, cursor — whatever herdr can start, per rule), hands it a written brief made
-from the issue and your repo's own instructions, and then reports back on the issue: picked up →
-waiting for you → PR open → merged.
+weawr is a team and coordination layer that works on `herdr`. While `herdr` provides a great platform for agents to work. It doesn't provide the description of how a team works together and when and how humans are involved.
 
-No public URL. No third-party orchestrator. No webhook you have to expose. It is a Node script and
-the `herdr` CLI on your laptop, and it has **zero npm dependencies**. The command line is the
-whole interface: the web console, and any phone app written against it, only ever ask `weawr`
-(see [Architecture](docs/architecture.md)).
+weawr uses the tools humans use, and uses them with agents. The control plane is issues and pull requests. Work starts with an issue with context and updates for the team. The handoffs between agents are humans are the same as it's always been between humans.
 
-```
-[2026-09-07 14:32:41] picking up GH-31 "Retry the upload on 429" (rule ai)
-[2026-09-07 14:32:48] GH-31: claude started as agent "gh-31"
-[2026-09-07 14:32:49] GH-31: briefed
-[2026-09-07 14:35:10] GH-31: blocked — waiting for approval or input in w7
-[2026-09-07 14:36:02] GH-31: working again
-[2026-09-07 14:38:02] GH-31: done (pr_open) https://github.com/you/app/pull/44
-14:38:32 poll #49 · 47 open · 0 matched · 0 picked · running 1: DEV-12 w3 working · 1 awaiting merge · next in 30s
-```
-
-One line per thing that happened, and one live line at the bottom rewritten after every poll.
+No webhook you have to expose. It is a Node script and
+the `herdr` CLI on your laptop. That's it.
 
 ## Why you'd want it
 
