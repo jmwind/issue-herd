@@ -108,3 +108,13 @@ on the user's machine (npm 11 runs a git dependency's `prepare` only when allowe
 npm ignores the flag): npm clones, installs the dev dependencies and runs `prepare`, which is
 `scripts/build.mjs` — every package's own `build` script in dependency order, the same artifact
 `turbo run build` makes. `node scripts/verify-install.mjs --git` exercises exactly that path.
+
+That path has three npm peculiarities, each handled in `scripts/build.mjs` and worth knowing
+before touching it: `prepare` runs before `node_modules/.bin` is linked, so the script resolves
+its tools itself; the install npm runs inside the clone inherits `--global`, so the clone's
+devDependencies are not installed and the script installs its own toolchain; and that inherited
+`--global` makes the same nested install link the temporary clone into the global prefix under
+our name, a link npm later leaves dangling when it deletes the clone (the install came out empty
+on Linux, and sometimes on macOS). The last `prepare` npm runs before packing swaps that link for
+an empty directory, which the real install then fills. CI runs the git path on the Node floor and
+on the newest Node, so a regression in any of the three shows up there.
