@@ -10,6 +10,8 @@ import { DEFAULT_MAX_NUDGES, normalizeMaxNudges } from './nudge.mjs';
 import { trackerClass, trackerSpec } from './adapters/trackers/index.mjs';
 import { LATEST_REVISION, validateTemplate } from '@weawr/recipes';
 import type { FactoryPaths } from './paths.js';
+import { EMPTY_REGISTRY } from './plugins.js';
+import type { PluginRegistry, PluginSpec } from './plugins.js';
 
 export type EventPolicy = Record<string, any>;
 
@@ -123,6 +125,17 @@ export interface ConfigSources {
   promptsRoot: string;
   /** The recipe revision this factory is pinned to; the latest bundled one when not given. */
   recipeRevision?: number;
+  /** What the plugins named in the config provide (see plugins.ts). Loaded by the caller: config loading stays synchronous. */
+  plugins?: PluginRegistry;
+}
+
+/** The plugin specs a config names: committed ones and per-machine ones, each knowing where it came from. */
+export function pluginSpecs(paths: FactoryPaths): PluginSpec[] {
+  const read = (p: string) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
+  const out: PluginSpec[] = [];
+  for (const s of read(paths.configPath)?.plugins || []) if (typeof s === 'string') out.push({ spec: s, source: 'config' });
+  for (const s of read(paths.localConfigPath)?.plugins || []) if (typeof s === 'string') out.push({ spec: s, source: 'local' });
+  return out;
 }
 
 /**
@@ -173,11 +186,25 @@ export function loadConfig(sources: ConfigSources): FactoryConfig {
   cfg.localOverrides = overridePaths(local);
   cfg.name = String(cfg.name || path.basename(paths.repo)).trim() || 'weawr';
   cfg.maxNudges = normalizeMaxNudges(cfg.maxNudges, path.relative(paths.repo, paths.configPath));
+  const plugins = sources.plugins ?? EMPTY_REGISTRY;
   cfg.trackerSpec = trackerSpec(cfg.tracker);
-  cfg.Tracker = trackerClass(cfg.trackerSpec);
+  // A tracker from a plugin, else a built-in one; an id nobody provides names the plugin problem when there is one.
+  if (Object.hasOwn(plugins.trackers, cfg.trackerSpec.type)) cfg.Tracker = plugins.trackers[cfg.trackerSpec.type];
+  else {
+    try { cfg.Tracker = trackerClass(cfg.trackerSpec); }
+    catch (e: any) { throw new Error(`${e.message}${plugins.problems.length ? `; plugins: ${plugins.problems.join('; ')}` : ''}${raw.plugins?.length && !plugins.plugins.length ? ' (the plugins named in config.json are not enabled on this machine; see docs/plugins.md)' : ''}`); }
+  }
+  cfg.plugins = plugins;
   cfg.rules = (raw.rules || []).map((r: any, i: number) => {
     if (!r.match) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}) has no "match"`);
-    const rule: any = { ...cfg.defaults, ...r, name: r.name || `rule-${i + 1}`, repo: paths.repo };
+    // `use` names a role preset a plugin provides: its defaults under the rule's own fields, its brief as the prompt.
+    let preset: any = null;
+    if (r.use !== undefined) {
+      if (typeof r.use !== 'string' || !Object.hasOwn(plugins.roles, r.use)) throw new Error(`rule #${i + 1} (${r.name || 'unnamed'}): "use" is ${JSON.stringify(r.use)}, which no enabled plugin provides as a role preset${Object.keys(plugins.roles).length ? ` (have: ${Object.keys(plugins.roles).join(', ')})` : ''}${plugins.problems.length ? `; plugins: ${plugins.problems.join('; ')}` : ''}`);
+      preset = plugins.roles[r.use];
+    }
+    const rule: any = { ...cfg.defaults, ...(preset?.defaults || {}), ...(preset ? { role: r.use } : {}), ...r, name: r.name || `rule-${i + 1}`, repo: paths.repo };
+    if (preset) { rule.promptText = preset.prompt; rule.prompt = `plugin:${preset.plugin}/${r.use}`; rule.templateOrigin = `plugin:${preset.plugin}${preset.version ? `@${preset.version}` : ''}`; }
     rule.role = normalizeRole(rule.role, `rule "${rule.name}"`);
     rule.passes = normalizePasses(rule.passes, `rule "${rule.name}"`);
     rule.basedOn = normalizeRole(rule.basedOn, `rule "${rule.name}" ("basedOn")`);
@@ -196,7 +223,11 @@ export function loadConfig(sources: ConfigSources): FactoryConfig {
     rule.instructions = [rule.instructions, readInstructions(sources, rule.instructionsFile)].filter(Boolean).join('\n\n');
     // The template is checked here, where the fix is one file away, not at 3am when a brief
     // renders with a hole in it. A disabled rule's template is still checked: it is still a rule.
-    if (rule.prompt) {
+    if (rule.promptText) {
+      const check = validateTemplate(rule.promptText);
+      if (!check.ok) throw new Error(`rule "${rule.name}": the preset's brief: ${check.problems.join('; ')}`);
+      rule.templateProtocol = check.protocol;
+    } else if (rule.prompt) {
       const origin = templateOrigin(sources, rule.prompt);
       if (origin === 'missing') throw new Error(`rule "${rule.name}": prompt ${JSON.stringify(rule.prompt)} is not a file in ${path.relative(paths.repo, paths.configDir)}/ or in the bundled recipe`);
       const check = validateTemplate(fs.readFileSync(expandConfigPath(sources, rule.prompt), 'utf8'));

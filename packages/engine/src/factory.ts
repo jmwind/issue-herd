@@ -432,7 +432,13 @@ export class FactoryEngine {
   stop(): void { this.stopping = true; this.wake?.(); }
 
   /** The template a rule names, read from the repository's .weawr/ or the bundled prompts. */
-  readTemplate(name: string, revision: number = this.recipeRevision): string { return fs.readFileSync(expandConfigPath(this.sources, name, revision), 'utf8'); }
+  readTemplate(name: string, revision: number = this.recipeRevision, rule: any = null): string {
+    // A plugin's role preset carries its brief as text; everything else is a file.
+    if (rule?.promptText) return rule.promptText;
+    const fromRule = rule ? null : this.cfg.rules.find((r: any) => r.prompt === name && r.promptText);
+    if (fromRule) return fromRule.promptText;
+    return fs.readFileSync(expandConfigPath(this.sources, name, revision), 'utf8');
+  }
 
   /**
    * How many runs occupy a slot: running, starting, and the runs reserved for a nudged turn that has
@@ -675,7 +681,7 @@ export class FactoryEngine {
         try { fs.renameSync(run.resultPath, run.previousResultPath); }
         catch (e: any) { this.log(`${key}: could not set the previous result aside (${e.message}); removing it instead`); fs.rmSync(run.resultPath, { force: true }); run.previousResultPath = null; }
       }
-      const brief = renderBrief(this.readTemplate(rule.prompt, run.recipeRevision), briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, nudging: this.nudging(issue.identifier), runKey: key, mergeLabel: this.cfg.mergeLabel }));
+      const brief = renderBrief(this.readTemplate(rule.prompt, run.recipeRevision, rule), briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, nudging: this.nudging(issue.identifier), runKey: key, mergeLabel: this.cfg.mergeLabel }));
       run.briefPath = path.join(run.dir, 'brief.md');
       fs.writeFileSync(run.briefPath, brief);
       // The attempt's immutable record: which words it was given and under which policy. Written
@@ -1483,6 +1489,7 @@ export class FactoryEngine {
       }
       this.hooks.live?.(summary);
       if (this.clock().getTime() >= nextUpdateCheck) { nextUpdateCheck = this.clock().getTime() + 24 * 3600e3; await this.hooks.updateReminder?.(); }
+      await this.runDueTasks();
       if (this.stopping) break;
       await new Promise<void>((r) => { this.wake = r; setTimeout(r, this.cfg.pollSeconds * 1000); });
       this.wake = null;
@@ -1568,6 +1575,35 @@ export class FactoryEngine {
     return snapshot;
   }
 
+  /** When each plugin task last ran, and what it returned: what "due" and "do not repeat yourself" are measured against. */
+  private taskRuns = new Map<string, { at: number; memory: Record<string, unknown> }>();
+
+  /** Run every plugin task whose interval has passed. A task's failure is a log line, never the watcher's. */
+  async runDueTasks(): Promise<string[]> {
+    const ran: string[] = [];
+    const tasks = this.cfg.plugins?.tasks || [];
+    if (!tasks.length) return ran;
+    const now = this.clock().getTime();
+    let snapshot: any = null;
+    for (const t of tasks) {
+      const key = `${t.plugin}/${t.name}`;
+      const last = this.taskRuns.get(key);
+      if (last && now - last.at < t.everyMs) continue;
+      snapshot ??= await this.snapshot().catch(() => null);
+      const memory = last?.memory ?? {};
+      try {
+        const out = await t.run({ factory: { id: this.ids.factoryId, name: this.cfg.name, repo: this.paths.repo }, snapshot, log: (line: string) => this.log(`${key}: ${line}`), notify: (title: string, body: string) => this.herdr.notify(title, body, { sound: 'none' }), now: new Date(now), memory });
+        this.taskRuns.set(key, { at: now, memory: out && typeof out === 'object' ? { ...memory, ...(out as object) } : memory });
+        this.emit('plugin.task_ran', null, { task: key });
+        ran.push(key);
+      } catch (e: any) {
+        this.taskRuns.set(key, { at: now, memory });
+        this.log(`${key} failed: ${e.message}`);
+      }
+    }
+    return ran;
+  }
+
   /** The stable ids for a run, recorded on it at pickup. */
   idsFor(issue: any, rule: any, key: string, run: any) {
     const task = taskId(this.ids.factoryId, trackerScope(this.cfg.trackerSpec), issue.identifier);
@@ -1581,7 +1617,7 @@ export class FactoryEngine {
    */
   attemptSpec(issue: any, rule: any, run: any, brief: string, key: string) {
     let templateHash: string | null = null; let instructionsHash: string | null = null;
-    try { templateHash = contentHash(this.readTemplate(rule.prompt, run.recipeRevision)); } catch { /* unknown */ }
+    try { templateHash = contentHash(this.readTemplate(rule.prompt, run.recipeRevision, rule)); } catch { /* unknown */ }
     if (rule.instructions) instructionsHash = contentHash(rule.instructions);
     const policy: Record<string, unknown> = { ...policyOf(rule), maxConcurrent: rule.maxConcurrent ?? null, instructionsFile: rule.instructionsFile ?? null, mergeLabel: this.cfg.mergeLabel, mergeMethod: this.cfg.mergeMethod };
     const head = this.git(['rev-parse', 'HEAD'], run.workDir || this.paths.repo);

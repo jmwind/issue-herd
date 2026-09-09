@@ -5,9 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  FactoryEngine, JsonStateStore, acquireOwnership, createApplication, currentOwner, describeHolder, factoryId, factoryPaths, findRepoRoot, hostId, loadConfig, loadEnvFiles, migrateLegacyState, openOwnerStore, readFactoryState, registrationsDir, storeStatus, userDir,
+  FactoryEngine, JsonStateStore, acquireOwnership, createApplication, currentOwner, describeHolder, factoryId, factoryPaths, findRepoRoot, hostId, loadConfig, loadEnvFiles, loadPlugins, migrateLegacyState, openOwnerStore, pluginSpecs, readFactoryState, registrationsDir, storeStatus, userDir,
 } from '@weawr/engine';
-import type { Application, CommandResult, ConfigSources, FactoryConfig, FactoryPaths, Identities, Ownership, StateStore } from '@weawr/engine';
+import type { Application, CommandResult, ConfigSources, FactoryConfig, FactoryPaths, Identities, Ownership, PluginRegistry, StateStore } from '@weawr/engine';
 import { consoleNotesPath } from './commands/migrate.js';
 import { Herdr } from '@weawr/engine/adapters/herdr.mjs';
 import { resolveCredential, saveCredential, noCredentialError } from '@weawr/engine/adapters/auth.mjs';
@@ -33,14 +33,18 @@ export interface Context {
   version: string;
   pkgDir: string;
   promptsRoot: string;
+  /** The shipped example plugins. */
+  pluginsRoot: string;
   webDir: string;
   paths: FactoryPaths;
   sources: ConfigSources;
   userDir: string;
   ids: Identities;
   herdr: any;
-  /** Load (or reload) the repository's config. Throws when there is none or it is invalid. */
+  /** Load (or reload) the repository's config. Throws when there is none or it is invalid. Plugins must be loaded first (see plugins()). */
   config(): FactoryConfig;
+  /** The plugins the config names, loaded once per process. */
+  plugins(): Promise<PluginRegistry>;
   hasConfig(): boolean;
   /** Load the repository's .env files into the process environment (tracker tokens only). */
   loadEnv(): void;
@@ -49,15 +53,18 @@ export interface Context {
 export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: string }): Context {
   const paths = factoryPaths(findRepoRoot(cwd));
   const promptsRoot = path.join(PKG_DIR, 'prompts');
-  const sources = { paths, promptsRoot };
+  const pluginsRoot = path.join(PKG_DIR, 'plugins');
+  const sources: ConfigSources = { paths, promptsRoot };
   const uDir = userDir();
   const host = hostId(uDir);
   const ids = { hostId: host, factoryId: factoryId(host, paths.repo) };
   let cfg: FactoryConfig | null = null;
+  let reg: Promise<PluginRegistry> | null = null;
   return {
-    ui, version: VERSION, pkgDir: PKG_DIR, promptsRoot, webDir: path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
+    ui, version: VERSION, pkgDir: PKG_DIR, promptsRoot, pluginsRoot, webDir: path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
     herdr: new (Herdr as any)({ log: (m: string) => { if (process.env.WEAWR_DEBUG) ui.log('  $', m); } }),
     config() { return (cfg ??= loadConfig(sources)); },
+    plugins() { return (reg ??= loadPlugins(pluginSpecs(paths), { examplesRoot: pluginsRoot, userRoot: path.join(uDir, 'plugins'), configDir: paths.configDir }).then((r) => { sources.plugins = r; cfg = null; return r; })); },
     hasConfig() { return fs.existsSync(paths.configPath); },
     loadEnv() {
       const refused = loadEnvFiles(paths.envFiles);

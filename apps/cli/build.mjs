@@ -34,4 +34,5 @@ const pkgDir = (name) => path.dirname(require.resolve(`${name}/package.json`));
 fs.cpSync(path.join(pkgDir('@weawr/recipes'), 'dist', 'prompts'), path.join(dist, 'prompts'), { recursive: true });
 fs.cpSync(path.join(root, 'apps', 'web', 'dist'), path.join(dist, 'web'), { recursive: true });
 fs.copyFileSync(path.join(here, 'config.example.json'), path.join(dist, 'config.example.json'));
+fs.cpSync(path.join(here, 'plugins'), path.join(dist, 'plugins'), { recursive: true });
 fs.writeFileSync(path.join(dist, 'package.json'), JSON.stringify({ name: 'weawr', version, type: 'module', private: true }, null, 2) + '\n');

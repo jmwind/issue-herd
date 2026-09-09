@@ -13,7 +13,8 @@
         "build.mjs",
         "config.example.json",
         "$TURBO_ROOT$/assets/**",
-        "$TURBO_ROOT$/tsconfig.base.json"
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "plugins/**"
       ],
       "outputs": [
         "dist/**",
