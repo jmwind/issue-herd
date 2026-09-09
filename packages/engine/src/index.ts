@@ -29,3 +29,4 @@ export { projectOffline } from './offline.js';
 export { Enricher } from './enrich.js';
 export { HERDR_AWAY, closeTask, exitRun, markDone, stopTask, tailTask, tidy, undoDone } from './actions.js';
 export type { StoreKind } from './store/index.js';
+export { COORDINATOR, agentOf, cell, coordinator, roleByline, table } from './comments.js';

@@ -220,7 +220,12 @@ reviewers at once.
 
 The trail stays on the issue. The nudging run's finish comment carries the nudge and what happened
 to it; the nudged turn's pickup comment says who asked for it; `weawr status` lists the
-conversation per issue. A nudge is the *ask* — the report goes in `summary` and `notes` as usual,
+conversation per issue. Every comment says who is speaking: a role's own pickup and result are
+signed **weawr** as `review` (and so on), with the facts — role, rule and agent, turn, branch,
+PR, verdict, workspace — in a table and the agent's summary, testing and notes as prose; what the
+watcher itself observes or does (an agent blocked or gone, a nudge budget spent, a merge it
+performed) is signed **Weawr Coordinator**, so nobody mistakes a supervisor's note for a
+reviewer's finding. A nudge is the *ask* — the report goes in `summary` and `notes` as usual,
 and a verdict that needs no action is just a comment.
 
 Three things keep it from running away:
