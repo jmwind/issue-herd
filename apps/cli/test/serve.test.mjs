@@ -102,6 +102,9 @@ test('serve: an online owner and an offline factory, every fact from the owner o
   // the page and its client are served from the bundled web build
   assert.match(await fetch(`${h.url}/`).then((r) => r.text()), /<title>Factory Floor<\/title>/);
   assert.match(await fetch(`${h.url}/client.js`).then((r) => r.text()), /WeawrClient/);
+  assert.match(await fetch(`${h.url}/themes/clean.css`).then((r) => r.text()), /body\[data-theme="clean"\]/);
+  assert.equal((await fetch(`${h.url}/themes/nope.css`)).status, 404, 'themes are served by name only');
+  assert.match(await fetch(`${h.url}/`).then((r) => r.text()), /data-theme="factorio"/);
   // the compatibility route still answers, shaped as before
   const legacy = await fetch(`${h.url}/api/state`).then(j);
   assert.equal(legacy.factories.length, 2); assert.equal(legacy.hostname, os.hostname());

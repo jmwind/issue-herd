@@ -62,6 +62,8 @@ export interface HandlerOptions {
   hostname?: string;
   log?: (m: string) => void;
   webDir?: string | null;
+  /** The console theme the page opens with when the browser has not chosen one: 'factorio' (default) or 'clean'. */
+  theme?: string;
   /** Device tokens ({ [name]: record }), for native clients. */
   devices?: () => Record<string, any>;
   version: string;
@@ -70,14 +72,15 @@ export interface HandlerOptions {
 type Principal = { kind: 'session' } | { kind: 'device'; name: string } | { kind: 'open' } | null;
 
 /** The request handler and the SSE fan-out. `hub.subscribe` drives the stream; call nothing else. */
-export function createHandler({ gate, hub, hostname = os.hostname(), log = () => {}, webDir = DEFAULT_WEB_DIR, devices = () => ({}), version }: HandlerOptions) {
+export function createHandler({ gate, hub, hostname = os.hostname(), log = () => {}, webDir = DEFAULT_WEB_DIR, devices = () => ({}), version, theme = 'factorio' }: HandlerOptions) {
   const clients = new Set<{ res: http.ServerResponse; principal: Principal }>();
   const web = webDir && fs.existsSync(webDir) ? webDir : null;
   const asset = (name: string) => (web ? fs.readFileSync(path.join(web, name), 'utf8') : '');
   const pages = web ? { app: asset('app.html'), unlock: asset('unlock.html'), css: asset('app.css'), js: asset('app.js'), client: fs.existsSync(path.join(web, 'client.js')) ? asset('client.js') : '' } : null;
   const icons = Object.fromEntries(Object.entries(ICONS).map(([p, [file, type]]) => { let body: Buffer | null = null; try { body = web ? fs.readFileSync(path.join(web, 'assets', 'icons', file)) : null; } catch { body = null; } return [p, { body, type }]; }));
   const mark = (() => { try { const svg = fs.readFileSync(path.join(web!, 'assets', 'logo', 'weawr-mark-reverse.svg'), 'utf8').replace('<svg ', '<svg class="mark" ').replace(' role="img" aria-label="weawr"', ' aria-hidden="true"'); return `<a class="home" href="${REPO_URL}" target="_blank" rel="noopener" title="weawr on GitHub" aria-label="weawr on GitHub">${svg}</a>`; } catch { return ''; } })();
-  const html = (tpl: string) => tpl.replace(/\{\{hostname\}\}/g, hostname).replace(/\{\{gated\}\}/g, gate.enabled ? 'true' : 'false').replace(/\{\{mark\}\}/g, mark);
+  const html = (tpl: string) => tpl.replace(/\{\{hostname\}\}/g, hostname).replace(/\{\{gated\}\}/g, gate.enabled ? 'true' : 'false').replace(/\{\{mark\}\}/g, mark).replace(/\{\{theme\}\}/g, theme);
+  const themes = web && fs.existsSync(path.join(web, 'themes')) ? Object.fromEntries(fs.readdirSync(path.join(web, 'themes')).filter((f) => f.endsWith('.css')).map((f) => [f.replace(/\.css$/, ''), fs.readFileSync(path.join(web, 'themes', f), 'utf8')])) : {};
 
   const now = () => new Date().toISOString();
   const send = (res: http.ServerResponse, code: number, body: unknown, type = 'application/json; charset=utf-8', extra: Record<string, string> = {}) => {
@@ -165,6 +168,7 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
 
   async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    let m: RegExpExecArray | null;
     const p = principal(req);
     const wants = Number(req.headers['x-weawr-protocol'] || 0);
     try {
@@ -172,6 +176,7 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
       if (req.method === 'GET' && pages && url.pathname === '/app.css') return send(res, 200, pages.css, 'text/css; charset=utf-8');
       if (req.method === 'GET' && pages && url.pathname === '/app.js') return send(res, 200, pages.js, 'text/javascript; charset=utf-8');
       if (req.method === 'GET' && pages && url.pathname === '/client.js') return send(res, 200, pages.client, 'text/javascript; charset=utf-8');
+      if (req.method === 'GET' && (m = /^\/themes\/([a-z0-9-]+)\.css$/.exec(url.pathname))) return Object.hasOwn(themes, m[1]) ? send(res, 200, themes[m[1]], 'text/css; charset=utf-8') : send(res, 404, { error: 'no such theme' });
       if (req.method === 'GET' && icons[url.pathname]) { const { body, type } = icons[url.pathname]; return body ? send(res, 200, body, type, { 'cache-control': 'public, max-age=86400' }) : send(res, 404, { error: 'not found' }); }
       if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, gated: gate.enabled, protocolVersions: [PROTOCOL_VERSION], version });
       if (req.method === 'POST' && url.pathname === '/unlock') {
@@ -194,7 +199,6 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
       if (wants && wants !== PROTOCOL_VERSION) return fail(res, 400, { code: 'unsupported_protocol', message: `this weawr speaks protocol ${PROTOCOL_VERSION}; the client asked for ${wants}. Update whichever is older.` });
 
       // ---- /api/v1
-      let m: RegExpExecArray | null;
       if (req.method === 'GET' && url.pathname === '/api/v1/snapshot') return ok(res, hub.current);
       if (req.method === 'GET' && url.pathname === '/api/v1/factories') return ok(res, { factories: hub.current.factories.map((f) => ({ factoryId: f.factoryId, id: f.id, name: f.name, repo: f.repo, tracker: f.tracker, owner: f.owner, capabilities: f.capabilities ?? [] })) });
       if (req.method === 'GET' && (m = /^\/api\/v1\/factories\/([^/]+)\/snapshot$/.exec(url.pathname))) { const e = hub.factory(decodeURIComponent(m[1])); return e?.snapshot ? ok(res, e.snapshot) : fail(res, 404, { code: 'not_found', message: `no factory ${m[1]}` }); }

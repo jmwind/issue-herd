@@ -44,7 +44,10 @@ export class WeawrClient {
 
   constructor({ baseUrl = '', fetch: f = globalThis.fetch, token = null, timeoutMs = 20_000 }: ClientOptions = {}) {
     if (!f) throw new Error('WeawrClient needs a fetch implementation');
-    this.baseUrl = baseUrl.replace(/\/$/, ''); this.fetchImpl = f; this.token = token; this.timeoutMs = timeoutMs;
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    // A browser's fetch must be called on its window; a bare reference throws "Illegal invocation".
+    this.fetchImpl = f === globalThis.fetch ? f.bind(globalThis) : f;
+    this.token = token; this.timeoutMs = timeoutMs;
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {

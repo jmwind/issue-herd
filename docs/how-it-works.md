@@ -228,6 +228,12 @@ the page never starts anything because you looked at it. Killing `weawr serve` s
 starting it again restores the view. When the page's link to weawr is down, the title bar says how
 old what you see is.
 
+Two looks ship. **Factorio** is the default — the floor as it has always been. **weawr clean** is
+the brand's own palette, flat and quiet, with the machinery gone and the facts kept, in light or
+dark with the system. Pick one from the factories sheet (the picker in the title bar); it is
+remembered per browser. `weawr console --theme clean` (or `WEAWR_CONSOLE_THEME`) sets what a
+browser gets before it has chosen, and `?theme=clean` on the URL picks one for that visit.
+
 Every action is a command with a request id: a tap that loses its answer can be sent again
 without doing the thing twice, and a long action (Mark done shutting several agents down) comes
 back as an operation the page follows to its real outcome. A phone app talks to the same interface

@@ -14,7 +14,7 @@ a git worktree and a herdr workspace, start a coding agent in it, brief it, and 
   weawr smoke             end-to-end test against herdr with a fake issue (no tracker calls)
   weawr init [--tracker linear|github]  scaffold .weawr/ in this repo
   weawr serve [--port N] [--host ADDR] [--no-web]  the CLI interface (/api/v1, events) for every factory here, with the web console
-  weawr console [--port N] [--host ADDR]  the same, by its older name: the factory floor in a browser (phone first)
+  weawr console [--port N] [--host ADDR] [--theme factorio|clean]  the same, by its older name: the factory floor in a browser (phone first)
   weawr console set-passcode  set the passcode (digits) the console asks for; also serves it over Tailscale
   weawr console clear-passcode  forget the passcode; the console goes back to loopback only
   weawr console device add|list|revoke <name>  device tokens for native clients (a phone)

@@ -11,6 +11,12 @@
   var INSERTER = '<div class="inserter"><svg viewBox="0 0 32 30"><rect x="10" y="22" width="12" height="6" fill="#4A4A4A" stroke="#0A0A0A"/><g class="arm"><rect x="14" y="4" width="4" height="22" fill="#E39827" stroke="#0A0A0A"/><rect x="10" y="1" width="12" height="5" fill="#5C5C5C" stroke="#0A0A0A"/></g></svg></div>';
   var view = null, sheet = false, showAll = false, tails = {}, expanded = {}, receivedAt = 0;
   var client = new WeawrClient({ baseUrl: '' });
+  // Themes: the Factorio floor (the default) or the clean weawr look. Chosen in the factories
+  // sheet or with ?theme=, remembered per browser, served by the host as /themes/<name>.css.
+  var THEMES = { factorio: 'Factorio', clean: 'weawr clean' };
+  function themeOf() { try { var q = /[?&]theme=([a-z]+)/.exec(location.search); if (q && THEMES[q[1]]) return q[1]; var saved = localStorage.getItem('weawr-theme'); if (saved && THEMES[saved]) return saved; } catch (e) {} var d = document.body.dataset.theme; return THEMES[d] ? d : 'factorio'; }
+  function applyTheme(name) { if (!THEMES[name]) name = 'factorio'; document.body.dataset.theme = name; var css = document.getElementById('theme-css'); if (css && css.getAttribute('href') !== '/themes/' + name + '.css') css.setAttribute('href', '/themes/' + name + '.css'); try { localStorage.setItem('weawr-theme', name); } catch (e) {} }
+  applyTheme(themeOf());
   // The stream's state: when it is down, everything shown is as old as receivedAt says.
   var link = { connected: false, retryInMs: null, error: null };
   // Mark done / Undo in flight, by task: the button and card show it until the console's state
@@ -267,7 +273,8 @@
     // The chosen factory's rules live at the top of the overview now; the picker is for choosing.
     var f = current(), about = '';
     if (f) about = '<div class="pane"><div class="acts"><span class="pill">' + (f.watcher.version ? 'weawr ' + esc(f.watcher.version) : 'version unknown') + '</span>' + (f.watcher.workspaceId ? '<span class="pill">workspace ' + esc(f.watcher.workspaceId) + '</span>' : '') + '</div></div>';
-    var lock = document.body.dataset.gated === 'true' ? '<div class="pane"><button class="btn" id="lockbtn">Lock the console</button></div>' : '';
+    var theme = '<div class="pane"><div class="acts"><span class="m">Theme</span>' + Object.keys(THEMES).map(function (k) { return '<button class="btn' + (document.body.dataset.theme === k ? ' confirm' : '') + '" data-theme-pick="' + k + '">' + esc(THEMES[k]) + '</button>'; }).join('') + '</div></div>';
+    var lock = theme + (document.body.dataset.gated === 'true' ? '<div class="pane"><button class="btn" id="lockbtn">Lock the console</button></div>' : '');
     return '<div class="sheet" role="dialog" aria-label="Factories"><div class="titlebar"><h1>Factories on ' + esc(document.body.dataset.hostname) + '</h1><span class="drag"></span><button class="tbtn red" id="closesheet" aria-label="close">✕</button></div><div class="pane">' + opts + '</div>' + about + lock + '</div>';
   }
 
@@ -349,6 +356,7 @@
           toast(closed + ' workspace' + (closed === 1 ? '' : 's') + ' closed' + (stuck.length ? ' · ' + stuck.map(function (o) { return o.workspaceId + ' ' + o.workspace; }).join(' · ') : ''));
         }).catch(function (e) { render(); toast(e.code === 'owner_offline' ? 'That factory\'s watcher is not running; nothing was changed.' : 'Could not: ' + e.message); });
     }
+    else if (t.dataset.themePick) { applyTheme(t.dataset.themePick); render(); }
     else if (t.id === 'lockbtn') { fetch('/lock', { method: 'POST' }).then(function () { location.replace('/'); }); }
     else if (t.dataset.choose) { sheet = false; var to = t.dataset.choose === 'all' ? '#/' : '#/f/' + encodeURIComponent(t.dataset.choose); if (location.hash === to || (to === '#/' && !location.hash)) render(); else location.hash = to; }
     else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; client.tail(factoryIdOf(p[0]), p[1]).then(function (j) { tails[t.dataset.tail] = j.blocks || '(empty)'; render(); }).catch(function (e) { tails[t.dataset.tail] = '(' + e.message + ')'; render(); }); }
