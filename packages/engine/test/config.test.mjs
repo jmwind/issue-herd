@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeConfig, overridePaths } from '../dist/config.mjs';
+import { mergeConfig, overridePaths } from '../dist/config-merge.mjs';
 
 const base = {
   pollSeconds: 30,

@@ -34,7 +34,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { compile } from '@weawr/engine/expr.mjs';
-import { mergeConfig, overridePaths } from '@weawr/engine/config.mjs';
+import { mergeConfig, overridePaths } from '@weawr/engine/config-merge.mjs';
 import { TRACKERS, isTracker, mergeSpec, trackerSpec, trackerClass } from '@weawr/engine/adapters/trackers/index.mjs';
 import { slugify, userDisplay } from '@weawr/engine/adapters/tracker.mjs';
 import { alreadyTaken, applyRoles, checkBasedOn, checkRoleBranches, claimLabelFor, heldByAPerson, issueKeyOf, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker, runKeyFor, workspaceLabel } from '@weawr/engine/claim.mjs';

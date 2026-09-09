@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { mergeConfig } from '@weawr/engine/config.mjs';
+import { mergeConfig } from '@weawr/engine/config-merge.mjs';
 import { exitCommandFor } from '@weawr/engine/agents.mjs';
 import { isNotFound } from '@weawr/engine/adapters/herdr.mjs';
 
