@@ -137,7 +137,8 @@ export function takeOwnership(ctx: Context, cfg: FactoryConfig): Ownership {
 /** Host the application on the owner's private socket. */
 export async function hostApplication(ctx: Context, app: Application): Promise<IpcServer> {
   const server = await serveIpc(app, ctx.paths.socketPath, (m) => ctx.ui.log(m));
-  process.once('exit', () => { try { fs.rmSync(ctx.paths.socketPath, { force: true }); } catch { /* gone */ } });
+  // Only our own socket file: a successor may already be listening at that path (a restart).
+  process.once('exit', () => server.removeIfOwn());
   return server;
 }
 

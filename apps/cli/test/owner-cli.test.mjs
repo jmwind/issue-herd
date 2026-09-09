@@ -91,6 +91,7 @@ test('a successor on the same socket path is not unplugged when its predecessor 
   const second = await serveIpc(app('second'), sock);
   t.after(() => second.close());
   await first.close();
+  first.removeIfOwn(); // what the exit hook does, again: still not its socket to remove
   assert.ok(fs.existsSync(sock), 'the socket file is still there');
   const r = await callOwner(sock, { type: 'ping' });
   assert.equal(r.ok, true, JSON.stringify(r));

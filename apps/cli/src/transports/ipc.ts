@@ -8,7 +8,12 @@ import type { Application, Command, CommandResult } from '@weawr/engine';
 
 export const OWNER_OFFLINE = 'owner_offline';
 
-export interface IpcServer { close(): Promise<void>; path: string }
+export interface IpcServer {
+  close(): Promise<void>;
+  path: string;
+  /** Remove the socket file at `path` if it is still this server's — for an exit hook, where nothing can be awaited. */
+  removeIfOwn(): void;
+}
 
 /** Host `app` on `socketPath`. Call only while holding the factory's ownership: a stale socket file is removed. */
 export function serveIpc(app: Application, socketPath: string, log: (m: string) => void = () => {}): Promise<IpcServer> {
@@ -44,7 +49,7 @@ export function serveIpc(app: Application, socketPath: string, log: (m: string) 
         if (own !== socketPath) { fs.chmodSync(own, 0o600); fs.renameSync(own, socketPath); ino = fs.statSync(socketPath).ino; }
       } catch (e: any) { server.close(); reject(new Error(`could not place the owner's socket at ${socketPath}: ${e.message}`)); return; }
       const removeOwn = () => { try { if (ino !== null && fs.statSync(socketPath).ino === ino) fs.rmSync(socketPath, { force: true }); } catch { /* gone */ } };
-      resolve({ path: socketPath, close: () => new Promise((r) => { server.close(() => { removeOwn(); r(); }); }) });
+      resolve({ path: socketPath, removeIfOwn: removeOwn, close: () => new Promise((r) => { server.close(() => { removeOwn(); r(); }); }) });
     });
   });
 }
