@@ -1,6 +1,8 @@
 // Thin driver over the `herdr` CLI. Every command returns JSON; errors are JSON on stderr, exit 1.
 import { spawn, execFile } from 'node:child_process';
+import path from 'node:path';
 import { promisify } from 'node:util';
+import { workspaceLabel } from '../claim.mjs';
 
 const execFileP = promisify(execFile);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -51,6 +53,36 @@ export class Herdr {
 
   async closeWorkspace(workspaceId) {
     return this.run(['workspace', 'close', workspaceId]);
+  }
+
+  /** The workspace, or null when herdr has none by that id (its code is `workspace_not_found`). */
+  async workspaceGet(workspaceId) {
+    try { const r = await this.run(['workspace', 'get', workspaceId]); return r.result?.workspace || r.result; }
+    catch (err) { if (isNotFound(err)) return null; throw err; }
+  }
+
+  /**
+   * Close a run's workspace — but only if the workspace herdr has under that id is still the run's.
+   *
+   * herdr numbers workspaces per server session: once it has been restarted (an upgrade, say), the
+   * id a run recorded is handed out again to the next workspace made after the one it named was
+   * closed. Closing by id alone then pulls the pane out from under whoever got it — that is how the
+   * agent on GH-69 died the day herdr 0.9.0 arrived, to a Mark done on another issue whose
+   * long-closed workspace had been `w3J`. `owner` is what the run knows about its workspace, see
+   * workspaceOwner(). Returns 'closed', 'was already closed', or `was reused by herdr for
+   * "<label>"`; throws only when herdr refuses the close itself.
+   */
+  async closeWorkspaceOf(workspaceId, owner = {}) {
+    const ws = await this.workspaceGet(workspaceId);
+    if (!ws) return 'was already closed';
+    let ours = isRunsWorkspace(ws, owner);
+    if (!ours && owner.agentName) {
+      // The other kind of evidence, for a workspace renamed by hand: the run's own agent is in it.
+      ours = isRunsWorkspace(ws, owner, await this.agentGet(owner.agentName).catch(() => null));
+    }
+    if (!ours) return `was reused by herdr for "${ws.label || workspaceId}"`;
+    await this.closeWorkspace(workspaceId);
+    return 'closed';
   }
 
   async renameWorkspace(workspaceId, label) {
@@ -122,9 +154,37 @@ export class Herdr {
   /**
    * Wait for the agent to reach one of `until` states (default: settled = idle|done|blocked).
    * Resolves to the state string, or 'gone' if the agent no longer exists, or 'timeout'.
-   * Runs as a detached child so many waits can be outstanding.
+   *
+   * herdr 0.9 ends a wait whose agent stops being that agent — it exited, was released or
+   * replaced, or its pane was moved to another workspace — with `agent_not_running`. That says the
+   * wait is over, not what became of the agent, so ask: no agent by that name any more is 'gone';
+   * one that is still there (the pane moved) is waited on again for whatever time is left.
    */
-  waitAgent(target, { until = [], timeoutMs } = {}) {
+  async waitAgent(target, { until = [], timeoutMs } = {}) {
+    const deadline = timeoutMs ? Date.now() + timeoutMs : null;
+    for (;;) {
+      const left = deadline ? deadline - Date.now() : null;
+      if (left !== null && left < 1000) return 'timeout';
+      const st = await this.waitAgentOnce(target, { until, timeoutMs: left });
+      if (st !== 'error:agent_not_running') return st;
+      let agent;
+      try { agent = await this.agentGet(target); }
+      catch (err) {
+        // herdr could not be asked (socket gone, a timeout): that is not an exit, and 'gone' would
+        // have the supervisor write a live run off. Ask again while there is time — a wait that
+        // runs out is a timeout, which comes back round — and with no deadline hand the failure
+        // back as a result the caller can retry on.
+        this.log(`agent ${target}: could not be looked up after agent_not_running: ${err.message}`);
+        if (deadline === null) return `error:${err.code || 'agent_lookup_failed'}`;
+        await sleep(1000); continue;
+      }
+      if (!agent) return 'gone';
+      await sleep(1000);
+    }
+  }
+
+  /** One `agent wait`, as a detached child so many waits can be outstanding. Never rejects. */
+  waitAgentOnce(target, { until = [], timeoutMs } = {}) {
     const args = ['agent', 'wait', target];
     for (const u of until) args.push('--until', u);
     if (timeoutMs) args.push('--timeout', String(timeoutMs));
@@ -200,6 +260,39 @@ export function isBlocked(err) { return err?.code === 'agent_blocked'; }
  * names is the session for this issue, already up.
  */
 export function isNameTaken(err) { return err?.code === 'agent_name_taken'; }
+
+/**
+ * Whether the workspace herdr shows under a run's id is the run's own. Two kinds of evidence count:
+ * the workspace carries exactly the label the run gave it, or the run's own agent (`agent`, looked
+ * up by the run's name, if the caller has it) is standing in it. Both only within the run's
+ * repository: herdr's workspace metadata names the repository a workspace is on, and an issue key,
+ * a role, an agent name — `GH-70 review`, `gh-70-review` — are the same in every repository
+ * issue-herd watches, so a label or an agent that matches on another repository's workspace is
+ * somebody else's. (A workspace herdr reports no repository for can only be matched by name.)
+ *
+ * Nothing else counts. Not the checkout: a worktree outlives its workspace, and a person can reopen
+ * it in a workspace of their own that inherits the old id. Not the head of the label: `GH-70` is
+ * also the head of `GH-70 review …`. A run that recorded no label cannot be told apart from a
+ * stranger, and a stranger's workspace is the one thing this must never say yes to.
+ */
+export function isRunsWorkspace(ws, { label = null, repo = null, agentName = null } = {}, agent = null) {
+  if (!ws || typeof ws.label !== 'string') return false;
+  const root = ws.worktree?.repo_root;
+  if (repo && root && path.resolve(root) !== path.resolve(repo)) return false;
+  if (agent && agentName && agent.name === agentName && agent.workspace_id === ws.workspace_id) return true;
+  return !!label && ws.label === label;
+}
+
+/**
+ * What a run knows about its workspace, for isRunsWorkspace(): the label it was given (recorded at
+ * pickup; rebuilt from the run's key, role and title for runs recorded before it was), the
+ * repository the run is in, and the agent it hosts.
+ */
+export function workspaceOwner(run, repo = null) {
+  if (!run) return {};
+  const label = run.workspaceLabel || (run.issueKey ? workspaceLabel({ key: run.issueKey, role: run.role, title: run.title }) : null);
+  return { label, repo: repo || null, agentName: run.agentName || null };
+}
 
 /** Where an existing agent sits, in the shape the workspace calls return. */
 export function agentPlacement(agent) {

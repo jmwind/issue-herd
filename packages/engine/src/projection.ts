@@ -5,7 +5,9 @@
 // imported from state.json) has an unknown history — shown as unknown, never as zero wait.
 import { verdictOf } from '@weawr/protocol';
 import * as _claim from './claim.mjs';
+import * as _herdr from './adapters/herdr.mjs';
 const { issueKeyOf } = _claim as Record<string, any>;
+const { isRunsWorkspace, workspaceOwner } = _herdr as Record<string, any>;
 
 export interface TimelineEvent { ts: number; key: string; kind: 'working' | 'blocked' | 'question' | 'done' | 'gone' | 'merged' }
 
@@ -246,12 +248,17 @@ export function factoryView({ id, factoryId = id, repo, config = {}, state = { r
       if (from < mergedAt) mergeWait = { from, to: mergedAt };
     }
     const wsId = run.workspaceId || agent?.workspace_id || null;
+    const owner = workspaceOwner(run, repo);
     return {
       key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status, ownsPr: ownsPr(run),
       agent: run.agentName, agentKind: rules.find((r: any) => r.name === run.rule)?.agent || 'claude', agentStatus: agent?.agent_status || null, agentAlive: !!agent,
-      // Still open in herdr: listed in the snapshot, or the agent is standing in it right now.
-      // Null when herdr did not answer: unknown is not closed.
-      workspaceId: wsId, workspaceOpen: !wsId ? false : !index.available ? null : index.workspaces.has(wsId) || agent?.workspace_id === wsId,
+      // Still open in herdr: the snapshot lists it, in this repository, under this run's label or
+      // with this run's agent standing in it — herdr reuses a closed workspace's id after a
+      // restart, and a stranger's workspace under the run's old id is not this run's to close
+      // (isRunsWorkspace). A workspace the snapshot does not list but the run's agent says it is
+      // in is taken at the agent's word. Null when herdr did not answer: unknown is not closed.
+      workspaceId: wsId, workspaceLabel: owner.label,
+      workspaceOpen: !wsId ? false : !index.available ? null : index.workspaces.has(wsId) ? isRunsWorkspace(index.workspaces.get(wsId), owner, agent) : agent?.workspace_id === wsId,
       branch: run.branch || null, worktree: run.workDir || run.worktreePath || null,
       startedAt: run.startedAt || null, finishedAt: run.finishedAt || null,
       elapsedMs: (finished || now) - started,

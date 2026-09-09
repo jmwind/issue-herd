@@ -37,7 +37,7 @@
   "rules": [
     {
       "name": "implement",
-      "role": "impl",
+      "role": "snrdev",
       "match": "label:ai and not label:ready-for-review",
       "model": "claude-fable-5-1"
     },

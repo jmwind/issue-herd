@@ -44,6 +44,8 @@ export const runViewSchema = s.object({
   agentStatus: s.maybe(s.string()),
   agentAlive: s.boolean(),
   workspaceId: s.maybe(s.string()),
+  /** The label the run gave its workspace: what a close is checked against, since herdr reuses ids across restarts. */
+  workspaceLabel: s.maybe(s.string()),
   workspaceOpen: s.maybe(s.boolean()),
   branch: s.maybe(s.string()),
   /** Display metadata only: a client never reads local files. */

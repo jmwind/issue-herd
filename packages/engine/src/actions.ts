@@ -14,11 +14,19 @@ export const HERDR_AWAY = 'herdr is not answering; nothing was closed and nothin
 
 export interface CloseOutcome { run: string; role: string | null; agent: string | null; outcome: string; workspaceId: string | null; workspace: string | null }
 
-/** What became of one workspace close, as a phrase: 'closed', 'was already closed', or 'is still open (why)'. */
-export async function closeWorkspace(engine: FactoryEngine, workspaceId: string): Promise<string> {
-  try { await engine.herdr.closeWorkspace(workspaceId); return 'closed'; } catch (e: any) {
+/**
+ * What became of one run's workspace close, as a phrase: 'closed', 'was already closed', 'was
+ * reused by herdr for "…"' (the id names somebody else's workspace now — herdr numbers them per
+ * server session — and that one is left alone), or 'is still open (why)'.
+ */
+export async function closeWorkspace(engine: FactoryEngine, r: { workspaceId?: string | null; workspaceLabel?: string | null; agent?: string | null }): Promise<string> {
+  if (!r.workspaceId) return 'was already closed';
+  try {
+    if (typeof engine.herdr.closeWorkspaceOf === 'function') return await engine.herdr.closeWorkspaceOf(r.workspaceId, { label: r.workspaceLabel ?? null, repo: engine.paths.repo, agentName: r.agent ?? null });
+    await engine.herdr.closeWorkspace(r.workspaceId); return 'closed';
+  } catch (e: any) {
     if (isNotFound(e)) return 'was already closed';
-    engine.log(`could not close workspace ${workspaceId}: ${e.message}`);
+    engine.log(`could not close workspace ${r.workspaceId}: ${e.message}`);
     return `is still open (${e.message})`;
   }
 }
@@ -36,7 +44,7 @@ export async function closeTask(engine: FactoryEngine, task: any): Promise<Close
     if (!r.agentAlive && !hasWorkspace) continue;
     const outcome = r.agentAlive ? await engine.herdr.stopAgent(r.agent, { exitCommand: exitCommandFor(r.agentKind) }) : 'was already gone';
     let workspace: string | null = null;
-    if (hasWorkspace) workspace = outcome === 'is still running' ? 'left open' : await closeWorkspace(engine, r.workspaceId);
+    if (hasWorkspace) workspace = outcome === 'is still running' ? 'left open' : await closeWorkspace(engine, r);
     outcomes.push({ run: r.key, role: r.role, agent: r.agent, outcome, workspaceId: r.workspaceId || null, workspace });
     engine.emit('run.closed_by_person', r.key, { outcome, workspace });
   }
@@ -114,7 +122,7 @@ export async function tidy(engine: FactoryEngine): Promise<Array<{ issue: string
     if (!iss.cleared || iss.bucket === 'inflight') continue;
     for (const r of iss.runs) {
       if (r.agentAlive || !r.workspaceId || !r.workspaceOpen) continue;
-      outcomes.push({ issue: iss.key, run: r.key, role: r.role ?? null, workspaceId: r.workspaceId, workspace: await closeWorkspace(engine, r.workspaceId) });
+      outcomes.push({ issue: iss.key, run: r.key, role: r.role ?? null, workspaceId: r.workspaceId, workspace: await closeWorkspace(engine, r) });
     }
   }
   if (outcomes.length) engine.invalidateSnapshot();

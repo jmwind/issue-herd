@@ -24,7 +24,7 @@ import * as _github from './adapters/trackers/github.mjs';
 const { userDisplay, slugify } = _tracker as Record<string, any>;
 const { alreadyTaken, claimLabelFor, heldByAPerson, issueKeyOf, passLimit, pickCandidates, pickupMarker, runKeyFor, workspaceLabel } = _claim as Record<string, any>;
 const { resolveCredential } = _auth as Record<string, any>;
-const { agentPlacement, isBlocked, isNameTaken } = _herdr as Record<string, any>;
+const { agentPlacement, isBlocked, isNameTaken, workspaceOwner } = _herdr as Record<string, any>;
 const { desiredBranch, reconcileBranch } = _branch as Record<string, any>;
 const { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } = _worktree as Record<string, any>;
 const { agentArgv, describeAgent, exitCommandFor } = _agents as Record<string, any>;
@@ -388,7 +388,9 @@ export class FactoryEngine {
       case 'tracker.removeLabel': { if (!this.tracker) return 'no tracker'; await this.tracker.removeLabel(d.issueId, d.label); return `removed ${d.label}`; }
       case 'herdr.notify': { await this.herdr.notify(d.title, d.body, { sound: d.sound || 'none' }); return 'notified'; }
       case 'herdr.closeWorkspace': {
-        try { await this.herdr.closeWorkspace(d.workspaceId); return 'closed'; }
+        // Only if the workspace under that id is still the run's: herdr numbers workspaces per
+        // server session, and a stranger under the run's old id is reported and left alone.
+        try { return typeof this.herdr.closeWorkspaceOf === 'function' ? await this.herdr.closeWorkspaceOf(d.workspaceId, d.owner || {}) : (await this.herdr.closeWorkspace(d.workspaceId), 'closed'); }
         catch (e: any) { if (/not_found/.test(e?.code || '')) return 'was already closed'; throw e; }
       }
       case 'herdr.stopAgent': {
@@ -634,6 +636,11 @@ export class FactoryEngine {
         ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { HERD_ISSUE: key } });
       }
       Object.assign(run, { workspaceId: ws.workspaceId, tabId: ws.tabId, paneId: ws.paneId });
+      // The label is how the run recognises its workspace later: herdr reuses a closed workspace's
+      // id after a restart, so an id alone can name somebody else's by the time anything closes
+      // it (see closeRunWorkspace). An adopted session keeps whatever its workspace is called.
+      run.workspaceLabel = label;
+      if (existing) { try { run.workspaceLabel = (await this.herdr.workspaceGet(ws.workspaceId))?.label || label; } catch { /* keep ours */ } }
       this.saveState();
       this.log(`${key}: workspace ${ws.workspaceId} pane ${ws.paneId}`);
 
@@ -1038,7 +1045,7 @@ export class FactoryEngine {
       const data = { issue: { ...slimIssue(readJson(path.join(run.archiveDir, 'issue.json'), {})), id: run.issueId }, state: rule.onDone.state };
       owed.push({ id: this.owe('tracker.setState', data, key), kind: 'tracker.setState', data, runKey: key });
     }
-    if (rule.onDone.closeWorkspace && run.workspaceId) owed.push({ id: this.owe('herdr.closeWorkspace', { workspaceId: run.workspaceId }, key), kind: 'herdr.closeWorkspace', data: { workspaceId: run.workspaceId }, runKey: key });
+    if (rule.onDone.closeWorkspace && run.workspaceId) { const data = { workspaceId: run.workspaceId, owner: workspaceOwner(run, this.paths.repo) }; owed.push({ id: this.owe('herdr.closeWorkspace', data, key), kind: 'herdr.closeWorkspace', data, runKey: key }); }
     if (watch) {
       run.prUrl = watch; run.status = 'awaiting_merge';
       this.commit(() => { this.saveState(); this.emit('run.awaiting_merge', key, { prUrl: watch }); });
@@ -1294,7 +1301,7 @@ export class FactoryEngine {
       did.push(say(outcome));
     };
     if (policy.exitAgent && run.agentName) await step('herdr.stopAgent', { agentName: run.agentName, exitCommand: exitCommandFor(rule.agentKind) }, (o) => `Agent \`${run.agentName}\` ${o.startsWith('not done') ? 'is still running' : o}.`);
-    if (policy.closeWorkspace && run.workspaceId) await step('herdr.closeWorkspace', { workspaceId: run.workspaceId }, (o) => `herdr workspace \`${run.workspaceId}\` ${o.startsWith('not done') ? `is still open (${o.slice(9)}` : o}.`);
+    if (policy.closeWorkspace && run.workspaceId) await step('herdr.closeWorkspace', { workspaceId: run.workspaceId, owner: workspaceOwner(run, this.paths.repo) }, (o) => `herdr workspace \`${run.workspaceId}\` ${o.startsWith('not done') ? `is still open (${o.slice(9)}` : o}.`);
     if (policy.removeWorktree && run.worktree !== 'none') {
       const at = run.worktreePath || run.workDir;
       const where = at ? path.relative(rule.repo, at) || at : '(none)';

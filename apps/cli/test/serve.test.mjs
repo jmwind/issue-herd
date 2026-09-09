@@ -48,7 +48,7 @@ function owner(t, dir, factoryId) {
       async run(args) { if (args[0] === 'api') return { result: { snapshot: { version: '9', agents: [{ name: 'gh-1-impl', agent_status: 'idle', workspace_id: 'w1' }].filter((a) => !stopped.has(a.name)), workspaces: [{ workspace_id: 'w1', label: 'x' }], panes: [] } } }; return {}; },
       async agentGet(n) { return stopped.has(n) ? null : { name: n, agent_status: 'idle', workspace_id: 'w1' }; },
       async stopAgent(n) { stopped.add(n); return 'exited'; },
-      async closeWorkspace() {}, async readAgent() { return 'screen text'; }, async notify() {}, async prompt() {},
+      async closeWorkspace() {}, async closeWorkspaceOf() { return 'closed'; }, async workspaceGet() { return null; }, async readAgent() { return 'screen text'; }, async notify() {}, async prompt() {},
     };
     const engine = new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: ${JSON.stringify(PROMPTS)} }), tracker: null, herdr, paths, promptsRoot: ${JSON.stringify(PROMPTS)}, store: openOwnerStore(paths), ids: { hostId: 'h', factoryId: ${JSON.stringify(factoryId)} }, log: () => {}, version: 'test' });
     await serveIpc(createApplication(engine), paths.socketPath);
