@@ -112,8 +112,17 @@ export class Herdr {
     return this.run(args, { timeoutMs: timeoutMs + 15_000 });
   }
 
-  async prompt(target, text) {
-    return this.run(['agent', 'prompt', target, text]);
+  /**
+   * Submit `text` to the agent. With `wait`, herdr also confirms the agent took it: a submission
+   * that starts from an idle agent must be seen working (or blocked) within a few seconds, else
+   * the call fails with agent_prompt_stalled — the difference between a brief the agent has and
+   * one that was typed into a terminal that was not listening yet (Claude Code redrawing after
+   * its trust dialog, for one).
+   */
+  async prompt(target, text, { wait = false, until = [], timeoutMs = 20_000 } = {}) {
+    const args = ['agent', 'prompt', target, text];
+    if (wait) { args.push('--wait', '--timeout', String(timeoutMs)); for (const u of until) args.push('--until', u); }
+    return this.run(args, { timeoutMs: wait ? timeoutMs + 10_000 : undefined });
   }
 
   /**
@@ -253,6 +262,8 @@ export function isNotFound(err) { return /(^|_)not_found$/.test(err?.code || '')
  * deliverable — the caller should keep it and try again once the agent takes input.
  */
 export function isBlocked(err) { return err?.code === 'agent_blocked'; }
+/** The agent accepted nothing: herdr typed, and never saw it start working. */
+export function isStalled(err) { return err?.code === 'agent_prompt_stalled'; }
 
 /**
  * Agent names are unique across the herdr server, so a second `agent start` under a name that is

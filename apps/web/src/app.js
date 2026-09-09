@@ -18,7 +18,8 @@
   function applyTheme(name) { if (!THEMES[name]) name = 'factorio'; document.body.dataset.theme = name; var css = document.getElementById('theme-css'); if (css && css.getAttribute('href') !== '/themes/' + name + '.css') css.setAttribute('href', '/themes/' + name + '.css'); try { localStorage.setItem('weawr-theme', name); } catch (e) {} }
   applyTheme(themeOf());
   // The stream's state: when it is down, everything shown is as old as receivedAt says.
-  var link = { connected: false, retryInMs: null, error: null };
+  // The connection to weawr, as the title bar shows it. (`link()` below is the belt between two plants.)
+  var linkState = { connected: false, retryInMs: null, error: null };
   // Mark done / Undo in flight, by task: the button and card show it until the console's state
   // reflects the decision (the task in output, or back), not just until the request returns.
   var busy = {};
@@ -91,9 +92,9 @@
   // ------------------------------------------------------------ pieces
   // `below` hangs off the bar: the factory picker drops from it, directly under the picker button.
   function titlebar(inner, below) {
-    var ok = view && view.herdr.connected && link.connected;
-    var why = !link.connected ? 'the link to weawr is down' + (link.retryInMs ? ', retrying' : '') + ' — shown as of ' + dur(drift()) + ' ago' : ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering';
-    return '<div class="titlebar' + (below ? ' open' : '') + '">' + MARK + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + why + '">' + GEAR + esc(document.body.dataset.hostname) + (!link.connected && view ? ' <em class="stale">' + dur(drift()) + ' old</em>' : '') + '</span>' + (below || '') + '</div>';
+    var ok = view && view.herdr.connected && linkState.connected;
+    var why = !linkState.connected ? 'the link to weawr is down' + (linkState.retryInMs ? ', retrying' : '') + ' — shown as of ' + dur(drift()) + ' ago' : ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering';
+    return '<div class="titlebar' + (below ? ' open' : '') + '">' + MARK + inner + '<span class="drag"></span><span class="tick' + (ok ? '' : ' off') + '" title="' + why + '">' + GEAR + esc(document.body.dataset.hostname) + (!linkState.connected && view ? ' <em class="stale">' + dur(drift()) + ' old</em>' : '') + '</span>' + (below || '') + '</div>';
   }
   function belt() {
     var fs = shown(), today = 0, assembling = 0, wait = 0, alerts = 0;
@@ -101,8 +102,8 @@
       alerts += taskAlerts(f); assembling += f.counts.inflight; wait += f.humanWaitMs;
       f.issues.forEach(function (i) { if (i.bucket !== 'inflight' && !hasAlert(f, i) && i.finishedAt && Date.now() - Date.parse(i.finishedAt) < 86400e3) today++; });
     });
-    var stats = [['output today', today, 'merged'], ['assembling', assembling, 'commit'], ['waiting on you', dur(wait), 'lines'], ['alerts', alerts, alerts ? 'pr' : 'commit']];
-    var items = stats.map(function (st) { return '<span class="item"><i class="' + st[2] + '"></i><b>' + esc(st[1]) + '</b>' + esc(st[0]) + '</span>'; }).join('');
+    var counters = [['output today', today, 'merged'], ['assembling', assembling, 'commit'], ['waiting on you', dur(wait), 'lines'], ['alerts', alerts, alerts ? 'pr' : 'commit']];
+    var items = counters.map(function (st) { return '<span class="item"><i class="' + st[2] + '"></i><b>' + esc(st[1]) + '</b>' + esc(st[0]) + '</span>'; }).join('');
     return '<div class="belt" aria-hidden="true"><div class="items">' + items + items + '</div>' + INSERTER + '</div>';
   }
   // The roles that worked on a task, in team order, each with its light; a role the team has but
@@ -396,7 +397,7 @@
   client.subscribe({
     onSnapshot: function (s) { view = s; receivedAt = Date.now(); render(); settle(); },
     onResnapshot: function () { client.hostSnapshot().then(function (s) { view = s; receivedAt = Date.now(); render(); }).catch(function () {}); },
-    onStatus: function (st) { link = st; if (st.error && /answered 401/.test(st.error)) location.replace('/'); render(); },
+    onStatus: function (st) { linkState = st; if (st.error && /answered 401/.test(st.error)) location.replace('/'); render(); },
     // Development (`pnpm dev`): the host says a page file changed; take the new one.
     onOther: function (event) { if (event === 'reload' && window.WEAWR_LIVE) location.reload(); },
   });

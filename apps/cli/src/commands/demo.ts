@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { currentOwner, describeHolder, factoryId, factoryPaths, loadConfig, registrationsDir, removeRegistration } from '@weawr/engine';
+import { currentOwner, describeHolder, factoryId, factoryPaths, loadConfig, readFactoryState, registrationsDir, removeRegistration } from '@weawr/engine';
 import type { FactoryPaths } from '@weawr/engine';
 import { GitHubTracker } from '@weawr/engine/adapters/trackers/github.mjs';
 import { resolveCredential, noCredentialError } from '@weawr/engine/adapters/auth.mjs';
@@ -219,7 +219,7 @@ async function reset(ctx: Context, opts: Opts): Promise<void> {
   const tracker = githubFor(repo, dir);
   const closed = await resetRemote(tracker, ledger, { all: opts.all, log });
   log(`closed ${closed.issues} issue(s), ${closed.prs} pull request(s); deleted ${closed.branches} branch(es)`);
-  resetLocal(ctx, paths, log);
+  await resetLocal(ctx, paths, log);
   fs.rmSync(path.join(paths.configDir, LEDGER), { force: true });
   log(`reset; \`weawr demo <scenario> --into ${dir}\` starts again`);
 }
@@ -262,8 +262,23 @@ export async function resetRemote(tracker: any, ledger: Ledger | null, { all = f
   return out;
 }
 
-/** Forget the factory's runs on this machine: worktrees, state (set aside, not deleted) and the registration. */
-export function resetLocal(ctx: Context, paths: FactoryPaths, log: (m: string) => void): void {
+/** Forget the factory's runs on this machine: their herdr workspaces, the worktrees, the state (set aside, not deleted) and the registration. */
+export async function resetLocal(ctx: Pick<Context, 'userDir' | 'ids' | 'herdr'>, paths: FactoryPaths, log: (m: string) => void): Promise<void> {
+  // The runs' workspaces, and the watcher's own: what a person would otherwise close by hand.
+  const view = readFactoryState(paths);
+  const runs = Object.values<any>(view.state.runs || {}).filter((r) => r.workspaceId);
+  try { view.store?.close(); } catch { /* read-only */ }
+  let closed = 0;
+  for (const r of runs) {
+    try { await ctx.herdr.closeWorkspaceOf(r.workspaceId, { label: r.workspaceLabel ?? null, repo: paths.repo, agentName: r.agentName ?? null }); closed++; }
+    catch (e: any) { log(`could not close workspace ${r.workspaceId}: ${e.message}`); }
+  }
+  const regFile = path.join(registrationsDir(ctx.userDir), `${factoryId(ctx.ids.hostId, paths.repo)}.json`);
+  try {
+    const reg = JSON.parse(fs.readFileSync(regFile, 'utf8'));
+    if (reg.workspaceId) { await ctx.herdr.closeWorkspace(reg.workspaceId); closed++; }
+  } catch { /* no registration, or herdr said no; nothing to close */ }
+  if (closed) log(`closed ${closed} herdr workspace(s)`);
   try { git(paths.repo, ['worktree', 'prune']); } catch { /* not a checkout */ }
   const worktrees = path.join(paths.configDir, 'worktrees');
   if (fs.existsSync(worktrees)) {

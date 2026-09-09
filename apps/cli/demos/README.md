@@ -39,5 +39,6 @@ weawr demo reset                                   # 4. done: close the issues a
 - `reset` only touches what the ledger says this factory filed. `reset --all --yes` wipes every
   open `ai` issue, PR and branch in the demo repo.
 - `--into DIR` puts the factory elsewhere; `--dry-run` shows what would be filed and files nothing.
-- Before `squad` or `bake-off`: be signed in to each agent (`claude`, `codex login`) and answer
-  codex's first "trust this directory?" prompt by hand once.
+- Be signed in to each agent you use (`claude`, `codex login`). The first run in a fresh demo
+  clone stops on each agent's "trust this folder?" dialog: answer it once in the agent's pane
+  (the console shows the run as waiting on you); weawr sends the brief once the dialog is gone.

@@ -13,6 +13,7 @@ import * as _tracker from './adapters/tracker.mjs';
 import * as _claim from './claim.mjs';
 import * as _auth from './adapters/auth.mjs';
 import * as _herdr from './adapters/herdr.mjs';
+import { agentOf, coordinator, roleByline, table } from './comments.js';
 import * as _branch from './adapters/branch.mjs';
 import * as _worktree from './adapters/worktree.mjs';
 import * as _agents from './agents.mjs';
@@ -24,7 +25,7 @@ import * as _github from './adapters/trackers/github.mjs';
 const { userDisplay, slugify } = _tracker as Record<string, any>;
 const { alreadyTaken, claimLabelFor, heldByAPerson, issueKeyOf, passLimit, pickCandidates, pickupMarker, runKeyFor, workspaceLabel } = _claim as Record<string, any>;
 const { resolveCredential } = _auth as Record<string, any>;
-const { agentPlacement, isBlocked, isNameTaken, workspaceOwner } = _herdr as Record<string, any>;
+const { agentPlacement, isBlocked, isNameTaken, isStalled, workspaceOwner } = _herdr as Record<string, any>;
 const { desiredBranch, reconcileBranch } = _branch as Record<string, any>;
 const { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } = _worktree as Record<string, any>;
 const { agentArgv, describeAgent, exitCommandFor } = _agents as Record<string, any>;
@@ -100,6 +101,10 @@ const RESULT_CHECK_MS = 60_000;
 /** How often the watcher may ask GitHub about the same pull request, whatever `pollSeconds` says. */
 const PR_POLL_MS = 60_000;
 const sleep = (ms: number) => new Promise((r?: any) => setTimeout(r, ms));
+/** How long herdr is given to see the agent start on a brief, how many times the brief is offered, and the pause between. */
+const PROMPT_UPTAKE_MS = 20_000;
+const PROMPT_ATTEMPTS = 3;
+const PROMPT_RETRY_MS = 4_000;
 function ts(d: Date) { const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 function hms(d: Date) { return d.toTimeString().slice(0, 8); }
 /** The sidebar label for the watcher's own herdr workspace. */
@@ -218,7 +223,7 @@ export class FactoryEngine {
       run.invalidResult = { hash, at: this.clock().toISOString(), issues: checked.issues };
       this.commit(() => { this.saveState(); this.emit('run.result_invalid', key, { issues: checked.issues }); });
       this.log(`${key}: result.json does not check and will not finish the turn: ${why}`);
-      await this.report(key, rule, rule.onBlocked, `⚠️ The result file for ${key} was written but does not check, so the turn is not finished: ${why}. Ask the agent in herdr workspace \`${run.workspaceId}\` to rewrite \`${run.resultPath}\` (whole, via a temporary file renamed into place).`, 'request');
+      await this.report(key, rule, rule.onBlocked, coordinator(`⚠️ the result file for ${key} was written but does not check, so the turn is not finished: ${why}. Ask the agent in herdr workspace \`${run.workspaceId}\` to rewrite \`${run.resultPath}\` (whole, via a temporary file renamed into place).`), 'request');
     }
     return { invalid: true };
   }
@@ -287,7 +292,12 @@ export class FactoryEngine {
     catch (e: any) { this.emit('run.merge_refused', key, { checks, error: e.message }); return { merged: false, reason: e.message, checks, prUrl, headSha: head }; }
     this.commit(() => { run.mergeRequestedAt = this.clock().toISOString(); run.mergedBy = requestedBy; this.saveState(); this.emit('run.merge_requested', key, { prUrl, headSha: head, by: requestedBy, method: this.cfg.mergeMethod }); });
     this.log(`${key}: ${prUrl} merged (${this.cfg.mergeMethod}) at ${head?.slice(0, 7)} — ${this.cfg.mergeLabel} on ${issueKey}, ${reviewers.join(', ')} approved`);
-    const body = `🔀 **weawr** merged ${prUrl} (${this.cfg.mergeMethod}) at \`${head?.slice(0, 7)}\`: the issue carries \`${this.cfg.mergeLabel}\` and ${reviewers.map((r) => `\`${r}\``).join(', ')} approved that head.`;
+    const body = `${coordinator(`🔀 merged ${prUrl} (${this.cfg.mergeMethod}) at \`${head?.slice(0, 7)}\`, on behalf of \`${run.role || run.rule}\`.`)}\n\n${table([
+      ['Authorised by', `the \`${this.cfg.mergeLabel}\` label on ${issueKey}`],
+      ['Approved by', reviewers.map((r) => `\`${r}\``).join(', ')],
+      ['Head', `\`${head?.slice(0, 7)}\``],
+      ['Merged as', this.cfg.mergeMethod],
+    ])}`;
     await this.performOwed([{ id: this.owe('tracker.comment', { issueId: run.issueId, issueKey, body }, key), kind: 'tracker.comment', data: { issueId: run.issueId, issueKey, body }, runKey: key }]);
     return { merged: !!outcome.merged, reason: null, checks, prUrl, headSha: head };
   }
@@ -715,21 +725,24 @@ export class FactoryEngine {
       if (this.tracker && rule.onPickup.comment) {
         // pickupMarker() writes the role into the first words, because this comment is also the
         // guard: a reader sees who holds which role, and alreadyTaken() greps for its own.
-        const held = [`herdr workspace \`${run.workspaceId}\``, `agent \`${run.agentName}\``, `rule \`${rule.name}\``];
-        if (nudges.length) held.unshift(`turn ${pass}, nudged by ${nudges.map((n?: any) => `\`${n.from}\``).join(' and ')}`);
-        else if (passLimit(rule) > 1) held.unshift(`pass ${pass} of ${passLimit(rule)}`);
-        if (run.branch) held.push(`branch \`${run.branch}\``);
+        const turn = nudges.length ? `${pass}, nudged by ${nudges.map((n?: any) => `\`${n.from}\``).join(' and ')}`
+          : passLimit(rule) > 1 ? `${pass} of ${passLimit(rule)}` : null;
         // A nudged turn is expected to find its session up, so "took this back over" — the words
         // for a session an earlier attempt left adrift — would be the wrong story. The marker stays
         // a prefix either way, because alreadyTaken() greps for it.
         const how = nudges.length ? `${pickupMarker(rule.role)} again`
           : run.adopted ? pickupMarker(rule.role).replace('picked this up', 'took this back over') : pickupMarker(rule.role);
-        const body = `🧵 ${how} on \`${os.hostname()}\` · ${held.join(' · ')}\n\nI'll post the PR link here when it is ready.`;
+        const body = `🧵 ${how} on \`${os.hostname()}\`\n\n${table([
+          ['Role', rule.role ? `\`${rule.role}\` — ${agentOf(rule)}` : agentOf(rule)],
+          ['Turn', turn],
+          ['Branch', run.branch ? `\`${run.branch}\`` : null],
+          ['Workspace', `herdr \`${run.workspaceId}\` · agent \`${run.agentName}\``],
+        ])}\n\n_I'll post the PR link here when it is ready._`;
         await this.performOwed([{ id: this.owe('tracker.comment', { issueId: issue.id, issueKey: issue.identifier, body }, key), kind: 'tracker.comment', data: { issueId: issue.id, issueKey: issue.identifier, body }, runKey: key }]);
       }
       if (!sent) {
         run.notified.blocked = true; this.saveState();
-        await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is not taking input yet — answer whatever it is showing in herdr workspace \`${run.workspaceId}\` and weawr will send it the brief.${await this.tail(run.agentName, 12)}`, 'request');
+        await this.report(key, rule, rule.onBlocked, coordinator(`✋ the \`${rule.role || rule.name}\` agent for ${key} is not taking input yet — answer whatever it is showing in herdr workspace \`${run.workspaceId}\` and weawr will send it the brief.${await this.tail(run.agentName, 12)}`), 'request');
       }
       const owed: Array<{ id: number | null; kind: string; data: Record<string, unknown>; runKey: string | null }> = [];
       if (this.tracker && rule.onPickup.assignToMe) owed.push({ id: this.owe('tracker.assign', { issue: slimIssue(issue) }, key), kind: 'tracker.assign', data: { issue: slimIssue(issue) }, runKey: key });
@@ -741,7 +754,7 @@ export class FactoryEngine {
       run.status = 'failed'; run.error = e.message; run.finishedAt = this.clock().toISOString();
       this.commit(() => { this.saveState(); this.emit('run.failed', key, { error: e.message }); });
       if (this.tracker) {
-        const body = `⚠️ weawr failed to start a session: ${e.message}`;
+        const body = coordinator(`⚠️ could not start the \`${rule.role || rule.name}\` session for ${key}: ${e.message}`);
         await this.performOwed([{ id: this.owe('tracker.comment', { issueId: issue.id, issueKey: issue.identifier, body }, key), kind: 'tracker.comment', data: { issueId: issue.id, issueKey: issue.identifier, body }, runKey: key }]);
         await this.releaseClaim(key, run);
       }
@@ -904,14 +917,26 @@ export class FactoryEngine {
    */
   async deliverPrompt(key?: any, run?: any) {
     if (!run.pendingPrompt) return true;
-    try {
-      await this.herdr.prompt(run.agentName, run.promptText);
-      run.pendingPrompt = false; this.commit(() => { this.saveState(); this.emit('run.prompted', key, {}); });
-      this.log(`${key}: briefed`);
-      return true;
-    } catch (e: any) {
-      this.log(`${key}: the agent has not taken the brief yet (${isBlocked(e) ? 'it is showing a dialog' : e.message}); will try again when it takes input`);
-      return false;
+    // "Took it" means seen working afterwards, not "typed": an agent redrawing its screen after
+    // that dialog swallows what is typed and sits at an empty prompt, and a supervisor that
+    // believed the brief was in would then wait on it for ever. Herdr confirms the uptake; a
+    // stalled submission is sent again, a few times, before the agent is left to be prompted
+    // when it next takes input.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.herdr.prompt(run.agentName, run.promptText, { wait: true, until: ['working', 'blocked'], timeoutMs: PROMPT_UPTAKE_MS });
+        run.pendingPrompt = false; this.commit(() => { this.saveState(); this.emit('run.prompted', key, {}); });
+        this.log(`${key}: briefed`);
+        return true;
+      } catch (e: any) {
+        if (isStalled(e) && attempt < PROMPT_ATTEMPTS) {
+          this.log(`${key}: the agent did not take the brief (it was not listening yet); sending it again`);
+          await sleep(PROMPT_RETRY_MS);
+          continue;
+        }
+        this.log(`${key}: the agent has not taken the brief yet (${isBlocked(e) ? 'it is showing a dialog' : isStalled(e) ? 'it did not start on it' : e.message}); will try again when it takes input`);
+        return false;
+      }
     }
   }
 
@@ -946,7 +971,7 @@ export class FactoryEngine {
       if (st === 'gone') {
         run.status = 'stopped'; run.finishedAt = this.clock().toISOString(); this.commit(() => { this.saveState(); this.emit('run.stopped', key, { why: 'agent exited without a result' }); });
         this.log(`${key}: agent exited without a result`);
-        await this.report(key, rule, rule.onIdle, `🛑 The agent session for ${key} ended without writing a result. Workspace \`${run.workspaceId}\` is still open for inspection.`);
+        await this.report(key, rule, rule.onIdle, coordinator(`🛑 the \`${rule.role || rule.name}\` agent session for ${key} ended without writing a result. Workspace \`${run.workspaceId}\` is still open for inspection.`));
         // Stamp for the same reason finalize does, and here it matters more: a rule with turns left
         // would otherwise read our own "the agent died" comment as the issue moving on and start
         // the next turn immediately, burning every turn on a session that keeps dying.
@@ -963,7 +988,7 @@ export class FactoryEngine {
         if (!run.notified.blocked) {
           run.notified.blocked = true; this.saveState();
           const tail = await this.tail(name, 12);
-          await this.report(key, rule, rule.onBlocked, `✋ The agent for ${key} is waiting for approval or input in herdr workspace \`${run.workspaceId}\`.${tail}`, 'request');
+          await this.report(key, rule, rule.onBlocked, coordinator(`✋ the \`${rule.role || rule.name}\` agent for ${key} is waiting for approval or input in herdr workspace \`${run.workspaceId}\`.${tail}`), 'request');
         }
         const next = await this.herdr.waitAgent(name, { until: ['working', 'idle', 'done'], timeoutMs: 6 * 3600e3 });
         this.log(`${key}: unblocked → ${next}`);
@@ -972,13 +997,16 @@ export class FactoryEngine {
         continue;
       }
       if (st === 'idle' || st === 'done' || st === 'unknown') {
+        // An agent that never took its brief is not asking a question; it is waiting to be told.
+        // Round again: the brief is offered every time it takes input.
+        if (run.pendingPrompt) { await sleep(PROMPT_RETRY_MS); continue; }
         // Claude finished a turn without writing result.json — probably asked a question in chat.
         this.log(`${key}: ${st} without a result — probably asking a question in ${run.workspaceId}`);
         this.emit('run.question', key, { workspaceId: run.workspaceId });
         if (!run.notified.idle) {
           run.notified.idle = true; this.saveState();
           const tail = await this.tail(name, 15);
-          await this.report(key, rule, rule.onIdle, `💬 The agent for ${key} stopped without a result and is probably asking a question. Answer it in herdr workspace \`${run.workspaceId}\`.${tail}`, 'request');
+          await this.report(key, rule, rule.onIdle, coordinator(`💬 the \`${rule.role || rule.name}\` agent for ${key} stopped without a result and is probably asking a question. Answer it in herdr workspace \`${run.workspaceId}\`.${tail}`), 'request');
         }
         await this.herdr.waitAgent(name, { until: ['working'], timeoutMs: 6 * 3600e3 });
         this.log(`${key}: working again`);
@@ -1016,12 +1044,16 @@ export class FactoryEngine {
     } catch { /* best effort */ }
     const status = result.status || 'unknown';
     const icon = status === 'pr_open' ? '✅' : status === 'needs_human' ? '🙋' : status === 'nothing_to_do' ? '🤷' : '❌';
-    const lines = [`${icon} **weawr** finished ${run.issueKey || key}${run.role ? ` as \`${run.role}\`` : ''} with status \`${status}\`.`];
-    if (result.prUrl) lines.push(`\nPR: ${result.prUrl}`);
-    if (result.branch) lines.push(`Branch: \`${result.branch}\``);
-    if (result.summary) lines.push(`\n${result.summary}`);
-    if (result.testing) lines.push(`\n**How to test**\n${result.testing}`);
-    if (result.notes) lines.push(`\n**Notes**\n${result.notes}`);
+    const verdict = result.review?.verdict ? `\`${result.review.verdict}\`${result.review.headSha ? ` at \`${String(result.review.headSha).slice(0, 7)}\`` : ''}${result.review.prUrl ? ` for ${result.review.prUrl}` : ''}` : null;
+    const lines = [`${icon} ${roleByline(run.role)} finished ${run.issueKey || key}${run.role ? ` as \`${run.role}\`` : ''} with status \`${status}\`.`];
+    const facts: Array<[string, unknown]> = [
+      ['Role', run.role ? `\`${run.role}\` — ${agentOf(rule)}` : agentOf(rule)],
+      ['Turn', (run.pass || 1) > 1 || passLimit(rule) > 1 ? `${run.pass || 1}${passLimit(rule) > 1 ? ` of ${passLimit(rule)}` : ''}` : null],
+      ['Status', `\`${status}\``],
+      ['PR', result.prUrl || null],
+      ['Branch', result.branch ? `\`${result.branch}\`` : null],
+      ['Verdict', verdict],
+    ];
     // A merged PR is what says the run is over; until then the workspace and the worktree stay up
     // for whoever reviews it. A prUrl that is not a pull request URL is not followed — the agent
     // wrote it, and the watcher will not sit waiting for a merge that can never be seen.
@@ -1029,9 +1061,11 @@ export class FactoryEngine {
     // the URL out keeps the watch the previous turn started.
     const prUrl = parsePrUrl(result.prUrl) ? result.prUrl : parsePrUrl(run.prUrl) ? run.prUrl : null;
     const watch = status === 'pr_open' && watchesMerge(rule) && prUrl ? prUrl : null;
-    lines.push(watch
-      ? `\n_herdr workspace \`${run.workspaceId}\` and the run's worktree stay up until ${watch} is merged._`
-      : `\n_herdr workspace \`${run.workspaceId}\` is still open._`);
+    facts.push(['Workspace', watch ? `herdr \`${run.workspaceId}\` and the worktree stay up until ${watch} is merged` : `herdr \`${run.workspaceId}\` is still open`]);
+    lines.push('', table(facts));
+    if (result.summary) lines.push(`\n${result.summary}`);
+    if (result.testing) lines.push(`\n**How to test**\n${result.testing}`);
+    if (result.notes) lines.push(`\n**Notes**\n${result.notes}`);
     // What the agent asked of the other roles, and what will happen to each ask. Decided here, and
     // said in this comment, so the issue records the handoff next to the report that made it; the
     // turns themselves start after the comment is up, so their pickup comments follow it.
@@ -1123,7 +1157,7 @@ export class FactoryEngine {
     for (const { targetKey, nudge } of plan.turns) await this.startNudgedTurn(targetKey, [nudge], key);
     if (plan.capped) {
       const issueKey = run.issueKey || issueKeyOf(key);
-      await this.report(key, rule, rule.onBlocked, `🙋 The agents on ${issueKey} have nudged each other ${this.cfg.maxNudges} times, which is the limit (\`maxNudges\`), and \`${run.role || rule.name}\` still needs \`${plan.capped.to}\` to act. A person needs to step in: read the reports on the issue and answer in the workspace of whichever agent should go next, or raise \`maxNudges\` in \`.weawr/config.local.json\` to let them carry on.`, 'request');
+      await this.report(key, rule, rule.onBlocked, coordinator(`🙋 the agents on ${issueKey} have nudged each other ${this.cfg.maxNudges} times, which is the limit (\`maxNudges\`), and \`${run.role || rule.name}\` still needs \`${plan.capped.to}\` to act. A person needs to step in: read the reports on the issue and answer in the workspace of whichever agent should go next, or raise \`maxNudges\` in \`.weawr/config.local.json\` to let them carry on.`), 'request');
     }
   }
 
@@ -1248,8 +1282,8 @@ export class FactoryEngine {
       // The notification only carries the first line, and with nothing switched on the thing you
       // need from it is what is still standing — so that goes first and the URL follows.
       const lines = did.length
-        ? [`🎉 ${key} is finished — ${run.prUrl} is merged, so the run was shut down.`, '', ...did.map((d?: any) => `- ${d}`)]
-        : [`🎉 ${key} is finished — its PR is merged. ${this.leftStanding(run, rule)}`, '', run.prUrl];
+        ? [coordinator(`🎉 ${key} is finished — ${run.prUrl} is merged, so the run was shut down.`), '', ...did.map((d?: any) => `- ${d}`)]
+        : [coordinator(`🎉 ${key} is finished — its PR is merged. ${this.leftStanding(run, rule)}`), '', run.prUrl];
       await this.report(key, rule, rule.onMerged, lines.join('\n'), 'done');
       await this.stampAnswered(key, run, rule);
     }
@@ -1272,7 +1306,7 @@ export class FactoryEngine {
       log: (m?: any) => this.log(`${key}: ${m}`),
       lookupAgent: () => (run.agentName ? this.herdr.agentGet(run.agentName) : null),
       nudge: () => this.herdr.prompt(run.agentName, conflictPrompt({ prUrl: run.prUrl, branch: run.branch, baseRef: pr.baseRef, briefPath: run.dir ? path.join(run.dir, 'brief.md') : null })),
-      tellPerson: () => this.report(key, rule, rule.onBlocked, `⚠️ ${run.prUrl} conflicts with \`${base}\` and the implementer's session for ${key} has ended, so nobody is there to bring the branch up to date. Merge \`${base}\` into \`${run.branch || 'the branch'}\` by hand, or open a new session on it.`, 'request'),
+      tellPerson: () => this.report(key, rule, rule.onBlocked, coordinator(`⚠️ ${run.prUrl} conflicts with \`${base}\` and the implementer's session for ${key} has ended, so nobody is there to bring the branch up to date. Merge \`${base}\` into \`${run.branch || 'the branch'}\` by hand, or open a new session on it.`), 'request'),
     });
     if (did && did !== 'retry') this.saveState();
   }

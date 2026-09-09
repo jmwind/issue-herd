@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { factoryPaths, loadConfig } from '@weawr/engine';
+import { SqliteStore, factoryPaths, loadConfig, storePath } from '@weawr/engine';
 import { GitHubTracker } from '@weawr/engine/adapters/trackers/github.mjs';
 import { validateTemplate } from '@weawr/recipes';
 import { defaultDemoDir, fileIssues, listScenarios, parseOpts, pushStarter, readLedger, resetLocal, resetRemote, writeScenario } from '../build/commands/demo.js';
@@ -141,17 +141,22 @@ test('reset closes the ledger\'s issues, their PRs and branches, strips the clai
   assert.ok(calls.includes('PATCH /issues/41'));
 });
 
-test('the local reset sets the state aside, removes worktrees, and forgets the registration', (t) => {
+test('the local reset closes the runs\' workspaces, sets the state aside, removes worktrees, and forgets the registration', async (t) => {
   const repo = tmp(t, 'weawr-demo-local-');
   git(repo, ['init', '-q', '-b', 'main']); fs.writeFileSync(path.join(repo, 'a'), 'a'); git(repo, ['add', '-A']); git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '-m', 'a']);
   const paths = factoryPaths(repo);
-  fs.mkdirSync(paths.stateDir, { recursive: true }); fs.writeFileSync(path.join(paths.stateDir, 'factory.sqlite'), '');
+  fs.mkdirSync(paths.stateDir, { recursive: true });
+  const store = SqliteStore.open(storePath(paths.stateDir));
+  store.save({ runs: { 'GH-1@dev': { status: 'running', workspaceId: 'w7', workspaceLabel: 'GH-1 dev x', agentName: 'gh-1-dev' }, 'GH-2': { status: 'done', workspaceId: null } }, nudges: {} });
+  store.close();
   fs.mkdirSync(path.join(paths.configDir, 'worktrees'), { recursive: true });
   git(repo, ['worktree', 'add', '-q', path.join(paths.configDir, 'worktrees', 'gh-1'), '-b', '1-x']);
   const userDir = tmp(t, 'weawr-user-');
-  const ctx = { userDir, ids: { hostId: 'h' } };
+  const closed = [];
+  const ctx = { userDir, ids: { hostId: 'h' }, herdr: { async closeWorkspaceOf(id, owner) { closed.push([id, owner.label]); return 'closed'; }, async closeWorkspace(id) { closed.push([id, 'watch']); } } };
   const lines = [];
-  resetLocal(ctx, paths, (m) => lines.push(m));
+  await resetLocal(ctx, paths, (m) => lines.push(m));
+  assert.deepEqual(closed, [['w7', 'GH-1 dev x']], 'the running run\'s workspace is closed through the owner check; a run with none is skipped');
   assert.ok(!fs.existsSync(paths.stateDir));
   assert.ok(fs.readdirSync(paths.configDir).some((d) => d.startsWith('state.reset-')), 'the state is set aside, not deleted');
   assert.ok(!fs.existsSync(path.join(paths.configDir, 'worktrees')));

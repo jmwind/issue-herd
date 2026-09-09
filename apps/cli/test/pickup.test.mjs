@@ -17,6 +17,9 @@ const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
  * A `herdr` that answers the calls a pickup makes, in the shapes the real one uses.
  *   mode "blocked-first": `agent prompt` is refused once with agent_blocked, as it is when Claude
  *     Code comes up on its trust dialog; the second prompt is accepted.
+ *   mode "stalled-first": `agent prompt --wait` reports agent_prompt_stalled once, as it does when
+ *     the text was typed into a Claude Code that was still redrawing after the dialog; the second
+ *     prompt is taken.
  *   mode "adopt": `agent get` always finds an agent, as it does when an earlier attempt at this
  *     issue left its session running.
  *   mode "working": `agent wait` never sees the agent settle — it times out every time, as it does
@@ -44,6 +47,7 @@ if (noun === 'agent' && verb === 'start') { fs.writeFileSync(path.join(dir, 'sta
 if (noun === 'agent' && verb === 'prompt') {
   const n = bump('prompts');
   if (mode === 'blocked-first' && n === 1) no('agent_blocked', 'agent ' + rest[0] + ' is blocked and requires interactive input');
+  if (mode === 'stalled-first' && n === 1 && rest.includes('--wait')) no('agent_prompt_stalled', 'agent ' + rest[0] + ' did not start working within 5000ms');
   const brief = /is in (\\S+brief\\.md)/.exec(rest[1] || '');
   // mode "nudge": the first result is a reviewer's, and it asks the implementer to act; whatever
   // turn that starts answers with a plain result, as an implementer that fixed the findings would.
@@ -92,6 +96,21 @@ test('a brief herdr will not take yet is delivered later, not thrown away', (t) 
   assert.match(r.out, /it is showing a dialog/);
   assert.doesNotMatch(r.out, /failed to start a session|pickup .* failed/);
   assert.equal(herdr.prompts(), 2, 'the supervisor sends the brief again once the agent takes input');
+  assert.match(r.out, /done/);
+  assert.equal(r.status, 0);
+});
+
+test('a brief the agent did not start on is sent again, and only counts once it is taken', (t) => {
+  // Reproduced in the squad demo: Claude Code, redrawing after its trust dialog, swallowed the brief
+  // herdr typed; weawr logged "briefed" and then waited on an agent sitting at an empty prompt.
+  const dir = repo(t);
+  const herdr = fakeHerdr(t, { mode: 'stalled-first', cwd: dir });
+  const r = smoke(dir, herdr);
+  assert.match(r.out, /did not take the brief \(it was not listening yet\); sending it again/);
+  assert.match(r.out, /briefed/);
+  assert.equal(herdr.prompts(), 2, 'offered again after the stall');
+  assert.match(herdr.calls(), /agent prompt \S+ .*--wait/, 'the brief is submitted with herdr confirming the uptake');
+  assert.doesNotMatch(r.out, /probably asking a question/);
   assert.match(r.out, /done/);
   assert.equal(r.status, 0);
 });

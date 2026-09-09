@@ -71,3 +71,15 @@ test('six themes ship: Factorio (the default, overriding nothing) and five flat 
   const html = fs.readFileSync(path.join(SRC, 'app.html'), 'utf8');
   assert.match(html, /id="theme-css"/); assert.match(html, /data-theme="\{\{theme\}\}"/);
 });
+
+test('the page never declares a function and a variable under one name (the belt once ate the connection state)', () => {
+  // `var link = …` for the connection and `function link()` for the belt between two plants shared
+  // a scope; with two factories on the floor the belt was called on the state object and rendering
+  // died, which the console showed as "connecting…" for ever. A hoisted function and a var of the
+  // same name is legal JavaScript, so it is checked here.
+  const src = fs.readFileSync(path.join(SRC, 'app.js'), 'utf8');
+  const fns = new Set([...src.matchAll(/^\s*function\s+([A-Za-z_$][\w$]*)\s*\(/gm)].map((m) => m[1]));
+  const vars = new Set([...src.matchAll(/^\s*var\s+([A-Za-z_$][\w$]*)\s*=/gm)].map((m) => m[1]));
+  const both = [...fns].filter((n) => vars.has(n));
+  assert.deepEqual(both, [], `declared as both a function and a var: ${both.join(', ')}`);
+});
