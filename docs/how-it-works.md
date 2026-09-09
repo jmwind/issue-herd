@@ -96,7 +96,9 @@ the issue to move — capped per issue by `maxNudges`, after which a person is a
    and notification, and the supervisor sends the brief the moment you answer the dialog.
 6. Comment on the issue, assign it to you, move it to In Progress.
 7. A supervisor waits on `herdr agent wait`, a minute at a time, and looks for
-   `runs/<KEY>/result.json` after each wait. When Claude writes it
+   `runs/<KEY>/result.json` after each wait. (herdr 0.9 ends a wait whose agent has exited, been
+   released or moved pane with `agent_not_running`; the supervisor then asks herdr whether the
+   agent is still there, and reads "no" as the session having ended.) When Claude writes it
    (`pr_open | needs_human | nothing_to_do | failed`, PR URL, summary, testing notes) the watcher
    comments the result on the issue, moves it to In Review on `pr_open`, and sends a herdr
    notification — whether or not the agent has stopped, so an implementer that stays up to merge
@@ -180,7 +182,7 @@ one machine only):
 | key | default | what it does when the PR is merged |
 | --- | --- | --- |
 | `exitAgent` | `false` | sends the agent `/exit` and waits up to 20s for it to go — Claude Code then writes its own history and stops its own MCP servers, rather than having its pane pulled away |
-| `closeWorkspace` | `false` | `herdr workspace close` |
+| `closeWorkspace` | `false` | `herdr workspace close` — only if the workspace under the run's id is still the run's (see Mark done) |
 | `removeWorktree` | `false` | `git worktree remove` — never forced, so a worktree with uncommitted or untracked files is kept and the log says so |
 | `notify` | `true` | one herdr notification: the PR merged, and which workspace and worktree the run still has |
 | `comment` | `false` | the same as a comment on the issue. Off because GitHub already writes the merge into the issue's timeline; worth turning on for Linear, which does not |
@@ -298,7 +300,12 @@ detail screen (without restarting the agents or reopening the workspaces). An ag
 exit (herdr could not prompt it, or it did not go within the timeout) keeps the task in Alerts and
 nothing is recorded — its workspace is left alone, too, rather than pulled out from under it — and
 a workspace herdr would not close does the same: a task with an agent or a workspace still on it
-is not done, whatever was clicked, and the toast says which. While herdr is not answering at all
+is not done, whatever was clicked, and the toast says which. A workspace is only ever closed if it
+is still the run's: herdr numbers workspaces per server session, so after a restart (an upgrade,
+say) the id a run recorded can belong to a workspace made later for somebody else — the console
+checks the label the run gave it, the worktree it was opened on, or that the run's agent is standing
+in it, and a stranger's workspace under the run's old id is reported ("was reused by herdr for …")
+and left alone, without keeping the task in Alerts. While herdr is not answering at all
 the button is refused outright, for the same reason: with nothing visible, nothing can be closed,
 and a sign-off that closed nothing would be the pile again. Worktrees stay, and so do the run's
 archived `brief.md` and `result.json`: the pane was never the long-term record. `onMerged` is
@@ -308,7 +315,8 @@ closes what `onMerged` by default keeps.
 **Tidy.** Tasks marked done before Mark done closed workspaces left a pile. When any task marked
 done still has a workspace open for an agent that has exited, the Output section's header shows
 *Tidy N workspaces*: one click, one confirm, and those workspaces are closed (for the factory on
-screen, or all of them from the overview). Agents still up are never touched by it.
+screen, or all of them from the overview). Agents still up are never touched by it, and neither is
+a workspace that herdr has since given the run's old id to (it is not counted in the N).
 
 **The gate.** With no passcode the console binds to loopback only and asks nothing. With one
 (`set-passcode`, at least four digits because the phone's keypad has no letters; stored as a

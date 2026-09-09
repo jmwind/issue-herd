@@ -39,7 +39,7 @@ import { TRACKERS, isTracker, mergeSpec, trackerSpec, trackerClass } from '../sr
 import { slugify, userDisplay } from '../src/tracker.mjs';
 import { alreadyTaken, applyRoles, checkBasedOn, checkRoleBranches, claimLabelFor, heldByAPerson, issueKeyOf, normalizePasses, normalizeRole, passLimit, pickCandidates, pickupMarker, runKeyFor, workspaceLabel } from '../src/claim.mjs';
 import { ask, credentialsPath, deleteCredential, noCredentialError, resolveCredential, saveCredential, terminalUi } from '../src/auth.mjs';
-import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken } from '../src/herdr.mjs';
+import { Herdr, agentNameFor, agentPlacement, isBlocked, isNameTaken, workspaceOwner } from '../src/herdr.mjs';
 import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
 import { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } from '../src/worktree.mjs';
@@ -589,6 +589,11 @@ export class IssueHerd {
         ws = await this.herdr.createWorkspace({ cwd: rule.repo, label, env: { HERD_ISSUE: key } });
       }
       Object.assign(run, { workspaceId: ws.workspaceId, tabId: ws.tabId, paneId: ws.paneId });
+      // The label is how the run recognises its workspace later: herdr reuses a closed workspace's
+      // id after a restart, so an id alone can name somebody else's by the time anything closes
+      // it (see closeRunWorkspace). An adopted session keeps whatever its workspace is called.
+      run.workspaceLabel = label;
+      if (existing) { try { run.workspaceLabel = (await this.herdr.workspaceGet(ws.workspaceId))?.label || label; } catch { /* keep ours */ } }
       saveState(this.state);
       log(`${key}: workspace ${ws.workspaceId} pane ${ws.paneId}`);
 
@@ -979,7 +984,7 @@ export class IssueHerd {
       try { await this.tracker.setState({ ...readJson(path.join(run.archiveDir, 'issue.json'), {}), id: run.issueId }, rule.onDone.state); }
       catch (e) { log(`${key}: onDone state failed: ${e.message}`); }
     }
-    if (rule.onDone.closeWorkspace && run.workspaceId) { try { await this.herdr.closeWorkspace(run.workspaceId); } catch { /* ignore */ } }
+    if (rule.onDone.closeWorkspace && run.workspaceId) await this.closeRunWorkspace(key, run);
     if (watch) {
       run.prUrl = watch; run.status = 'awaiting_merge'; saveState(this.state);
       log(`${key}: waiting for ${watch} to be merged before shutting the run down`);
@@ -1197,6 +1202,19 @@ export class IssueHerd {
    * the cleanup because herdr was restarted, or because the worktree has scratch files in it, would
    * be the wrong trade.
    */
+  /**
+   * Close the run's workspace if it is still the run's — herdr hands a closed workspace's id to the
+   * next one it makes after a restart, see Herdr.closeWorkspaceOf() — and say what happened rather
+   * than throw: 'closed', 'was already closed', 'was reused by herdr for "…"', or 'is still open (why)'.
+   */
+  async closeRunWorkspace(key, run) {
+    let how;
+    try { how = await this.herdr.closeWorkspaceOf(run.workspaceId, workspaceOwner(run)); }
+    catch (e) { how = `is still open (${e.message})`; }
+    log(`${key}: workspace ${run.workspaceId} ${how}`);
+    return how;
+  }
+
   async shutdown(key, run, rule) {
     const policy = rule.onMerged || {};
     const did = [];
@@ -1205,10 +1223,7 @@ export class IssueHerd {
       log(`${key}: agent ${run.agentName} ${how}`);
       did.push(`Agent \`${run.agentName}\` ${how}.`);
     }
-    if (policy.closeWorkspace && run.workspaceId) {
-      try { await this.herdr.closeWorkspace(run.workspaceId); log(`${key}: workspace ${run.workspaceId} closed`); did.push(`herdr workspace \`${run.workspaceId}\` closed.`); }
-      catch (e) { log(`${key}: could not close workspace ${run.workspaceId}: ${e.message}`); did.push(`herdr workspace \`${run.workspaceId}\` is still open (${e.message}).`); }
-    }
+    if (policy.closeWorkspace && run.workspaceId) did.push(`herdr workspace \`${run.workspaceId}\` ${await this.closeRunWorkspace(key, run)}.`);
     if (policy.removeWorktree && run.worktree !== 'none') {
       const at = run.worktreePath || run.workDir;
       const r = removeWorktree({ git, repo: rule.repo, at });

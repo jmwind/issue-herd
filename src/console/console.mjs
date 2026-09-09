@@ -331,18 +331,22 @@ export class FactoryConsole {
       if (!r.agentAlive && !hasWorkspace) continue;
       const outcome = r.agentAlive ? await this.herdr.stopAgent(r.agent, { exitCommand: exitCommandFor(r.agentKind) }) : 'was already gone';
       let workspace = null;
-      if (hasWorkspace) workspace = outcome === 'is still running' ? 'left open' : await this.closeWorkspace(r.workspaceId);
+      if (hasWorkspace) workspace = outcome === 'is still running' ? 'left open' : await this.closeWorkspace(r);
       outcomes.push({ run: r.key, role: r.role, agent: r.agent, outcome, workspaceId: r.workspaceId || null, workspace });
       this.sizes.delete(r.key);
     }
     return outcomes;
   }
 
-  /** What became of one workspace close, as a phrase: 'closed', 'was already closed', or 'is still open (why)'. */
-  async closeWorkspace(workspaceId) {
-    try { await this.herdr.closeWorkspace(workspaceId); return 'closed'; } catch (e) {
+  /**
+   * What became of one run's workspace close, as a phrase: 'closed', 'was already closed', 'was
+   * reused by herdr for "…"' (the id names somebody else's workspace now — herdr numbers them per
+   * server session — and that one is left alone), or 'is still open (why)'.
+   */
+  async closeWorkspace(r) {
+    try { return await this.herdr.closeWorkspaceOf(r.workspaceId, { label: r.workspaceLabel, path: r.worktree, agentName: r.agent }); } catch (e) {
       if (isNotFound(e)) return 'was already closed';
-      this.log(`console: could not close workspace ${workspaceId}: ${e.message}`);
+      this.log(`console: could not close workspace ${r.workspaceId}: ${e.message}`);
       return `is still open (${e.message})`;
     }
   }
@@ -363,7 +367,7 @@ export class FactoryConsole {
         if (!iss.cleared || iss.bucket === 'inflight') continue;
         for (const r of iss.runs) {
           if (r.agentAlive || !r.workspaceId || !r.workspaceOpen) continue;
-          outcomes.push({ factory: f.id, issue: iss.key, run: r.key, role: r.role, workspaceId: r.workspaceId, workspace: await this.closeWorkspace(r.workspaceId) });
+          outcomes.push({ factory: f.id, issue: iss.key, run: r.key, role: r.role, workspaceId: r.workspaceId, workspace: await this.closeWorkspace(r) });
         }
       }
     }

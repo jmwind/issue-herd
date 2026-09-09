@@ -1,6 +1,7 @@
 // The console's view of a factory, computed from what is already on disk and what herdr says.
 // Pure: every input is passed in, so the whole thing is testable with fixtures.
 import { issueKeyOf } from '../claim.mjs';
+import { isRunsWorkspace, workspaceOwner } from '../herdr.mjs';
 
 // ---------------------------------------------------------------- the watcher's log
 
@@ -229,12 +230,16 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
       if (from < mergedAt) mergeWait = { from, to: mergedAt };
     }
     const wsId = run.workspaceId || agent?.workspace_id || null;
+    const owner = workspaceOwner(run);
     return {
       key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status, ownsPr: ownsPr(run),
       agent: run.agentName, agentKind: rules.find((r) => r.name === run.rule)?.agent || 'claude', agentStatus: agent?.agent_status || null, agentAlive: !!agent,
-      // Still open in herdr: listed in the snapshot, or the agent is standing in it right now.
+      // Still open in herdr: the agent is standing in it right now, or the snapshot lists it and it
+      // is recognisably this run's — herdr reuses a closed workspace's id after a restart, and a
+      // stranger's workspace under the run's old id is not this run's to close (isRunsWorkspace).
       // Null when herdr did not answer: unknown is not closed.
-      workspaceId: wsId, workspaceOpen: !wsId ? false : !index.available ? null : index.workspaces.has(wsId) || agent?.workspace_id === wsId,
+      workspaceId: wsId, workspaceLabel: owner.label,
+      workspaceOpen: !wsId ? false : !index.available ? null : agent?.workspace_id === wsId || isRunsWorkspace(index.workspaces.get(wsId), owner),
       branch: run.branch || null, worktree: run.workDir || run.worktreePath || null,
       startedAt: run.startedAt || null, finishedAt: run.finishedAt || null,
       elapsedMs: (finished || now) - started,

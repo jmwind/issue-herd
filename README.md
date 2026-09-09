@@ -65,7 +65,7 @@ One line per thing that happened, and one live line at the bottom rewritten afte
 npm install -g github:jmwind/issue-herd
 ```
 
-You need **Node 22+**, the `herdr` CLI with its server running,
+You need **Node 22+**, the `herdr` CLI (0.8.2 or newer) with its server running,
 an agent on your PATH and logged in (`claude`, `codex`, …), and `gh` logged in so agents can open
 pull requests. Update with `issue-herd update`; the watcher tells you when there is a new version.
 
