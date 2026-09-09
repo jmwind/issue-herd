@@ -35,6 +35,8 @@ export interface Context {
   promptsRoot: string;
   /** The shipped example plugins. */
   pluginsRoot: string;
+  /** The shipped demo scenarios and the starter app they work on. */
+  demosRoot: string;
   webDir: string;
   paths: FactoryPaths;
   sources: ConfigSources;
@@ -56,6 +58,7 @@ export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: strin
   // from next to the artifact.
   const promptsRoot = process.env.WEAWR_PROMPTS_ROOT || path.join(PKG_DIR, 'prompts');
   const pluginsRoot = process.env.WEAWR_PLUGINS_ROOT || path.join(PKG_DIR, 'plugins');
+  const demosRoot = process.env.WEAWR_DEMOS_ROOT || path.join(PKG_DIR, 'demos');
   const sources: ConfigSources = { paths, promptsRoot };
   const uDir = userDir();
   const host = hostId(uDir);
@@ -63,7 +66,7 @@ export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: strin
   let cfg: FactoryConfig | null = null;
   let reg: Promise<PluginRegistry> | null = null;
   return {
-    ui, version: VERSION, pkgDir: PKG_DIR, promptsRoot, pluginsRoot, webDir: process.env.WEAWR_WEB_DIR || path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
+    ui, version: VERSION, pkgDir: PKG_DIR, promptsRoot, pluginsRoot, demosRoot, webDir: process.env.WEAWR_WEB_DIR || path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
     herdr: new (Herdr as any)({ log: (m: string) => { if (process.env.WEAWR_DEBUG) ui.log('  $', m); } }),
     config() { return (cfg ??= loadConfig(sources)); },
     plugins() { return (reg ??= loadPlugins(pluginSpecs(paths), { examplesRoot: pluginsRoot, userRoot: path.join(uDir, 'plugins'), configDir: paths.configDir }).then((r) => { sources.plugins = r; cfg = null; return r; })); },

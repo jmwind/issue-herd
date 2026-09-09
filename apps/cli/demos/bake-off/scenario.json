@@ -1,0 +1,44 @@
+{
+  "title": "bake-off — two developers on different models, and a judge",
+  "summary": "two implementations of the same issue, an adjudicator giving both a few rounds of feedback, then promoting the better PR and closing the other",
+  "description": "One issue, two developers — one on Claude, one on codex/astra — each implementing it in its own worktree and opening a draft pull request. A judge starts with them, waits until both drafts are in, reviews both against the issue and the house rules, and gives each developer specific feedback through a nudge. Each developer answers, pushes and nudges the judge back; up to two rounds. Then the judge decides: it writes its adjudication on both PRs, marks the winner ready for review, closes the other, and puts an approving verdict on the winning head. The merge is yours. Every nudge, verdict and decision is a comment on the issue, so the whole contest reads back as a thread.",
+  "labels": ["ai", "bake-off"],
+  "config": {
+    "name": "weawr-demo (bake-off)",
+    "pollSeconds": 20,
+    "lookbackDays": 7,
+    "maxConcurrent": 4,
+    "maxNudges": 14,
+    "roles": ["dev-a", "dev-b", "judge"],
+    "defaults": {
+      "worktree": "self",
+      "branch": "{{issueBranchName}}{{roleSuffix}}",
+      "permissionMode": "auto",
+      "maxConcurrent": 2,
+      "prompt": "prompts/default.md",
+      "instructionsFile": "instructions-dev.md",
+      "claimLabel": "herdr",
+      "skipIfAssignedToOthers": true,
+      "onPickup": { "comment": true, "state": null, "assignToMe": true },
+      "onDone": { "comment": true, "state": null, "notify": true, "closeWorkspace": false },
+      "onBlocked": { "comment": true, "notify": true },
+      "onIdle": { "comment": true, "notify": true }
+    },
+    "rules": [
+      { "name": "developer-a", "role": "dev-a", "match": "label:ai and label:bake-off",
+        "model": "claude-fable-5-1" },
+      { "name": "developer-b", "role": "dev-b", "match": "label:ai and label:bake-off",
+        "agentKind": "codex", "model": "gpt-6-astra", "effort": "high" },
+      { "name": "judge", "role": "judge", "match": "label:ai and label:bake-off",
+        "model": "claude-fable-5-1", "effort": "high", "passes": 1,
+        "prompt": "prompts/bake-off-judge.md", "instructionsFile": "instructions.md" }
+    ]
+  },
+  "issues": [
+    {
+      "title": "`tally undo` — take back the last change",
+      "labels": ["ai", "bake-off", "enhancement"],
+      "body": "I keep counting the wrong thing. `tally add coffee` when I meant tea, `tally reset tea` when I meant coffee. I want one command that takes back the last change, and I want to be able to run it more than once.\n\n**Ask:** `tally undo` reverts the most recent `add` or `reset`; running it again reverts the one before that. Undoing past the beginning fails with a clear message and exit 1. How the history is kept is yours to design — in the same file, a second file, snapshots, a journal — but say why in the PR, and keep `list` and `add` as fast as they are.\n\n**Acceptance**\n- `add`, `reset`, `undo`, `undo` leaves the tally as it was before both changes.\n- `undo` with nothing to undo fails with a message and exit 1.\n- Counts written by an older version of tally (a plain `tally.json` with no history) still load, and `undo` on them says there is nothing to undo.\n- Tests cover all of the above.\n- The README's quick start shows it.\n\nTwo developers are implementing this independently; a judge will compare the two pull requests and promote one."
+    }
+  ]
+}

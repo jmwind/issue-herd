@@ -360,6 +360,43 @@ back to loopback only. No tailnet? `--host 192.168.1.20` binds one named address
 Wi-Fi one, for a phone on the same network), gated the same way; it is refused without a passcode,
 and `0.0.0.0` is refused always.
 
+## Trying it out: `weawr demo`
+
+The fastest way to see the whole harness run is a factory whose issues, code and pull requests
+exist to be experimented on. [`jmwind/weawr-demo`](https://github.com/jmwind/weawr-demo) is that
+repository, and `weawr demo` sets it up:
+
+```bash
+weawr demo                  # the scenarios that ship, one paragraph each
+weawr demo squad            # clone the demo repository, write the scenario's .weawr/, file its issues
+cd ~/.config/weawr/demos/weawr-demo && weawr      # run the watcher on it (or `weawr console` from anywhere)
+weawr demo reset            # when you are done: close the issues and PRs, delete the branches, clear the state
+```
+
+A scenario is a factory config, the briefs and instructions it needs, and the issues to file, all
+shipped with weawr (`apps/cli/demos/<name>/`). Three ship:
+
+| scenario | what runs |
+|---|---|
+| `basic` | one senior developer on a strong model: pick up, implement, open a PR, report. You merge. |
+| `squad` | a developer on Claude, a tech lead on codex/astra, a designer on Haiku. The developer labels the issue `ready-for-review` when its PR is open, which dispatches both reviewers into worktrees cut from its branch; findings go back and forth as nudges; when both approve, the developer runs `weawr merge` on the issue that carries `auto-merge`. |
+| `bake-off` | two developers on different models implement the same issue and open draft PRs; a judge that started with them waits for both, gives each up to two rounds of feedback through nudges, then promotes the better PR and closes the other. You merge. |
+
+The first run pushes a small starter app (`tally`, a command-line counter) to the demo
+repository, because the issues need code to work on. The scenario's `.weawr/` stays in the clone
+and out of git (`.git/info/exclude`), so switching scenarios is `weawr demo reset` and then the
+next scenario. `--into DIR` puts the factory somewhere else; `--repo owner/name` points at a demo
+repository of your own; `--dry-run` says what would be filed and files nothing.
+
+`reset` closes only what the ledger says this factory filed (`.weawr/demo.json`): those issues,
+the pull requests and branches that grew from them, and the claim labels. The local state is set
+aside, not deleted, and the worktrees are removed. `reset --all --yes` closes every open `ai`
+issue, every open PR and every branch but the default one, for a repository that exists for demos
+and nothing else.
+
+Every scenario's config is loaded and every brief checked in CI, so a scenario that stops loading
+fails a build rather than a demo.
+
 ## Manual testing and screenshots
 
 The agent has no in-app Browser pane here. The brief tells it to verify with unit tests and to

@@ -98,6 +98,11 @@ package's output changes:
   `WEAWR_DEV_WATCHER=0` runs the server alone. A restart is safe by design: the watcher's pending
   work is durable and its agents are never touched.
 
+To try a change end to end, point the loop at a demo factory: `weawr demo squad` (or the
+development build: `node apps/cli/build/main.js demo squad`) sets one up, and
+`WEAWR_DEV_FACTORY=~/.config/weawr/demos/weawr-demo pnpm dev` runs the watcher and the console on
+it, restarting on every edit. `weawr demo reset --into <that directory>` cleans up after.
+
 Nothing in the loop is cached and nothing goes through the bundled artifact, which is also why the
 built artifact never hot-reloads: it serves copies of the page read once at startup, and Turborepo
 caches its build. `pnpm build` before you trust a change in the artifact; `pnpm build --force` if

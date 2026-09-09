@@ -1,0 +1,12 @@
+{
+  "name": "tally",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A tiny command-line tally counter. The codebase the weawr demos work on.",
+  "type": "module",
+  "bin": { "tally": "bin/tally.mjs" },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": { "node": ">=22" }
+}

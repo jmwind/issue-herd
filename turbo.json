@@ -14,7 +14,8 @@
         "config.example.json",
         "$TURBO_ROOT$/assets/**",
         "$TURBO_ROOT$/tsconfig.base.json",
-        "plugins/**"
+        "plugins/**",
+        "demos/**"
       ],
       "outputs": [
         "dist/**",

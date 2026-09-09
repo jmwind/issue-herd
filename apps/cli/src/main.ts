@@ -18,6 +18,7 @@ import { migrate } from './commands/migrate.js';
 import { recipe } from './commands/recipe.js';
 import { merge, submitResult, task } from './commands/task.js';
 import { plugins } from './commands/plugins.js';
+import { demo } from './commands/demo.js';
 
 // node:sqlite is what the durable store is built on; on Node 22 it still announces itself as
 // experimental on every start. That line belongs to nobody's terminal or JSON stream.
@@ -35,6 +36,7 @@ export async function main(argv: string[]): Promise<void> {
   if (cmd === 'login' || cmd === 'logout') return auth(ctx, cmd, argv.slice(1));
   if (cmd === 'console') return serve(ctx, argv.slice(1), { asConsole: true });
   if (cmd === 'serve') return serve(ctx, argv.slice(1));
+  if (cmd === 'demo') return demo(ctx, argv.slice(1));
   if (!ctx.hasConfig()) throw new Error(`no ${path.relative(process.cwd(), ctx.paths.configPath) || ctx.paths.configPath} — cd into the repo you want to work on and run \`weawr init\``);
   // Plugins first: the config may name a tracker or a role preset one of them provides.
   const reg = await ctx.plugins();

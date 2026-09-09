@@ -234,6 +234,7 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 | `weawr login [linear\|github] [--paste]` | sign in and save the token for this machine |
 | `weawr logout [linear\|github]` | forget the saved token |
 | `weawr smoke` | end-to-end herdr test with a fake issue, no tracker calls |
+| `weawr demo [list\|<scenario>\|reset]` | a factory to try weawr on: file a scenario's issues on the demo repository, run, reset — see [Trying it out](docs/how-it-works.md#trying-it-out-weawr-demo) |
 | `weawr init [--tracker linear\|github]` | scaffold `.weawr/` in the current repo |
 | `weawr update` | reinstall from GitHub; prints the old and new version |
 

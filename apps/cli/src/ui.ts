@@ -24,6 +24,7 @@ a git worktree and a herdr workspace, start a coding agent in it, brief it, and 
   weawr result <run-key> --file F | --json J  hand in an agent's result through weawr (checked, written whole)
   weawr task reconfigure <run-key>  move an active run onto the current policy; weawr task attempts <run-key> shows its record
   weawr plugins [examples]  which plugins this factory enables (intake, roles, scheduled tasks), and what ships
+  weawr demo [list|<scenario>|reset]  a factory to try weawr on, against the demo repository: file the scenario's issues, run, reset
   weawr update [--to vX.Y.Z]  reinstall from an immutable release tag (the newest by default) and say how to roll back
   weawr --version
 

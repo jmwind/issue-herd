@@ -1,0 +1,49 @@
+{
+  "title": "squad — a developer, a reviewer on another provider, and a designer on a cheap model",
+  "summary": "three roles on one issue: Claude builds, astra reviews the code, Haiku reviews the experience; the PR merges itself once both approve",
+  "description": "One issue carries the auto-merge label, so the whole loop runs without you: the developer (Claude) implements and opens a PR, then labels the issue ready-for-review, which dispatches two reviewers into worktrees cut from the developer's branch — a tech lead on codex/astra reading the code, and a designer on Haiku walking the README and the command line as a newcomer. A reviewer that wants something changed nudges the developer, whose fix nudges both reviewers back. When both have approved the PR's current head, the developer runs `weawr merge`, which checks the label and the verdicts and merges. The second issue has no auto-merge label: the same review round happens, and the merge is yours.",
+  "labels": ["ai", "ready-for-review", "auto-merge"],
+  "config": {
+    "name": "weawr-demo (squad)",
+    "pollSeconds": 20,
+    "lookbackDays": 7,
+    "maxConcurrent": 5,
+    "roles": ["dev", "review", "design"],
+    "defaults": {
+      "worktree": "self",
+      "branch": "{{issueBranchName}}{{roleSuffix}}",
+      "permissionMode": "auto",
+      "maxConcurrent": 2,
+      "prompt": "prompts/default.md",
+      "instructionsFile": "instructions.md",
+      "claimLabel": "herdr",
+      "skipIfAssignedToOthers": true,
+      "onPickup": { "comment": true, "state": null, "assignToMe": true },
+      "onDone": { "comment": true, "state": null, "notify": true, "closeWorkspace": false },
+      "onBlocked": { "comment": true, "notify": true },
+      "onIdle": { "comment": true, "notify": true }
+    },
+    "rules": [
+      { "name": "implement", "role": "dev", "match": "label:ai",
+        "model": "claude-fable-5-1", "instructionsFile": "instructions-dev.md" },
+      { "name": "tech-lead", "role": "review", "match": "label:ai and label:ready-for-review",
+        "basedOn": "dev", "passes": 3, "agentKind": "codex", "model": "gpt-6-astra", "effort": "high",
+        "prompt": "prompts/review-lead.md" },
+      { "name": "designer", "role": "design", "match": "label:ai and label:ready-for-review",
+        "basedOn": "dev", "passes": 3, "model": "claude-haiku-4-5-20251001", "effort": "medium",
+        "prompt": "prompts/review-usability.md" }
+    ]
+  },
+  "issues": [
+    {
+      "title": "`tally top [n]` — the most counted names",
+      "labels": ["ai", "enhancement", "auto-merge"],
+      "body": "With a few dozen names in the tally, `list` is too long to glance at. I want the leaders.\n\n**Ask:** `tally top` prints the three most counted names and their counts; `tally top 10` prints ten. Ties are broken by name, the way `list` already orders them.\n\n**Acceptance**\n- `tally top` and `tally top 10` work; `tally top 0` and `tally top lots` fail with a clear message and exit 1.\n- The ordering logic is not duplicated between `list` and `top`.\n- The README's quick start shows it.\n- Tests cover the ordering and the limit.\n\nThis issue carries the `auto-merge` label: once every reviewing role has approved the PR's current head, the implementer merges it with `weawr merge`."
+    },
+    {
+      "title": "README quick start does not match the command line",
+      "labels": ["ai", "documentation"],
+      "body": "The README's quick start says `tally count coffee`, but the command is `tally add`. A newcomer copying the first line gets `unknown command count`.\n\n**Ask:** make the quick start true, and make it complete — every command `bin/tally.mjs` accepts appears there once, in the same style. Do not change the command line to match the README.\n\n**Acceptance**\n- Every line in the quick start runs as written and prints what the comment says.\n- Nothing in `bin/` or `src/` changes."
+    }
+  ]
+}

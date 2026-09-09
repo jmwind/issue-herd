@@ -1,0 +1,42 @@
+{
+  "title": "basic — one senior developer",
+  "summary": "one rule, one strong model: pick up the issue, implement it, open a PR, report back",
+  "description": "The plain loop with nothing else in the way. Two issues are filed on the tally app, one bug and one small feature. A single implementer on a strong model takes each, works in its own worktree, opens a pull request, and writes its result; you review and merge the PRs yourself.",
+  "labels": ["ai"],
+  "config": {
+    "name": "weawr-demo (basic)",
+    "pollSeconds": 20,
+    "lookbackDays": 7,
+    "maxConcurrent": 2,
+    "roles": null,
+    "defaults": {
+      "worktree": "self",
+      "branch": "{{issueBranchName}}{{roleSuffix}}",
+      "permissionMode": "auto",
+      "maxConcurrent": 2,
+      "prompt": "prompts/default.md",
+      "instructionsFile": "instructions.md",
+      "claimLabel": "herdr",
+      "skipIfAssignedToOthers": true,
+      "onPickup": { "comment": true, "state": null, "assignToMe": true },
+      "onDone": { "comment": true, "state": null, "notify": true, "closeWorkspace": false },
+      "onBlocked": { "comment": true, "notify": true },
+      "onIdle": { "comment": true, "notify": true }
+    },
+    "rules": [
+      { "name": "implement", "match": "label:ai", "model": "claude-fable-5-1" }
+    ]
+  },
+  "issues": [
+    {
+      "title": "`tally add` silently accepts a count that is not a positive number",
+      "labels": ["ai", "bug"],
+      "body": "`tally add coffee -3` and `tally add coffee lots` both succeed, and the tally ends up negative or `NaN`.\n\n```\n$ node bin/tally.mjs add coffee lots\ncoffee: NaN\n```\n\n**Expected:** `add` refuses a count that is not a positive integer, prints a one-line error and exits 1, and the tally is unchanged.\n\n**Acceptance**\n- `tally add coffee lots`, `tally add coffee -3` and `tally add coffee 0` all fail with a clear message and exit code 1.\n- `tally add coffee 2` still works.\n- A test covers the refusal.\n- The validation lives where `AGENTS.md` says it should."
+    },
+    {
+      "title": "`tally list --json` for scripts",
+      "labels": ["ai", "enhancement"],
+      "body": "I want to feed the tally into other tools. `tally list` prints a tab-separated table, which is fine for people and annoying for `jq`.\n\n**Ask:** `tally list --json` prints the entries as a JSON array of `{ \"name\", \"count\" }`, in the same order `list` uses, and nothing else on stdout.\n\n**Acceptance**\n- `tally list --json | jq '.[0].name'` works.\n- `tally list` without the flag is unchanged.\n- The README's quick start mentions it.\n- A test covers the JSON shape."
+    }
+  ]
+}
