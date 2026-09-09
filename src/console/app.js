@@ -124,17 +124,21 @@
     return '<div class="alert' + (b ? ' busy' : '') + '"><div class="k"><i class="led ' + esc(iss.light) + ' still"></i><b>' + esc(iss.key) + ' ' + esc(iss.title) + (many ? ' · ' + esc(f.name) : '') + '</b><span class="you' + (wait > 1000 ? '' : ' none') + '" title="time a person was waited on">' + (wait > 1000 ? dur(wait) : '0') + '<small>you</small></span></div>' +
       '<a class="open" href="#/i/' + esc(f.id) + '/' + encodeURIComponent(iss.key) + '">' + chips(iss) + stats(iss) + '</a><ul class="why">' + lines + '</ul>' + tail + '<div class="acts">' + acts + '</div>' + (b ? '<span class="craft"><i></i></span>' : '') + '</div>';
   }
-  // The one action on a task: a person says it is done. Its agents are closed, its alerts go,
-  // and it moves to output. `live` is the agents still up, named so the confirm can say who goes.
+  // The one action on a task: a person says it is done. Its agents are closed, their herdr
+  // workspaces go with them, its alerts go, and it moves to output. `live` is the agents still
+  // up, named so the confirm can say who goes; the workspaces still open are counted for the same.
   function doneButton(f, iss, live) {
     var b = busy[f.id + '|' + iss.key];
     if (b) return busyButton(b);
-    return '<button class="btn done" data-done="' + esc(f.id) + '|' + esc(iss.key) + '" data-agents="' + esc(live.map(function (r) { return r.agent; }).join(', ')) + '" title="Close its agents, clear its alerts and move it to output. Your call.">✓ Mark done</button>';
+    return '<button class="btn done" data-done="' + esc(f.id) + '|' + esc(iss.key) + '" data-agents="' + esc(live.map(function (r) { return r.agent; }).join(', ')) + '" data-workspaces="' + openWorkspaces(iss).length + '" title="Close its agents and their herdr workspaces, clear its alerts and move it to output. Your call.">✓ Mark done</button>';
   }
+  // The runs whose herdr workspace is still open: what Mark done closes after the agents.
+  function openWorkspaces(iss) { return iss.runs.filter(function (r) { return r.workspaceId && r.workspaceOpen; }); }
   // The same button while its request is in flight: a turning gear and what the console is doing
   // right now, so a click that takes a few seconds (an agent shutting down) is visibly doing it.
   function busyButton(b) {
-    var what = b.undo ? 'Bringing it back…' : b.agents ? 'Closing ' + b.agents + ' agent' + (b.agents === 1 ? '' : 's') + '…' : b.settled ? 'Moving to output…' : 'Marking done…';
+    var ws = b.workspaces ? b.workspaces + ' workspace' + (b.workspaces === 1 ? '' : 's') : '';
+    var what = b.undo ? 'Bringing it back…' : b.agents ? 'Closing ' + b.agents + ' agent' + (b.agents === 1 ? '' : 's') + (ws ? ' and ' + ws : '') + '…' : ws ? 'Closing ' + ws + '…' : b.settled ? 'Moving to output…' : 'Marking done…';
     return '<button class="btn done busy" disabled aria-live="polite">' + GEAR + esc(what) + '</button>';
   }
   // Every agent's last lines, one block per role with its colour in the gutter. Read only.
@@ -186,6 +190,9 @@
     var today = out.filter(function (p) { return p[1].finishedAt && Date.now() - Date.parse(p[1].finishedAt) < 86400e3; });
     var list = showAll ? out : today;
     var more = out.length > list.length ? '<button class="more" id="more">Show all ' + out.length + '</button>' : (showAll && out.length > today.length ? '<button class="more" id="more">Today only</button>' : '');
+    // Workspaces still open in herdr for tasks marked done before Mark done closed them: one tidy.
+    var pile = fs.reduce(function (n, x) { return n + x.issues.reduce(function (m, i) { return m + (i.cleared && i.bucket !== 'inflight' ? openWorkspaces(i).filter(function (r) { return !r.agentAlive; }).length : 0); }, 0); }, 0);
+    if (pile) more = '<button class="more tidy" id="tidy" title="Close the herdr workspaces of exited agents on tasks already marked done">Tidy ' + pile + ' workspace' + (pile === 1 ? '' : 's') + '</button>' + more;
     body += section(showAll ? 'Output' : 'Output today', list.length, list.length ? '<div class="inset pane">' + list.map(function (p) { return row(p[0], p[1], many, true); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing finished' + (showAll ? '' : ' today') + '.</div></div>', { more: more });
     var wait = fs.reduce(function (s, x) { return s + x.humanWaitMs; }, 0);
     body += '<div class="foot"><span>' + esc(fs.reduce(function (s, x) { return s + x.counts.running; }, 0)) + ' running · you were waited on for <b>' + dur(wait) + '</b> in total</span><span>' + (f && f.watcher.lastPoll ? 'polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago' : '') + '</span></div>';
@@ -318,22 +325,34 @@
     else if (t.id === 'closesheet' || t.id === 'dim') { sheet = false; render(); }
     else if (t.id === 'more') { showAll = !showAll; render(); }
     else if (t.dataset.expand) { expanded[t.dataset.expand] = true; render(); }
+    else if (t.id === 'tidy') {
+      if (!confirm(t.textContent + '? These are herdr workspaces of exited agents on tasks you already marked done. Their worktrees and archived results stay.')) return;
+      t.disabled = true;
+      fetch('/api/tidy', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: chosen }) })
+        .then(function (r) { return r.json(); }).then(function (j) {
+          if (!j.ok) { render(); return toast('Could not: ' + (j.error || 'unknown')); }
+          var closed = (j.outcomes || []).filter(function (o) { return o.workspace === 'closed' || o.workspace === 'was already closed'; }).length;
+          var stuck = (j.outcomes || []).filter(function (o) { return /^is still open/.test(o.workspace); });
+          toast(closed + ' workspace' + (closed === 1 ? '' : 's') + ' closed' + (stuck.length ? ' · ' + stuck.map(function (o) { return o.workspaceId + ' ' + o.workspace; }).join(' · ') : ''));
+        }).catch(function () { render(); toast('The console did not answer.'); });
+    }
     else if (t.id === 'lockbtn') { fetch('/lock', { method: 'POST' }).then(function () { location.replace('/'); }); }
     else if (t.dataset.choose) { sheet = false; var to = t.dataset.choose === 'all' ? '#/' : '#/f/' + encodeURIComponent(t.dataset.choose); if (location.hash === to || (to === '#/' && !location.hash)) render(); else location.hash = to; }
     else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; fetch('/api/tail?factory=' + encodeURIComponent(p[0]) + '&issue=' + encodeURIComponent(p[1])).then(function (r) { return r.json(); }).then(function (j) { tails[t.dataset.tail] = j.blocks || '(empty)'; render(); }); }
     else if (t.dataset.done || t.dataset.undone) {
-      var d = (t.dataset.done || t.dataset.undone).split('|'), undo = !!t.dataset.undone, agents = t.dataset.agents;
-      if (!undo && !confirm('Mark ' + d[1] + ' done? ' + (agents ? 'Every agent still up on it (' + agents + ') is sent its exit command and shuts down the way it wants; workspaces and worktrees stay. ' : '') + 'Its alerts are cleared and it moves to output. A new run on it brings it back.')) return;
+      var d = (t.dataset.done || t.dataset.undone).split('|'), undo = !!t.dataset.undone, agents = t.dataset.agents, workspaces = Number(t.dataset.workspaces) || 0;
+      var closing = agents ? 'Every agent still up on it (' + agents + ') is sent its exit command and shuts down the way it wants, and its herdr workspaces are closed; worktrees stay. ' : workspaces ? 'Its herdr workspaces (' + workspaces + ') are closed; worktrees stay. ' : '';
+      if (!undo && !confirm('Mark ' + d[1] + ' done? ' + closing + 'Its alerts are cleared and it moves to output. A new run on it brings it back (without the agents or the workspaces).')) return;
       var key = d[0] + '|' + d[1];
-      busy[key] = { undo: undo, agents: undo || !agents ? 0 : agents.split(', ').length };
+      busy[key] = { undo: undo, agents: undo || !agents ? 0 : agents.split(', ').length, workspaces: undo ? 0 : workspaces };
       render();
       fetch(undo ? '/api/undone' : '/api/done', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ factory: d[0], issue: d[1] }) })
         .then(function (r) { return r.json(); }).then(function (j) {
           if (!j.ok || j.error) { delete busy[key]; render(); return toast('Could not: ' + (j.error || 'unknown')); }
-          var closed = (j.outcomes || []).map(function (o) { return o.agent + ' ' + o.outcome; }).join(' · ');
+          var closed = (j.outcomes || []).map(function (o) { return o.agent + ' ' + o.outcome + (o.workspace ? ', ' + o.workspaceId + ' ' + o.workspace : ''); }).join(' · ');
           toast(undo ? d[1] + ' is back' : d[1] + ' marked done' + (closed ? ' · ' + closed : ''));
           // The console said yes; the button keeps turning until the state that moves the task lands.
-          if (busy[key]) { busy[key].settled = Date.now(); busy[key].agents = 0; }
+          if (busy[key]) { busy[key].settled = Date.now(); busy[key].agents = 0; busy[key].workspaces = 0; }
           render(); settle();
           setTimeout(settle, SETTLE_MS + 50);
         }).catch(function () { delete busy[key]; render(); toast('The console did not answer.'); });

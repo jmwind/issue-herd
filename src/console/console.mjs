@@ -6,6 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { mergeConfig } from '../config.mjs';
 import { exitCommandFor } from '../agents.mjs';
+import { isNotFound } from '../herdr.mjs';
+
+/** Why a Mark done or Tidy is refused while herdr is not answering: nothing can be closed, so nothing is recorded. */
+const HERDR_AWAY = 'herdr is not answering; nothing was closed and nothing is marked done — try again when it is back';
 import { resolveCredential } from '../auth.mjs';
 import { trackerClass, trackerSpec } from '../trackers/index.mjs';
 import { GitHubTracker, repoFromGit } from '../trackers/github.mjs';
@@ -276,21 +280,28 @@ export class FactoryConsole {
 
   /**
    * A person decided the task is done: every agent still up on it is sent its own exit command,
-   * its alerts go, and it moves to output. One action, one decision — a task is over when a person
-   * says so, even after an auto-merge. Undone by a new run on it, or by hand (which does not bring
-   * the agents back). Returns what happened to each agent that was still up.
+   * every run's herdr workspace is closed, its alerts go, and it moves to output. One action, one
+   * decision — a task is over when a person says so, even after an auto-merge. Undone by a new run
+   * on it, or by hand (which brings back neither the agents nor the workspaces). Returns what
+   * happened to each run that had anything to close.
    *
-   * An agent that does not exit (the prompt failed, or it did not go within herdr's timeout) keeps
-   * the task where it is: `done` comes back false, the note is not written, and the task's card
-   * stays in Alerts, because a task with an agent still on it is not done whatever anyone clicked.
+   * An agent that does not exit (the prompt failed, or it did not go within herdr's timeout), or a
+   * workspace herdr would not close, keeps the task where it is: `done` comes back false, the note
+   * is not written, and the task's card stays in Alerts, because a task with an agent or a
+   * workspace still on it is not done whatever anyone clicked. Nor is one whose agents and
+   * workspaces cannot be seen: when herdr is not answering, the view reads every agent as gone
+   * and every workspace as unknown, and closing nothing is not a shutdown, so the click is
+   * refused with the reason rather than recorded.
    */
   async markDone({ factory, issue }, done = true) {
     const { f } = this.findTask({ factory, issue });
+    if (done && !this.current.herdr?.connected) return { done: false, outcomes: [], error: HERDR_AWAY };
     const outcomes = done ? await this.closeTask({ factory, issue }) : [];
-    const stuck = outcomes.filter((o) => o.outcome === 'is still running');
+    const stuck = outcomes.filter((o) => o.outcome === 'is still running' || /^is still open/.test(o.workspace || ''));
     if (stuck.length) {
       setTimeout(() => this.tick().catch(() => {}), 50);
-      return { done: false, outcomes, error: `${stuck.map((o) => `${o.role || o.run} (${o.agent})`).join(', ')} still running; not marked done` };
+      const why = stuck.map((o) => o.outcome === 'is still running' ? `${o.role || o.run} (${o.agent}) still running` : `${o.role || o.run} workspace ${o.workspaceId} ${o.workspace}`);
+      return { done: false, outcomes, error: `${why.join(', ')}; not marked done` };
     }
     this.notes.done ||= {};
     const k = `${f.repo}|${issue}`;
@@ -300,16 +311,63 @@ export class FactoryConsole {
     return { done, outcomes };
   }
 
-  /** Every agent still up on the task is sent its own exit command and shuts down the way it wants. */
+  /**
+   * Every run on the task is shut down: an agent still up is sent its own exit command and goes the
+   * way it wants, and then its herdr workspace is closed — the agent first, because it is a process
+   * with its own idea of how to stop; the workspace second, because an exited agent's pane is what
+   * piles up in herdr's sidebar. A workspace whose agent would not exit is left alone: pulling the
+   * pane out from under a running agent is not what a shutdown means, and the task is staying in
+   * Alerts anyway. Runs with nothing to close (agent gone, workspace gone) are not reported.
+   *
+   * Each outcome: `outcome` is what became of the agent ('exited', 'was already gone', 'is still
+   * running'), `workspace` what became of its workspace ('closed', 'was already closed', 'left open',
+   * 'is still open (why)') — null when the run never had one.
+   */
   async closeTask({ factory, issue }) {
     const { iss } = this.findTask({ factory, issue });
     const outcomes = [];
     for (const r of iss.runs) {
-      if (!r.agentAlive) continue;
-      const outcome = await this.herdr.stopAgent(r.agent, { exitCommand: exitCommandFor(r.agentKind) });
-      outcomes.push({ run: r.key, role: r.role, agent: r.agent, outcome });
+      const hasWorkspace = !!r.workspaceId && r.workspaceOpen !== false;
+      if (!r.agentAlive && !hasWorkspace) continue;
+      const outcome = r.agentAlive ? await this.herdr.stopAgent(r.agent, { exitCommand: exitCommandFor(r.agentKind) }) : 'was already gone';
+      let workspace = null;
+      if (hasWorkspace) workspace = outcome === 'is still running' ? 'left open' : await this.closeWorkspace(r.workspaceId);
+      outcomes.push({ run: r.key, role: r.role, agent: r.agent, outcome, workspaceId: r.workspaceId || null, workspace });
       this.sizes.delete(r.key);
     }
+    return outcomes;
+  }
+
+  /** What became of one workspace close, as a phrase: 'closed', 'was already closed', or 'is still open (why)'. */
+  async closeWorkspace(workspaceId) {
+    try { await this.herdr.closeWorkspace(workspaceId); return 'closed'; } catch (e) {
+      if (isNotFound(e)) return 'was already closed';
+      this.log(`console: could not close workspace ${workspaceId}: ${e.message}`);
+      return `is still open (${e.message})`;
+    }
+  }
+
+  /**
+   * One-shot clean-up of the pile: every workspace still open for a run whose task a person has
+   * already marked done and whose agent is gone. Mark done closes them now; this is for the tasks
+   * marked done before it did, and for anything closed by hand later. Runs with an agent still up
+   * are never touched here — that is what Mark done and Exit are for. Returns what was closed,
+   * per run, and whatever would not close. `factory` null means every factory.
+   */
+  async tidy({ factory = null } = {}) {
+    if (!this.current.herdr?.connected) throw new Error(HERDR_AWAY);
+    const outcomes = [];
+    for (const f of this.current.factories) {
+      if (factory && f.id !== factory) continue;
+      for (const iss of f.issues) {
+        if (!iss.cleared || iss.bucket === 'inflight') continue;
+        for (const r of iss.runs) {
+          if (r.agentAlive || !r.workspaceId || !r.workspaceOpen) continue;
+          outcomes.push({ factory: f.id, issue: iss.key, run: r.key, role: r.role, workspaceId: r.workspaceId, workspace: await this.closeWorkspace(r.workspaceId) });
+        }
+      }
+    }
+    if (outcomes.length) setTimeout(() => this.tick().catch(() => {}), 50);
     return outcomes;
   }
 

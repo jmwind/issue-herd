@@ -59,7 +59,7 @@ function sameOrigin(req) {
 }
 
 /**
- * Build the request handler. `console` is the orchestrator: view(), subscribe(fn), markDone(), tailTask(), exit(), tail().
+ * Build the request handler. `console` is the orchestrator: view(), subscribe(fn), markDone(), tidy(), tailTask(), exit(), tail().
  * Returns { handler, broadcast() } — call broadcast() whenever the view changed.
  */
 export function createHandler({ gate, console: app, hostname = os.hostname(), log = () => {} }) {
@@ -129,8 +129,15 @@ export function createHandler({ gate, console: app, hostname = os.hostname(), lo
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
         let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return send(res, 400, { error: 'bad json' }); }
         const { done, outcomes = [], error = null } = await app.markDone({ factory: body.factory, issue: body.issue }, url.pathname === '/api/done');
-        log(`console: ${body.issue} in ${body.factory} ${error ? error : `marked ${done ? 'done' : 'not done'} by a person`}${outcomes.length || done ? ` → ${outcomes.map((o) => `${o.agent} ${o.outcome}`).join(', ') || 'nothing was running'}` : ''}`);
+        log(`console: ${body.issue} in ${body.factory} ${error ? error : `marked ${done ? 'done' : 'not done'} by a person`}${outcomes.length || done ? ` → ${outcomes.map(describeOutcome).join(', ') || 'nothing was open'}` : ''}`);
         return send(res, 200, { ok: true, done, outcomes, error });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/tidy') {
+        if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
+        let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return send(res, 400, { error: 'bad json' }); }
+        const outcomes = await app.tidy({ factory: body.factory || null });
+        log(`console: tidy${body.factory ? ` ${body.factory}` : ''} → ${outcomes.map((o) => `${o.run} ${o.workspaceId} ${o.workspace}`).join(', ') || 'nothing to close'}`);
+        return send(res, 200, { ok: true, outcomes });
       }
       if (req.method === 'POST' && url.pathname === '/api/exit') {
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
@@ -147,6 +154,11 @@ export function createHandler({ gate, console: app, hostname = os.hostname(), lo
   }
 
   return { handler, broadcast, clients };
+}
+
+/** One Mark done outcome as a phrase for the log: the agent, then its workspace when it had one. */
+function describeOutcome(o) {
+  return `${o.agent} ${o.outcome}${o.workspace ? `, workspace ${o.workspaceId} ${o.workspace}` : ''}`;
 }
 
 /**
