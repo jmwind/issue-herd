@@ -3,7 +3,7 @@
   "pollSeconds": 30,
   "lookbackDays": 30,
   "maxConcurrent": 3,
-  "roles": ["impl", "review", "usability"],
+  "roles": ["snrdev", "review", "usability"],
   "defaults": {
     "worktree": "self",
     "branch": "{{issueBranchName}}{{roleSuffix}}",
@@ -45,7 +45,7 @@
       "name": "tech-lead",
       "role": "review",
       "match": "label:ai and label:ready-for-review",
-      "basedOn": "impl",
+      "basedOn": "snrdev",
       "agentKind": "codex",
       "model": "gpt-6-astra",
       "effort": "high",
@@ -55,7 +55,7 @@
       "name": "usability",
       "role": "usability",
       "match": "label:ai and label:ready-for-review",
-      "basedOn": "impl",
+      "basedOn": "snrdev",
       "model": "claude-sonnet-5",
       "effort": "medium",
       "prompt": "prompts/review-usability.md"

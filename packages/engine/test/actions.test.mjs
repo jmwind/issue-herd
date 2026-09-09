@@ -69,17 +69,33 @@ test('markDone: every agent still up gets its own exit command, every workspace 
   await assert.rejects(() => markDone(e, 'GH-9'), /no task GH-9/);
 });
 
-test('markDone and tidy: an id herdr has since given to another workspace is reported and left alone, and does not keep the task in Alerts', async () => {
+test('an id herdr has since given to another workspace is not the run\'s: not counted, and left alone even when it changes hands mid-action', async () => {
   // The GH-69 story: Mark done on GH-66 closed w3J, which had become GH-69's session after a herdr restart.
+  // 1. Consistent: the snapshot lists w-review under the stranger's label, so it is not the run's
+  //    workspace at all — nothing to close, nothing to tidy, and the task can still be marked done.
   const dir = repo();
-  const herdr = fakeHerdr({ workspaces: ['w-impl', 'w-review'], reused: { 'w-review': 'GH-69 impl Rename project to weawr' } });
+  const herdr = fakeHerdr({ workspaces: ['w-impl', 'w-review'], labels: { 'w-review': 'GH-69 impl Rename project to weawr' }, reused: { 'w-review': 'GH-69 impl Rename project to weawr' } });
   const { e, store } = engine(dir, { 'GH-7@impl': run('GH-7@impl', 'impl', 'implement'), 'GH-7@review': run('GH-7@review', 'review', 'tech-lead') }, herdr);
+  assert.deepEqual((await e.snapshot()).issues[0].runs.map((r) => [r.key, r.workspaceOpen]), [['GH-7@impl', true], ['GH-7@review', false]]);
   const r = await markDone(e, 'GH-7');
-  assert.equal(r.done, true, 'somebody else\'s workspace under our old id is not a workspace still on the task');
-  assert.deepEqual(r.outcomes.map((o) => o.workspace), ['closed', 'was reused by herdr for "GH-69 impl Rename project to weawr"']);
+  assert.equal(r.done, true);
+  assert.deepEqual(r.outcomes.map((o) => [o.run, o.workspace]), [['GH-7@impl', 'closed']]);
   assert.deepEqual(herdr.closed, ['w-impl']);
   assert.deepEqual(store.acknowledgements().map((a) => a.issueKey), ['GH-7']);
-  assert.deepEqual(await tidy(e), [], 'nothing of ours is left to tidy; the stranger is not counted');
+  assert.deepEqual(await tidy(e), [], 'the stranger is not counted');
+  // 2. The race: the snapshot still says ours, but by the time herdr is asked the id belongs to
+  //    somebody else. The close reports that and closes nothing; the task is still done.
+  const dir2 = repo();
+  const herdr2 = fakeHerdr({ workspaces: ['w-impl', 'w-review'], reused: { 'w-review': 'GH-69 impl Rename project to weawr' } });
+  const { e: e2, store: store2 } = engine(dir2, { 'GH-7@impl': run('GH-7@impl', 'impl', 'implement'), 'GH-7@review': run('GH-7@review', 'review', 'tech-lead') }, herdr2);
+  const r2 = await markDone(e2, 'GH-7');
+  assert.equal(r2.done, true, 'somebody else\'s workspace under our old id does not keep the task in Alerts');
+  assert.deepEqual(r2.outcomes.map((o) => o.workspace), ['closed', 'was reused by herdr for "GH-69 impl Rename project to weawr"']);
+  assert.deepEqual(herdr2.closed, ['w-impl'], 'the stranger was never closed');
+  assert.deepEqual(store2.acknowledgements().map((a) => a.issueKey), ['GH-7']);
+  const t2 = await tidy(e2);
+  assert.deepEqual(t2.map((o) => o.workspace), ['was reused by herdr for "GH-69 impl Rename project to weawr"'], 'reported again, not hidden');
+  assert.deepEqual(herdr2.closed, ['w-impl'], 'and still not closed');
 });
 
 test('markDone: an agent that will not exit keeps the task where it is, and nothing is recorded', async () => {
