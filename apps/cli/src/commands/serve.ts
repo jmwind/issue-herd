@@ -44,7 +44,7 @@ export async function serve(ctx: Context, args: string[], { asConsole = false } 
     if (sub === 'revoke') { if (!name || !devices[name]) throw new Error(`no device called ${name || '?'}`); delete devices[name]; saveCredential('console', { ...c, devices }, file); console.log(`device ${name} revoked`); return; }
     throw new Error('usage: weawr console device add <name> | list | revoke <name>');
   }
-  if (args[0] && !args[0].startsWith('--')) throw new Error(`usage: weawr ${asConsole ? 'console' : 'serve'} [--port N] [--host ADDR]... [--no-web] [--theme <name>] | set-passcode | clear-passcode | device add|list|revoke`);
+  if (args[0] && !args[0].startsWith('--')) throw new Error(`usage: weawr ${asConsole ? 'console' : 'serve'} [--port N] [--host ADDR]... [--no-web] [--theme <name>] [--dev] | set-passcode | clear-passcode | device add|list|revoke`);
   const themeArg = args.indexOf('--theme') >= 0 ? args[args.indexOf('--theme') + 1] : (process.env.WEAWR_CONSOLE_THEME || 'factorio');
   if (!(THEMES as readonly string[]).includes(themeArg || '')) throw new Error(`--theme is one of ${THEMES.join(', ')}`);
   // --host binds one more address by name (the Wi-Fi one, say, when there is no tailnet). Only
@@ -59,14 +59,15 @@ export async function serve(ctx: Context, args: string[], { asConsole = false } 
   const gate = new Gate({ hash: creds().passcode || null });
   if (hosts.length && !gate.enabled) throw new Error('--host needs a passcode first (weawr console set-passcode); an ungated console stays on loopback');
   const hub = new FactoryHub({ herdr: ctx.herdr, version: ctx.version, promptsRoot: ctx.promptsRoot, log });
-  const { handler } = createHandler({ gate, hub, log, webDir: args.includes('--no-web') ? null : ctx.webDir, devices: () => creds().devices || {}, version: ctx.version, theme: themeArg });
+  const live = args.includes('--dev');
+  const { handler } = createHandler({ gate, hub, log, webDir: args.includes('--no-web') ? null : ctx.webDir, devices: () => creds().devices || {}, version: ctx.version, theme: themeArg, live, clientJs: process.env.WEAWR_CLIENT_JS || null, assetsDir: process.env.WEAWR_ASSETS_DIR || null });
   let bound;
   try { bound = await listen({ handler, port, gated: gate.enabled, extraHosts: hosts }); }
   catch (e: any) { if (e.code === 'EADDRINUSE') throw new Error(`port ${port} is busy — a console is probably already open at http://127.0.0.1:${port}/ ; use --port N for a second one`); throw e; }
   hub.start();
   const where = !gate.enabled ? 'no passcode set (run `weawr console set-passcode`), serving on loopback only'
     : bound.urls.length > 1 ? `passcode set, serving on loopback${tailscaleAddresses().length ? ' and Tailscale' : ''}${hosts.length ? ` and ${hosts.join(', ')}` : ''}` : 'passcode set · no Tailscale address on this machine, so loopback only';
-  log(`weawr ${ctx.version} ${asConsole ? 'console' : 'serve'} · ${where}${args.includes('--no-web') ? ' · interface only (/api/v1), no web console' : ''}`);
+  log(`weawr ${ctx.version} ${asConsole ? 'console' : 'serve'} · ${where}${args.includes('--no-web') ? ' · interface only (/api/v1), no web console' : ''}${live ? ` · development: page served from ${ctx.webDir}, reloads on change` : ''}`);
   for (const u of bound.urls) log(`  ${u}`);
   log(`  herdr: ${await ctx.herdr.serverRunning() ? 'connected' : 'NOT RUNNING — agent state will show as gone until it is'}`);
   process.on('uncaughtException', (e: any) => log(`unexpected error (kept running): ${e.stack || e.message}`));

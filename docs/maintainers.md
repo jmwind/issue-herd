@@ -75,11 +75,33 @@ The repository is a pnpm workspace built with Turborepo: `apps/cli` (the executa
 ```bash
 git clone git@github.com:jmwind/weawr.git && cd weawr
 pnpm install            # also builds, through `prepare`
+pnpm dev                # the development loop: see below
 pnpm build              # turbo run build → apps/cli/dist/weawr.mjs, the one file users run
 pnpm test               # every package's tests, against their built output
 pnpm lint               # the import-direction check (scripts/check-imports.mjs)
 node apps/cli/dist/weawr.mjs --help
 ```
+
+### The development loop
+
+`pnpm dev` is `turbo run dev`: one persistent `dev` task per package, all at once, output
+prefixed by package. The packages compile in watch mode (the client also keeps its browser bundle
+current), and `apps/cli/dev.mjs` runs two processes from the compiled CLI and restarts both when a
+package's output changes:
+
+- `weawr serve --dev` at `http://127.0.0.1:8498/` (`WEAWR_DEV_PORT` to move it): the page is
+  served straight from `apps/web/src`, read on every request, and when a file there changes the
+  host pushes a `reload` event down the console's own event stream, so the browser reloads by
+  itself;
+- `weawr`, the watcher, on the factory in `WEAWR_DEV_FACTORY` — by default the directory you ran
+  `pnpm dev` from when it has a `.weawr/config.json`, else this repository's own factory.
+  `WEAWR_DEV_WATCHER=0` runs the server alone. A restart is safe by design: the watcher's pending
+  work is durable and its agents are never touched.
+
+Nothing in the loop is cached and nothing goes through the bundled artifact, which is also why the
+built artifact never hot-reloads: it serves copies of the page read once at startup, and Turborepo
+caches its build. `pnpm build` before you trust a change in the artifact; `pnpm build --force` if
+a cached output ever looks stale.
 
 `npm install -g github:jmwind/weawr` keeps working without pnpm or Turborepo on the user's
 machine: npm clones, installs the dev dependencies and runs `prepare`, which is

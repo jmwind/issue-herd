@@ -32,6 +32,8 @@ export interface SubscribeHandlers {
   onResnapshot?: (snapshot: FactorySnapshot, reason: string) => void;
   /** Connection state: connected, or disconnected with the retry delay. What a UI shows as "stale". */
   onStatus?: (status: { connected: boolean; retryInMs?: number; error?: string }) => void;
+  /** Any other event the host sends (a development `reload`, say), with its parsed data. */
+  onOther?: (event: string, data: unknown) => void;
 }
 
 export class WeawrClient {
@@ -133,6 +135,7 @@ export class WeawrClient {
           if (msg.event === 'snapshot') { const snap = JSON.parse(msg.data) as HostSnapshot; this.last = { snapshot: snap, receivedAt: Date.now() }; for (const f of snap.factories) if (!cursors.has(f.factoryId) || (cursors.get(f.factoryId) ?? 0) < f.revision) cursors.set(f.factoryId, f.revision); handlers.onSnapshot?.(snap); }
           else if (msg.event === 'event') { const ev = JSON.parse(msg.data) as EventView; cursors.set(ev.factoryId, ev.seq); handlers.onEvent?.(ev); }
           else if (msg.event === 'resnapshot') { const { factoryId, reason } = JSON.parse(msg.data); try { const snap = await this.snapshot(factoryId); cursors.set(factoryId, snap.revision); handlers.onResnapshot?.(snap, reason); } catch (e: any) { status({ connected: true, error: e.message }); } }
+          else { let data: unknown = msg.data; try { data = JSON.parse(msg.data); } catch { /* as is */ } handlers.onOther?.(msg.event, data); }
         }
         if (!closed) throw new WeawrError('transport', 'the event stream ended', null, true);
       } catch (e: any) {

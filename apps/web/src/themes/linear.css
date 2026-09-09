@@ -1,23 +1,84 @@
-/* Linear — the issue tracker's own look: near-black ground, quiet grey surfaces and hairline
-   borders, indigo as the one accent, Inter, small radii. Dark by default (Linear's default); light
-   with the system. */
-body[data-theme="linear"]{
-  --ground:#0F1011; --frame:#191A1C; --frame-2:#222326; --inset:#151618; --inset-2:#0F1011;
-  --hi:transparent; --lo:transparent; --edge:transparent; --rule:#26282D; --radius:6px;
-  --text:#F7F8F8; --muted:#8A8F98; --dim:#62666D; --heading:#F7F8F8;
-  --orange:#5E6AD2; --orange-2:#828FFF; --on-accent:#FFFFFF; --green:#4CB782; --green-2:#68D391; --red:#EB5757; --red-2:#F27878; --yellow:#F2C94C;
+/* Linear — measured off linear.app rather than remembered: a #08090A canvas with surfaces barely
+   lighter (#0F1011, #161718), hairline borders at 8% white, #F7F8F8 text with #8A8F98 secondary,
+   Inter at 13px and weight 510 with tight tracking, 8px radii, indigo #5E6AD2 used sparingly and a
+   light primary button. Lists are flat rows with hairlines, not boxed cards. Dark by default, as
+   Linear is; light with the system. */
+body[data-theme="linear"][data-theme]{
+  --ground:#08090A; --frame:#0F1011; --frame-2:#161718; --inset:#0F1011; --inset-2:#08090A;
+  --hi:transparent; --lo:transparent; --edge:transparent; --rule:rgba(255,255,255,.08); --rule-2:rgba(255,255,255,.05); --radius:8px;
+  --text:#F7F8F8; --text-2:#D0D6E0; --muted:#8A8F98; --dim:#62666D; --heading:#F7F8F8;
+  --orange:#E5E5E6; --orange-2:#6D78D5; --on-accent:#08090A; --indigo:#5E6AD2; --green:#4CB782; --green-2:#68D391; --red:#EB5757; --red-2:#F27878; --yellow:#F2C94C;
   --led-g:#4CB782; --led-r:#EB5757; --led-y:#F2C94C; --led-x:#3A3D44;
-  --font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
-  color-scheme:dark;background:var(--ground);color:var(--text);letter-spacing:-.01em;
+  --font:"Inter Variable",Inter,"SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+  color-scheme:dark;background:var(--ground);color:var(--text);font-size:13px;line-height:20px;letter-spacing:-.01em;
+  font-feature-settings:"cv01","ss03";
 }
 @media (prefers-color-scheme:light){
-  body[data-theme="linear"]{
-    --ground:#FFFFFF; --frame:#FFFFFF; --frame-2:#F7F8F8; --inset:#F7F8F8; --inset-2:#FFFFFF; --rule:#E6E6E9;
-    --text:#282A30; --muted:#6F6E77; --dim:#9E9EA5; --heading:#282A30;
-    --orange:#5E6AD2; --orange-2:#4C57C4; --green:#2F9E63; --green-2:#27875A; --red:#D93E3E; --red-2:#C23333; --yellow:#9A6D00;
+  body[data-theme="linear"][data-theme]{
+    --ground:#FFFFFF; --frame:#FFFFFF; --frame-2:#F7F8F8; --inset:#F7F8F8; --inset-2:#FFFFFF; --rule:rgba(0,0,0,.09); --rule-2:rgba(0,0,0,.05);
+    --text:#282A30; --text-2:#3C3F45; --muted:#6F6E77; --dim:#9E9EA5; --heading:#282A30;
+    --orange:#282A30; --orange-2:#5E6AD2; --on-accent:#FFFFFF; --green:#2F9E63; --green-2:#27875A; --red:#D93E3E; --red-2:#C23333; --yellow:#9A6D00;
     --led-x:#D6D6DA; color-scheme:light;
   }
 }
-body[data-theme="linear"] .titlebar h1{font-weight:600;font-size:15px}
-body[data-theme="linear"] .sub{font-weight:600;font-size:12px;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
-body[data-theme="linear"] .plant.working{box-shadow:0 0 0 1px var(--orange)}
+/* frame: no card around the whole screen, just the canvas and a hairline under the bar */
+body[data-theme="linear"][data-theme] .screen{background:var(--ground)}
+@media (min-width:760px){body[data-theme="linear"][data-theme] .screen{box-shadow:0 0 0 1px var(--rule);border-radius:12px}}
+body[data-theme="linear"][data-theme] .titlebar{background:var(--ground);box-shadow:inset 0 -1px 0 var(--rule);padding-top:max(10px,env(safe-area-inset-top))}
+body[data-theme="linear"][data-theme] .titlebar h1{font-size:14px;font-weight:510;letter-spacing:-.01em}
+body[data-theme="linear"][data-theme] .picker{background:transparent;box-shadow:none;font-size:14px;font-weight:510;padding:4px 6px}
+body[data-theme="linear"][data-theme] .picker:hover{background:var(--frame-2)}
+body[data-theme="linear"][data-theme] .picker .chev{color:var(--muted);font-size:10px}
+body[data-theme="linear"][data-theme] .tick{font-size:12px;font-weight:400;color:var(--muted)}
+body[data-theme="linear"][data-theme] .tbtn{border-radius:6px}
+/* sections: a muted label, a count in a hairline pill, links in indigo */
+body[data-theme="linear"][data-theme] .sub{font-size:13px;font-weight:510;letter-spacing:-.01em;text-transform:none;color:var(--text-2);padding:8px 2px 6px}
+body[data-theme="linear"][data-theme] .sub .n{background:transparent;box-shadow:0 0 0 1px var(--rule);color:var(--muted);font-weight:510;font-size:12px}
+body[data-theme="linear"][data-theme] .sub .n.hot{background:var(--red);color:#fff;box-shadow:none}
+body[data-theme="linear"][data-theme] .sub .more{color:var(--orange-2);font-weight:510;font-size:13px}
+/* lists: one surface with a hairline around it, rows as hairline-separated lines, no card per row */
+body[data-theme="linear"][data-theme] .pane{padding:0;gap:0;background:var(--frame);box-shadow:0 0 0 1px var(--rule);border-radius:var(--radius);overflow:hidden}
+body[data-theme="linear"][data-theme] .pane > *{border-radius:0}
+body[data-theme="linear"][data-theme] .row{background:transparent;box-shadow:inset 0 -1px 0 var(--rule-2);border-radius:0;padding:9px 12px;gap:2px 10px}
+body[data-theme="linear"][data-theme] .row:last-child{box-shadow:none}
+body[data-theme="linear"][data-theme] .row:hover{background:var(--frame-2)}
+body[data-theme="linear"][data-theme] .row .t{font-size:13px;font-weight:510;color:var(--text)}
+body[data-theme="linear"][data-theme] .row .t b{color:var(--muted);font-weight:400;font-variant-numeric:tabular-nums}
+body[data-theme="linear"][data-theme] .row .s{font-size:12px;color:var(--muted)}
+body[data-theme="linear"][data-theme] .row .e::after{color:var(--dim);font-size:16px}
+body[data-theme="linear"][data-theme] .row .e .el{font-size:12px;font-weight:400}
+body[data-theme="linear"][data-theme] .alert{background:transparent;box-shadow:inset 0 -1px 0 var(--rule-2);border-radius:0;padding:12px}
+body[data-theme="linear"][data-theme] .alert:last-child{box-shadow:none}
+body[data-theme="linear"][data-theme] .alert .k b{font-size:13px;font-weight:510}
+body[data-theme="linear"][data-theme] .alert p{font-size:13px;color:var(--text-2)}
+body[data-theme="linear"][data-theme] .alert pre{background:var(--ground);box-shadow:0 0 0 1px var(--rule);border-radius:6px;font-size:12px}
+body[data-theme="linear"][data-theme] .empty{font-size:13px;color:var(--muted);padding:12px}
+/* chips, pills, lights: hairlines and dots, nothing lit */
+body[data-theme="linear"][data-theme] .chip{background:transparent;box-shadow:0 0 0 1px var(--rule);color:var(--text-2);font-weight:510;font-size:11px;border-radius:6px}
+body[data-theme="linear"][data-theme] .chip.empty{color:var(--dim)}
+body[data-theme="linear"][data-theme] .pill{background:transparent;box-shadow:0 0 0 1px var(--rule);color:var(--muted);font-weight:510}
+body[data-theme="linear"][data-theme] .pill.hot{background:var(--red);color:#fff;box-shadow:none}
+body[data-theme="linear"][data-theme] .pill.stale{background:transparent;color:var(--yellow)}
+body[data-theme="linear"][data-theme] .led{width:8px;height:8px}
+body[data-theme="linear"][data-theme] .you{font-size:13px;font-weight:510;color:var(--text-2)}
+body[data-theme="linear"][data-theme] .you small{color:var(--dim);font-size:10px}
+body[data-theme="linear"][data-theme] .you.big{font-size:16px}
+body[data-theme="linear"][data-theme] .why li b{color:var(--text-2);font-weight:510}
+/* buttons: quiet by default, the primary one light like Linear's, destructive red */
+body[data-theme="linear"][data-theme] .btn{background:transparent;box-shadow:0 0 0 1px var(--rule);color:var(--text-2);font-size:13px;font-weight:510;min-height:32px;padding:5px 12px;border-radius:6px}
+body[data-theme="linear"][data-theme] .btn:hover{background:var(--frame-2)}
+body[data-theme="linear"][data-theme] .btn.confirm{background:var(--orange);color:var(--on-accent);box-shadow:none}
+body[data-theme="linear"][data-theme] .btn.done{color:var(--green)}
+body[data-theme="linear"][data-theme] .btn.cancel{background:var(--red);color:#fff;box-shadow:none}
+body[data-theme="linear"][data-theme] .btn:focus-visible,body[data-theme="linear"][data-theme] .row:focus-visible,body[data-theme="linear"][data-theme] .picker:focus-visible,body[data-theme="linear"][data-theme] .opt:focus-visible{outline:2px solid var(--indigo)}
+/* the plant cards on the all-factories page, and the factory's header pane */
+body[data-theme="linear"][data-theme] .plant{background:var(--frame);box-shadow:0 0 0 1px var(--rule);border-radius:var(--radius);padding:14px 16px}
+body[data-theme="linear"][data-theme] .plant.working{box-shadow:0 0 0 1px var(--indigo)}
+body[data-theme="linear"][data-theme] .plant .roof b{font-size:15px;font-weight:510;letter-spacing:-.01em}
+body[data-theme="linear"][data-theme] .plant .floor{font-size:13px;font-weight:400}
+body[data-theme="linear"][data-theme] .ehead .key{color:var(--muted)}
+body[data-theme="linear"][data-theme] .ehead h2{font-weight:510;letter-spacing:-.02em}
+body[data-theme="linear"][data-theme] .foot{font-size:12px;color:var(--dim)}
+body[data-theme="linear"][data-theme] .opt{background:transparent;box-shadow:inset 0 -1px 0 var(--rule-2);border-radius:0}
+body[data-theme="linear"][data-theme] .opt.on{background:var(--frame-2)}
+body[data-theme="linear"][data-theme] .sheet{background:var(--frame);box-shadow:0 0 0 1px var(--rule);border-radius:12px 12px 0 0}

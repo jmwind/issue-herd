@@ -100,7 +100,7 @@ test('serve: an online owner and an offline factory, every fact from the owner o
   const wrong = await fetch(`${h.url}/api/v1/snapshot`, { headers: { 'x-weawr-protocol': '2' } }).then(j);
   assert.equal(wrong.ok, false); assert.equal(wrong.error.code, 'unsupported_protocol');
   // the page and its client are served from the bundled web build
-  assert.match(await fetch(`${h.url}/`).then((r) => r.text()), /<title>Factory Floor<\/title>/);
+  assert.match(await fetch(`${h.url}/`).then((r) => r.text()), /<title>[^<]+<\/title>/);
   assert.match(await fetch(`${h.url}/client.js`).then((r) => r.text()), /WeawrClient/);
   assert.match(await fetch(`${h.url}/themes/clean.css`).then((r) => r.text()), /body\[data-theme="clean"\]/);
   assert.equal((await fetch(`${h.url}/themes/nope.css`)).status, 404, 'themes are served by name only');

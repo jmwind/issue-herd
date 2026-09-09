@@ -397,5 +397,7 @@
     onSnapshot: function (s) { view = s; receivedAt = Date.now(); render(); settle(); },
     onResnapshot: function () { client.hostSnapshot().then(function (s) { view = s; receivedAt = Date.now(); render(); }).catch(function () {}); },
     onStatus: function (st) { link = st; if (st.error && /answered 401/.test(st.error)) location.replace('/'); render(); },
+    // Development (`pnpm dev`): the host says a page file changed; take the new one.
+    onOther: function (event) { if (event === 'reload' && window.WEAWR_LIVE) location.reload(); },
   });
 })();

@@ -1,7 +1,7 @@
 /* weawr clean — the brand's own palette (assets/brand/tokens.css), flat and quiet: chalk ground,
    ink text, forest and lime accents; light or dark with the system. The flat structure every
    non-Factorio theme shares lives in app.css; this file is the palette. */
-body[data-theme="clean"]{
+body[data-theme="clean"][data-theme]{
   --ground:#F5F7EF; --frame:#FFFFFF; --frame-2:#EEF2E8; --inset:#F0F3EA; --inset-2:#F5F7EF;
   --hi:transparent; --lo:transparent; --edge:transparent; --rule:#D8DED0; --radius:10px;
   --text:#10251B; --muted:#4E6157; --dim:#8A9A90; --heading:#104B32;
@@ -11,7 +11,7 @@ body[data-theme="clean"]{
   color-scheme:light;background:var(--ground);color:var(--text);
 }
 @media (prefers-color-scheme:dark){
-  body[data-theme="clean"]{
+  body[data-theme="clean"][data-theme]{
     --ground:#101812; --frame:#17221A; --frame-2:#1E2B22; --inset:#131C16; --inset-2:#101812; --rule:#2E3A31;
     --text:#EFEEE5; --muted:#ADB7A8; --dim:#6F7C72; --heading:#B5EB00;
     --orange:#B5EB00; --orange-2:#C9F23A; --on-accent:#10251B; --green:#72A98A; --green-2:#8FC7A6; --yellow:#E6C84F;

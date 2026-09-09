@@ -13,7 +13,7 @@
     "build": "node -e \"require('fs').rmSync('build',{recursive:true,force:true})\" && tsc -p tsconfig.json && node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --test-force-exit",
-    "dev": "node dist/weawr.mjs"
+    "dev": "node dev.mjs"
   },
   "devDependencies": {
     "@weawr/client": "*"

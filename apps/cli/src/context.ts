@@ -52,8 +52,10 @@ export interface Context {
 
 export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: string }): Context {
   const paths = factoryPaths(findRepoRoot(cwd));
-  const promptsRoot = path.join(PKG_DIR, 'prompts');
-  const pluginsRoot = path.join(PKG_DIR, 'plugins');
+  // In development (scripts/dev.mjs) the runtime assets are read from the source tree instead of
+  // from next to the artifact.
+  const promptsRoot = process.env.WEAWR_PROMPTS_ROOT || path.join(PKG_DIR, 'prompts');
+  const pluginsRoot = process.env.WEAWR_PLUGINS_ROOT || path.join(PKG_DIR, 'plugins');
   const sources: ConfigSources = { paths, promptsRoot };
   const uDir = userDir();
   const host = hostId(uDir);
@@ -61,7 +63,7 @@ export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: strin
   let cfg: FactoryConfig | null = null;
   let reg: Promise<PluginRegistry> | null = null;
   return {
-    ui, version: VERSION, pkgDir: PKG_DIR, promptsRoot, pluginsRoot, webDir: path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
+    ui, version: VERSION, pkgDir: PKG_DIR, promptsRoot, pluginsRoot, webDir: process.env.WEAWR_WEB_DIR || path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
     herdr: new (Herdr as any)({ log: (m: string) => { if (process.env.WEAWR_DEBUG) ui.log('  $', m); } }),
     config() { return (cfg ??= loadConfig(sources)); },
     plugins() { return (reg ??= loadPlugins(pluginSpecs(paths), { examplesRoot: pluginsRoot, userRoot: path.join(uDir, 'plugins'), configDir: paths.configDir }).then((r) => { sources.plugins = r; cfg = null; return r; })); },

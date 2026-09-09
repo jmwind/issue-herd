@@ -69,20 +69,43 @@ export interface HandlerOptions {
   /** Device tokens ({ [name]: record }), for native clients. */
   devices?: () => Record<string, any>;
   version: string;
+  /** Development: read the page from disk on every request, watch it, and push a reload to the browser. */
+  live?: boolean;
+  /** Where the client's browser bundle is when it is not in webDir (development). */
+  clientJs?: string | null;
+  /** Where the brand assets (icons/, logo/) are when they are not under webDir (development: the repository's assets/). */
+  assetsDir?: string | null;
 }
 
 type Principal = { kind: 'session' } | { kind: 'device'; name: string } | { kind: 'open' } | null;
 
 /** The request handler and the SSE fan-out. `hub.subscribe` drives the stream; call nothing else. */
-export function createHandler({ gate, hub, hostname = os.hostname(), log = () => {}, webDir = DEFAULT_WEB_DIR, devices = () => ({}), version, theme = 'factorio' }: HandlerOptions) {
+export function createHandler({ gate, hub, hostname = os.hostname(), log = () => {}, webDir = DEFAULT_WEB_DIR, devices = () => ({}), version, theme = 'factorio', live = false, clientJs = null, assetsDir = null }: HandlerOptions) {
   const clients = new Set<{ res: http.ServerResponse; principal: Principal }>();
   const web = webDir && fs.existsSync(webDir) ? webDir : null;
-  const asset = (name: string) => (web ? fs.readFileSync(path.join(web, name), 'utf8') : '');
-  const pages = web ? { app: asset('app.html'), unlock: asset('unlock.html'), css: asset('app.css'), js: asset('app.js'), client: fs.existsSync(path.join(web, 'client.js')) ? asset('client.js') : '' } : null;
-  const icons = Object.fromEntries(Object.entries(ICONS).map(([p, [file, type]]) => { let body: Buffer | null = null; try { body = web ? fs.readFileSync(path.join(web, 'assets', 'icons', file)) : null; } catch { body = null; } return [p, { body, type }]; }));
-  const mark = (() => { try { const svg = fs.readFileSync(path.join(web!, 'assets', 'logo', 'weawr-mark-reverse.svg'), 'utf8').replace('<svg ', '<svg class="mark" ').replace(' role="img" aria-label="weawr"', ' aria-hidden="true"'); return `<a class="home" href="${REPO_URL}" target="_blank" rel="noopener" title="weawr on GitHub" aria-label="weawr on GitHub">${svg}</a>`; } catch { return ''; } })();
-  const html = (tpl: string) => tpl.replace(/\{\{hostname\}\}/g, hostname).replace(/\{\{gated\}\}/g, gate.enabled ? 'true' : 'false').replace(/\{\{mark\}\}/g, mark).replace(/\{\{theme\}\}/g, theme);
-  const themes = web && fs.existsSync(path.join(web, 'themes')) ? Object.fromEntries(fs.readdirSync(path.join(web, 'themes')).filter((f) => f.endsWith('.css')).map((f) => [f.replace(/\.css$/, ''), fs.readFileSync(path.join(web, 'themes', f), 'utf8')])) : {};
+  // Read once at startup, or on every request in live mode (development), where the files change.
+  const cache = new Map<string, string | Buffer | null>();
+  const file = (rel: string, binary = false): string | Buffer | null => {
+    if (!web) return null;
+    const key = `${binary ? 'b' : 't'}:${rel}`;
+    if (!live && cache.has(key)) return cache.get(key)!;
+    let v: string | Buffer | null;
+    const at = assetsDir && rel.startsWith('assets' + path.sep) ? path.join(assetsDir, rel.slice(('assets' + path.sep).length)) : path.join(web, rel);
+    try { v = binary ? fs.readFileSync(at) : fs.readFileSync(at, 'utf8'); } catch { v = null; }
+    if (!live) cache.set(key, v);
+    return v;
+  };
+  const text = (rel: string) => (file(rel) as string | null) ?? '';
+  const pages = web ? { app: () => text('app.html'), unlock: () => text('unlock.html'), css: () => text('app.css'), js: () => text('app.js'), client: () => (clientJs ? (() => { try { return fs.readFileSync(clientJs, 'utf8'); } catch { return ''; } })() : text('client.js')) } : null;
+  const icons = Object.fromEntries(Object.entries(ICONS).map(([p, [f, type]]) => [p, { body: () => file(path.join('assets', 'icons', f), true) as Buffer | null, type }]));
+  const mark = () => { try { const svg = text(path.join('assets', 'logo', 'weawr-mark-reverse.svg')).replace('<svg ', '<svg class="mark" ').replace(' role="img" aria-label="weawr"', ' aria-hidden="true"'); return svg ? `<a class="home" href="${REPO_URL}" target="_blank" rel="noopener" title="weawr on GitHub" aria-label="weawr on GitHub">${svg}</a>` : ''; } catch { return ''; } };
+  const html = (tpl: string) => tpl.replace(/\{\{hostname\}\}/g, hostname).replace(/\{\{gated\}\}/g, gate.enabled ? 'true' : 'false').replace(/\{\{mark\}\}/g, mark()).replace(/\{\{theme\}\}/g, theme).replace('</head>', live ? '<script>window.WEAWR_LIVE=true</script></head>' : '</head>');
+  const themeCss = (name: string): string | null => (web && /^[a-z0-9-]+$/.test(name) ? (file(path.join('themes', `${name}.css`)) as string | null) : null);
+  // Live mode: watch the page's files and tell every open page to reload.
+  if (live && web) {
+    let timer: NodeJS.Timeout | null = null;
+    try { fs.watch(web, { recursive: true }, (_ev, changed) => { if (timer) clearTimeout(timer); timer = setTimeout(() => { log(`dev: ${changed || 'a web file'} changed; reloading ${clients.size} page(s)`); for (const c of clients) c.res.write(`event: reload\ndata: ${JSON.stringify({ file: changed })}\n\n`); }, 150); }); } catch (e: any) { log(`dev: cannot watch ${web}: ${e.message}`); }
+  }
 
   const now = () => new Date().toISOString();
   const send = (res: http.ServerResponse, code: number, body: unknown, type = 'application/json; charset=utf-8', extra: Record<string, string> = {}) => {
@@ -175,11 +198,11 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
     const wants = Number(req.headers['x-weawr-protocol'] || 0);
     try {
       // ---- ungated: the page's static files, the gate itself, health
-      if (req.method === 'GET' && pages && url.pathname === '/app.css') return send(res, 200, pages.css, 'text/css; charset=utf-8');
-      if (req.method === 'GET' && pages && url.pathname === '/app.js') return send(res, 200, pages.js, 'text/javascript; charset=utf-8');
-      if (req.method === 'GET' && pages && url.pathname === '/client.js') return send(res, 200, pages.client, 'text/javascript; charset=utf-8');
-      if (req.method === 'GET' && (m = /^\/themes\/([a-z0-9-]+)\.css$/.exec(url.pathname))) return Object.hasOwn(themes, m[1]) ? send(res, 200, themes[m[1]], 'text/css; charset=utf-8') : send(res, 404, { error: 'no such theme' });
-      if (req.method === 'GET' && icons[url.pathname]) { const { body, type } = icons[url.pathname]; return body ? send(res, 200, body, type, { 'cache-control': 'public, max-age=86400' }) : send(res, 404, { error: 'not found' }); }
+      if (req.method === 'GET' && pages && url.pathname === '/app.css') return send(res, 200, pages.css(), 'text/css; charset=utf-8');
+      if (req.method === 'GET' && pages && url.pathname === '/app.js') return send(res, 200, pages.js(), 'text/javascript; charset=utf-8');
+      if (req.method === 'GET' && pages && url.pathname === '/client.js') return send(res, 200, pages.client(), 'text/javascript; charset=utf-8');
+      if (req.method === 'GET' && (m = /^\/themes\/([a-z0-9-]+)\.css$/.exec(url.pathname))) { const css = themeCss(m[1]); return css !== null ? send(res, 200, css, 'text/css; charset=utf-8') : send(res, 404, { error: 'no such theme' }); }
+      if (req.method === 'GET' && icons[url.pathname]) { const { body, type } = icons[url.pathname]; const b = body(); return b ? send(res, 200, b, type, { 'cache-control': live ? 'no-store' : 'public, max-age=86400' }) : send(res, 404, { error: 'not found' }); }
       if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, gated: gate.enabled, protocolVersions: [PROTOCOL_VERSION], version });
       if (req.method === 'POST' && url.pathname === '/unlock') {
         if (!sameOrigin(req)) return send(res, 403, { error: 'cross-origin' });
@@ -193,8 +216,8 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
       if (req.method === 'POST' && url.pathname === '/lock') { const t = parseCookies(req.headers.cookie)[COOKIE]; if (t) gate.revoke(t); return send(res, 200, { ok: true }, undefined, { 'set-cookie': cookie('', 0) }); }
       if (req.method === 'GET' && url.pathname === '/') {
         if (!pages) return send(res, 404, 'weawr serve is running without the web console (--no-web); use /api/v1', 'text/plain');
-        if (!p) return send(res, 200, html(pages.unlock).replace('{{lockedMs}}', String(gate.lockedFor(address(req)))), 'text/html; charset=utf-8');
-        return send(res, 200, html(pages.app), 'text/html; charset=utf-8');
+        if (!p) return send(res, 200, html(pages.unlock()).replace('{{lockedMs}}', String(gate.lockedFor(address(req)))), 'text/html; charset=utf-8');
+        return send(res, 200, html(pages.app()), 'text/html; charset=utf-8');
       }
       if (req.method === 'GET' && url.pathname === '/api/v1/capabilities') return ok(res, { protocolVersions: [PROTOCOL_VERSION], version, commands: Object.keys(commandSchemas), features: { sse: true, devices: true, compat: true }, auth: { gated: gate.enabled, mechanisms: gate.enabled ? ['session-cookie', 'device-token'] : ['open', 'device-token'] } });
       if (!p) return fail(res, 401, { code: 'unauthorized', message: gate.enabled ? 'locked: unlock with the passcode, or send a device token' : 'a device token is required for that' });

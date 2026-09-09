@@ -281,7 +281,8 @@ button{font:inherit;color:inherit}
 /* ------------------------------------------------------------------ flat themes
    Every theme but Factorio is flat: cards instead of bevelled frames, a rule instead of an edge,
    the machinery gone, the lights and the facts kept. A theme file sets the palette (and --radius);
-   this is the structure they all get. */
+   this is the structure they all get. A theme that wants to override a rule here writes its
+   selector as body[data-theme="x"][data-theme] — one attribute more, so it wins the cascade. */
 body[data-theme]:not([data-theme="factorio"]){--radius:10px;--rule:#D8DED0;background-image:none}
 body[data-theme]:not([data-theme="factorio"]) .screen{background:var(--ground);box-shadow:none}
 @media (min-width:760px){body[data-theme]:not([data-theme="factorio"]) .screen{box-shadow:0 0 0 1px var(--rule),0 8px 30px rgba(0,0,0,.12);border-radius:calc(var(--radius) + 4px);overflow:hidden}}

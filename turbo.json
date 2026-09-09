@@ -51,10 +51,19 @@
     },
     "dev": {
       "dependsOn": [
+        "build",
         "^build"
       ],
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "passThroughEnv": [
+        "WEAWR_*",
+        "INIT_CWD",
+        "HERDR_*",
+        "GITHUB_TOKEN",
+        "LINEAR_API_KEY",
+        "XDG_CONFIG_HOME"
+      ]
     }
   }
 }
