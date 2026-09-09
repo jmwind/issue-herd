@@ -153,6 +153,36 @@ test('a result that does not check is reported once and never finalized; a fixed
   assert.equal(fs.readdirSync(path.dirname(ok.path)).filter((f) => f.endsWith('.tmp')).length, 0);
 });
 
+test('when the last reviewer approves the current head and the label is on, the coordinator asks the implementer to merge, once per head', async () => {
+  // Reproduced in the squad demo: both reviewers approved, the issue carried auto-merge, and the
+  // implementer's session sat idle — a verdict is a comment, and nothing woke it to run the merge.
+  const dir = repo(CONFIG());
+  const calls = [];
+  const gh = { state: 'open', head: 'abcdef1234567', conflicts: false, labels: ['ai', 'auto-merge'] };
+  const tracker = { async me() { return { id: 'me' }; }, async issueByKey(k) { return ISSUE({ identifier: k, labels: gh.labels }); }, async comment(id, body) { calls.push(['comment', body]); }, async addLabel() {}, async removeLabel() {}, async assign() {}, async setState() {} };
+  const fetchImpl = async () => new Response(JSON.stringify({ state: gh.state, merged: false, head: { sha: gh.head }, base: { ref: 'main' }, mergeable: true, mergeable_state: 'clean' }), { status: 200 });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  const runs = {
+    'GH-7@impl': { rule: 'impl', role: 'impl', pass: 1, status: 'awaiting_merge', issueId: 'i7', issueKey: 'GH-7', title: 't', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T01:00:00Z', agentName: 'gh-7-impl', workspaceId: 'w1', prUrl, result: { status: 'pr_open', prUrl }, notified: {}, worktree: 'none', workDir: dir, dir: path.join(dir, '.weawr', 'state', 'runs', 'GH-7@impl'), resultPath: path.join(dir, '.weawr', 'state', 'runs', 'GH-7@impl', 'result.json'), briefPath: path.join(dir, '.weawr', 'state', 'runs', 'GH-7@impl', 'brief.md') },
+    'GH-7@review': { rule: 'review', role: 'review', pass: 1, status: 'done', issueId: 'i7', issueKey: 'GH-7', title: 't', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T02:00:00Z', agentName: 'gh-7-review', workspaceId: 'w2', result: { status: 'nothing_to_do', review: { verdict: 'approved', prUrl, headSha: 'abcdef1' } }, notified: {}, worktree: 'none', workDir: dir },
+  };
+  const paths = factoryPaths(dir);
+  const store = SqliteStore.open(storePath(paths.stateDir)); store.save({ runs, nudges: {} });
+  const e = new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: PROMPTS }), tracker, herdr: fakeHerdr(dir), paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'fac0001' }, log: () => {}, fetchImpl });
+  e.pr = { host: 'github.com', token: 'tok' };
+  await e.askForMergeIfReady('GH-7');
+  const asks = calls.filter((c) => c[0] === 'comment' && /Weawr Coordinator/.test(c[1]) && /asking `impl` to run `weawr merge GH-7@impl`/.test(c[1]));
+  assert.equal(asks.length, 1, calls.map((c) => c[1]).join('\n---\n'));
+  assert.ok(e.state.nudges['GH-7'].some((n) => n.from === 'coordinator' && n.outcome === 'merge' && n.head === 'abcdef1234567'), 'the ask is on the trail, with its head, without spending the agents\' budget');
+  // Asked once per head: a second look, same head, asks nothing more.
+  await e.askForMergeIfReady('GH-7');
+  assert.equal(calls.filter((c) => c[0] === 'comment' && /asking `impl`/.test(c[1])).length, 1);
+  // Not ready — the reviewer's approval is for another head — asks nothing.
+  gh.head = 'fffffff000000';
+  await e.askForMergeIfReady('GH-7');
+  assert.equal(calls.filter((c) => c[0] === 'comment' && /asking `impl`/.test(c[1])).length, 1);
+});
+
 test('merge: the label now, every reviewer\'s structured approval of the current head, an open mergeable PR — and nothing less', async () => {
   const dir = repo(CONFIG());
   const calls = [];

@@ -8,5 +8,7 @@ As soon as your PR is open — before you write the result file — add it to th
 
     gh issue edit <issue number> --add-label ready-for-review
 
-Their findings reach you as nudges: a new turn with the ask in its brief. Answer the ask, push,
-and nudge both reviewers back so they can look again. Do not close the issue yourself.
+The label is what dispatches them — do not nudge them with your first result; they have no run
+to be nudged into yet. Their findings reach you later as nudges: a new turn with the ask in its
+brief. Answer the ask, push, and *then* nudge both reviewers back so they can look again. Do not
+close the issue yourself.

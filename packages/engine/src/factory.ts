@@ -255,16 +255,21 @@ export class FactoryEngine {
    * verdict for the PR's current head, the PR open and mergeable. GitHub enforces branch
    * protection on top, and refuses when the head moves between the check and the merge.
    */
-  async mergeRun(key: string, { requestedBy = 'cli' }: { requestedBy?: string } = {}): Promise<{ merged: boolean; reason: string | null; checks: Array<{ check: string; ok: boolean; detail: string }>; prUrl: string | null; headSha: string | null }> {
+  /**
+   * The checks a merge needs, against what is true now: the merge label on the issue, the pull
+   * request open and mergeable, every reviewing role's structured verdict approving its current
+   * head. Shared by the merge itself and by the coordinator's readiness check after a verdict.
+   */
+  async mergeChecks(key: string): Promise<{ ok: boolean; reason: string | null; checks: Array<{ check: string; ok: boolean; detail: string }>; run: any; prUrl: string | null; issueKey: string; head: string | null; reviewers: string[] }> {
     const run = this.state.runs[key];
     const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
-    const refuse = (reason: string) => ({ merged: false, reason, checks, prUrl: run?.prUrl || null, headSha: null as string | null });
+    const issueKey = run?.issueKey || issueKeyOf(key);
+    const refuse = (reason: string) => ({ ok: false, reason, checks, run, prUrl: run?.prUrl || null, issueKey, head: null as string | null, reviewers: [] as string[] });
     if (!run) return refuse(`no run ${key}`);
     const prUrl = parsePrUrl(run.prUrl) ? run.prUrl : parsePrUrl(run.result?.prUrl) ? run.result.prUrl : null;
     if (!prUrl) return refuse(`${key} has no pull request to merge`);
     if (!this.tracker) return refuse('no tracker: the merge label cannot be checked');
     if (!this.cfg.mergeLabel) return refuse('no mergeLabel is configured for this factory, so nothing can authorise an unattended merge');
-    const issueKey = run.issueKey || issueKeyOf(key);
     // 1. authorisation: the label, on the issue, now
     let fresh: any = null;
     try { fresh = await this.tracker.issueByKey(issueKey); } catch (e: any) { return refuse(`could not read ${issueKey} to check the merge label: ${e.message}`); }
@@ -287,7 +292,18 @@ export class FactoryEngine {
       checks.push({ check: `verdict:${role}`, ok, detail: !rr?.result ? `${role} has not reported` : v.source === 'legacy' ? `${role} gave a prose verdict (${v.verdict}) that names no head, so it cannot approve ${head?.slice(0, 7)}` : v.verdict !== 'approved' ? `${role}: ${v.verdict}` : !sameHead ? `${role} approved ${v.headSha?.slice(0, 7) || 'an unnamed head'}, but the PR is now at ${head?.slice(0, 7)}` : `${role} approved ${head?.slice(0, 7)}` });
     }
     const failed = checks.filter((c) => !c.ok);
-    if (failed.length) { this.emit('run.merge_refused', key, { checks }); return { merged: false, reason: failed.map((c) => c.detail).join('; '), checks, prUrl, headSha: head }; }
+    return { ok: !failed.length, reason: failed.length ? failed.map((c) => c.detail).join('; ') : null, checks, run, prUrl, issueKey, head, reviewers };
+  }
+
+  /**
+   * Merge a run's pull request — the one deterministic route to an unattended merge. Every check
+   * is against what is true now (mergeChecks). GitHub enforces branch protection on top, and
+   * refuses when the head moves between the check and the merge.
+   */
+  async mergeRun(key: string, { requestedBy = 'cli' }: { requestedBy?: string } = {}): Promise<{ merged: boolean; reason: string | null; checks: Array<{ check: string; ok: boolean; detail: string }>; prUrl: string | null; headSha: string | null }> {
+    const c = await this.mergeChecks(key);
+    const { run, prUrl, issueKey, head, reviewers, checks } = c;
+    if (!c.ok) { if (run) this.emit('run.merge_refused', key, { checks }); return { merged: false, reason: c.reason, checks, prUrl, headSha: head }; }
     // 4. merge, guarded by the head we checked
     let outcome: any;
     try { outcome = await mergePr(prUrl, { token: this.pr?.token, host: this.pr?.host, method: this.cfg.mergeMethod, sha: head, fetchImpl: this.fetchImpl }); }
@@ -1100,6 +1116,41 @@ export class FactoryEngine {
     await this.stampAnswered(key, run, rule);
     // Nudges that arrived while this turn was running were held for it. It is over: hand them over.
     await this.deliverQueuedNudges(key);
+    // A verdict may have been the last one the merge was waiting for.
+    if (result.review?.verdict === 'approved') await this.askForMergeIfReady(run.issueKey || issueKeyOf(key));
+  }
+
+  /**
+   * After a reviewing role's approval: when the issue carries the merge label and every reviewing
+   * role approves the pull request's current head, the implementer is asked — once per head — to
+   * run `weawr merge`. Its session is idle after its result and would never notice on its own: a
+   * reviewer's approval is a comment on the issue, not a nudge. The ask is the coordinator's, so
+   * it is not counted against what the agents may nudge each other.
+   */
+  async askForMergeIfReady(issueKey: string) {
+    for (const [implKey, run] of Object.entries<any>(this.state.runs)) {
+      if ((run.issueKey || issueKeyOf(implKey)) !== issueKey || run.status !== 'awaiting_merge') continue;
+      let c: Awaited<ReturnType<FactoryEngine['mergeChecks']>>;
+      try { c = await this.mergeChecks(implKey); } catch (e: any) { this.log(`${implKey}: could not check whether it is ready to merge: ${e.message}`); continue; }
+      if (!c.ok || !c.head) { this.log(`${implKey}: not ready to merge yet (${c.reason})`); continue; }
+      // Once per head, remembered on the issue's nudge trail: a later turn replaces the run object.
+      const trail = (this.state.nudges[issueKey] ??= []);
+      if (trail.some((n: any) => n.from === 'coordinator' && n.outcome === 'merge' && n.head === c.head)) continue;
+      const who = c.reviewers.map((r) => `\`${r}\``).join(', ');
+      const message = `Every reviewing role (${who}) has approved ${c.prUrl} at \`${c.head.slice(0, 7)}\`, and ${issueKey} carries \`${this.cfg.mergeLabel}\`. Run \`weawr merge ${implKey}\` from your worktree now, then write your result file again. If it refuses, say why in the result and stop.`;
+      const at = this.clock().toISOString();
+      const nudge = { from: 'coordinator', message, at };
+      trail.push({ from: 'coordinator', to: run.role, at, outcome: 'merge', head: c.head, message: message.slice(0, 200) }); this.saveState();
+      this.log(`${implKey}: ${who.replace(/`/g, '')} approved ${c.head.slice(0, 7)}; asking \`${run.role || run.rule}\` to run weawr merge`);
+      this.emit('run.merge_ready', implKey, { prUrl: c.prUrl, headSha: c.head, reviewers: c.reviewers });
+      // On the issue whatever the rule's comment policy says, like the merge itself: this is the
+      // moment the trail has to show, or a merge appears out of nowhere.
+      const body = coordinator(`🔀 every reviewing role (${who}) approved ${c.prUrl} at \`${c.head.slice(0, 7)}\`, and ${issueKey} carries \`${this.cfg.mergeLabel}\`: asking \`${run.role || run.rule}\` to run \`weawr merge ${implKey}\`.`);
+      await this.performOwed([{ id: this.owe('tracker.comment', { issueId: run.issueId, issueKey, body }, implKey), kind: 'tracker.comment', data: { issueId: run.issueId, issueKey, body }, runKey: implKey }]);
+      if (this.supervising.has(implKey) || this.reserved.has(implKey) || run.status === 'running' || run.status === 'starting') { (run.queuedNudges ??= []).push(nudge); this.saveState(); continue; }
+      this.reserved.add(implKey);
+      await this.startNudgedTurn(implKey, [nudge], 'coordinator');
+    }
   }
 
   /**
@@ -1414,6 +1465,10 @@ export class FactoryEngine {
   /** After a restart, re-attach to runs that were in flight, after finishing what the last owner left undone. */
   async resume() {
     await this.drainPending();
+    // A verdict that landed while the watcher was down may have been the last one.
+    for (const issueKey of new Set(Object.entries<any>(this.state.runs).filter(([, r]) => r.status === 'awaiting_merge').map(([k, r]) => r.issueKey || issueKeyOf(k)))) {
+      try { await this.askForMergeIfReady(issueKey); } catch (e: any) { this.log(`${issueKey}: merge readiness not checked: ${e.message}`); }
+    }
     for (const [key, run] of Object.entries<any>(this.state.runs)) {
       // A nudge held for a run that finished while the watcher was down is still owed.
       if (run.queuedNudges?.length && run.status !== 'running' && run.status !== 'starting') { await this.deliverQueuedNudges(key); continue; }

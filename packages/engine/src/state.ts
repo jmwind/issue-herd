@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export interface NudgeEntry { from: string | null; to: string; at: string; outcome: string; message: string }
+export interface NudgeEntry { from: string | null; to: string; at: string; outcome: string; message: string; /** The PR head a coordinator's merge ask was for, so it is asked once per head. */ head?: string }
 export interface FactoryState {
   runs: Record<string, any>;
   nudges: Record<string, NudgeEntry[]>;

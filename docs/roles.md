@@ -270,6 +270,13 @@ nothing; an approval of one head never merges another. `weawr recipe show` says 
 factory runs; `weawr recipe upgrade --dry-run` shows the difference and `weawr recipe upgrade`
 moves new tasks to it.
 
+The implementer does not have to watch for those verdicts. Its session is idle once its result is
+in, and a reviewer's approval is a comment, so the coordinator does the watching: when a reviewing
+role's approval lands and every reviewing role now approves the PR's current head while the issue
+carries the merge label, it gives the implementer a turn whose brief says so and names the command
+(`weawr merge <run key>`), once per head, and says so on the issue as **Weawr Coordinator**. The
+same check runs when a watcher starts, for runs already waiting on their merge.
+
 ## Three roles on GitHub: what this repository runs
 
 weawr works its own issues, so `.weawr/config.json` in this repository is a worked
