@@ -1,5 +1,5 @@
 {
-  "title": "basic — one senior developer",
+  "title": "basic — one senior developer human merges",
   "summary": "one rule, one small model: pick up the issue, implement it, open a PR, report back",
   "description": "The plain loop with nothing else in the way. Two issues are filed on the tally app, one bug and one small feature. A single implementer on Sonnet takes each, works in its own worktree, opens a pull request, and writes its result; you review and merge the PRs yourself.",
   "labels": ["ai"],

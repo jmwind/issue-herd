@@ -38,8 +38,8 @@ const tracker = (route) => new GitHubTracker('ghp_test', { options: { repo: 'jmw
 
 const scenarios = listScenarios(DEMOS);
 
-test('three scenarios ship, each with a title, a summary, issues, and rules', () => {
-  assert.deepEqual(scenarios.map((s) => s.name), ['bake-off', 'basic', 'squad']);
+test('the scenarios ship, each with a title, a summary, issues, and rules', () => {
+  assert.deepEqual(scenarios.map((s) => s.name), ['bake-off', 'basic', 'basic-auto', 'squad']);
   for (const s of scenarios) {
     assert.ok(s.title && s.summary && s.description, `${s.name} describes itself`);
     assert.ok(s.issues.length >= 1, `${s.name} files at least one issue`);
@@ -88,6 +88,16 @@ test('bake-off: two developers on different models and a judge that starts with 
   const brief = fs.readFileSync(path.join(s.dir, 'prompts', 'bake-off-judge.md'), 'utf8');
   for (const p of ['{{resultPath}}', '{{nudgeLines}}', '{{runLines}}', 'gh pr ready', 'gh pr close']) assert.ok(brief.includes(p), `judge brief has ${p}`);
   assert.match(fs.readFileSync(path.join(s.dir, 'instructions-dev.md'), 'utf8'), /--draft/);
+});
+
+test('basic-auto: every issue carries auto-merge, the gate is cut from the developer\'s branch and only runs tests', () => {
+  const s = scenarios.find((x) => x.name === 'basic-auto');
+  for (const i of s.issues) assert.ok(i.labels.includes('auto-merge'), i.title);
+  const gate = s.config.rules.find((r) => r.role === 'ci');
+  assert.equal(gate.basedOn, 'dev'); assert.match(gate.match, /ready-for-review/); assert.equal(gate.effort, 'low');
+  const brief = fs.readFileSync(path.join(s.dir, 'prompts', 'ci-gate.md'), 'utf8');
+  for (const p of ['{{resultPath}}', '{{nudgeLines}}', '{{runLines}}', '{{worktree}}', 'changes_requested']) assert.ok(brief.includes(p), `gate brief has ${p}`);
+  assert.match(fs.readFileSync(path.join(s.dir, 'instructions-dev.md'), 'utf8'), /--add-label ready-for-review/);
 });
 
 test('the starter app passes its own tests and runs', (t) => {

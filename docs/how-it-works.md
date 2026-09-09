@@ -368,17 +368,18 @@ repository, and `weawr demo` sets it up:
 
 ```bash
 weawr demo                  # the scenarios that ship, one paragraph each
-weawr demo squad            # clone the demo repository, write the scenario's .weawr/, file its issues
+weawr demo basic-auto       # clone the demo repository, write the scenario's .weawr/, file its issues
 cd ~/.config/weawr/demos/weawr-demo && weawr      # run the watcher on it (or `weawr console` from anywhere)
 weawr demo reset            # when you are done: close the issues and PRs, delete the branches, clear the state
 ```
 
 A scenario is a factory config, the briefs and instructions it needs, and the issues to file, all
-shipped with weawr (`apps/cli/demos/<name>/`). Three ship:
+shipped with weawr (`apps/cli/demos/<name>/`). Four ship:
 
 | scenario | what runs |
 |---|---|
 | `basic` | one developer on Sonnet: pick up, implement, open a PR, report. You merge. |
+| `basic-auto` | the same developer, plus a test gate on Sonnet at low effort that runs the tests on the PR's head and approves a green one; both issues carry `auto-merge`, so the coordinator has the developer merge as soon as the gate approves. |
 | `squad` | a developer on Sonnet, a tech lead on codex/astra at low effort, a designer on Sonnet. The developer labels the issue `ready-for-review` when its PR is open, which dispatches both reviewers into worktrees cut from its branch; findings go back and forth as nudges; when both approve, the developer runs `weawr merge` on the issue that carries `auto-merge`. |
 | `bake-off` | two developers, Sonnet and codex, implement the same issue and open draft PRs; a judge on Sonnet that started with them waits for both, gives each up to two rounds of feedback through nudges, then promotes the better PR and closes the other. You merge. |
 

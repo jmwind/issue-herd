@@ -1,0 +1,88 @@
+{
+  "title": "basic-auto — one developer, and PRs that merge themselves when the tests are green",
+  "summary": "a developer on Sonnet, a test gate on Sonnet at low effort that approves a green head; the coordinator then has the developer merge",
+  "description": "The basic loop with the merge taken off your hands. Two issues, both carrying the auto-merge label. The developer implements, opens a PR and labels the issue ready-for-review, which dispatches the test gate into a worktree cut from the developer's branch. The gate does one thing: runs the repository's tests on that exact head and approves it when they pass — or nudges the developer with the failure, whose fix nudges the gate back. As soon as the gate approves the PR's current head, the coordinator gives the developer a turn to run `weawr merge`, which checks the label, the verdict and the PR, and merges.",
+  "labels": [
+    "ai",
+    "ready-for-review",
+    "auto-merge"
+  ],
+  "config": {
+    "name": "weawr-demo (basic-auto)",
+    "pollSeconds": 20,
+    "lookbackDays": 7,
+    "maxConcurrent": 4,
+    "roles": [
+      "dev",
+      "ci"
+    ],
+    "defaults": {
+      "worktree": "self",
+      "branch": "{{issueBranchName}}{{roleSuffix}}",
+      "permissionMode": "auto",
+      "maxConcurrent": 2,
+      "prompt": "prompts/default.md",
+      "instructionsFile": "instructions.md",
+      "claimLabel": "herdr",
+      "skipIfAssignedToOthers": true,
+      "onPickup": {
+        "comment": true,
+        "state": null,
+        "assignToMe": true
+      },
+      "onDone": {
+        "comment": true,
+        "state": null,
+        "notify": true,
+        "closeWorkspace": false
+      },
+      "onBlocked": {
+        "comment": true,
+        "notify": true
+      },
+      "onIdle": {
+        "comment": true,
+        "notify": true
+      }
+    },
+    "rules": [
+      {
+        "name": "implement",
+        "role": "dev",
+        "match": "label:ai",
+        "model": "claude-sonnet-5",
+        "instructionsFile": "instructions-dev.md"
+      },
+      {
+        "name": "tests",
+        "role": "ci",
+        "match": "label:ai and label:ready-for-review",
+        "basedOn": "dev",
+        "passes": 3,
+        "model": "claude-sonnet-5",
+        "effort": "low",
+        "prompt": "prompts/ci-gate.md"
+      }
+    ]
+  },
+  "issues": [
+    {
+      "title": "`tally add` silently accepts a count that is not a positive number",
+      "labels": [
+        "ai",
+        "bug",
+        "auto-merge"
+      ],
+      "body": "`tally add coffee -3` and `tally add coffee lots` both succeed, and the tally ends up negative or `NaN`.\n\n```\n$ node bin/tally.mjs add coffee lots\ncoffee: NaN\n```\n\n**Expected:** `add` refuses a count that is not a positive integer, prints a one-line error and exits 1, and the tally is unchanged.\n\n**Acceptance**\n- `tally add coffee lots`, `tally add coffee -3` and `tally add coffee 0` all fail with a clear message and exit code 1.\n- `tally add coffee 2` still works.\n- A test covers the refusal.\n- The validation lives where `AGENTS.md` says it should.\n\nThis issue carries the `auto-merge` label: once the test gate has approved the PR's current head, the implementer merges it with `weawr merge`."
+    },
+    {
+      "title": "`tally list --json` for scripts",
+      "labels": [
+        "ai",
+        "enhancement",
+        "auto-merge"
+      ],
+      "body": "I want to feed the tally into other tools. `tally list` prints a tab-separated table, which is fine for people and annoying for `jq`.\n\n**Ask:** `tally list --json` prints the entries as a JSON array of `{ \"name\", \"count\" }`, in the same order `list` uses, and nothing else on stdout.\n\n**Acceptance**\n- `tally list --json | jq '.[0].name'` works.\n- `tally list` without the flag is unchanged.\n- The README's quick start mentions it.\n- A test covers the JSON shape.\n\nThis issue carries the `auto-merge` label: once the test gate has approved the PR's current head, the implementer merges it with `weawr merge`."
+    }
+  ]
+}

@@ -6,6 +6,7 @@ Each folder here is one scenario: a factory config, the briefs it needs, and the
 | scenario | who works |
 |---|---|
 | `basic` | one developer (Sonnet). You merge. |
+| `basic-auto` | one developer and a test gate (Sonnet, low effort); PRs merge themselves when the tests are green. |
 | `squad` | a developer (Sonnet), a tech lead (codex, low effort), a designer (Sonnet). The `auto-merge` issue merges itself. |
 | `bake-off` | two developers (Sonnet and codex), and a judge (Sonnet) that picks one PR. You merge. |
 
