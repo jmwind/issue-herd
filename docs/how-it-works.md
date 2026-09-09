@@ -394,6 +394,9 @@ aside, not deleted, and the worktrees are removed. `reset --all --yes` closes ev
 issue, every open PR and every branch but the default one, for a repository that exists for demos
 and nothing else.
 
+From a weawr checkout, `pnpm demo <scenario>` does the same with the code on the branch: it builds,
+sets the demo up, and runs the watcher and the console on it from the development build.
+
 Every scenario's config is loaded and every brief checked in CI, so a scenario that stops loading
 fails a build rather than a demo.
 

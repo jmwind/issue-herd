@@ -9,23 +9,27 @@ Each folder here is one scenario: a factory config, the briefs it needs, and the
 | `squad` | a developer, a tech lead (codex), a designer (Haiku). The `auto-merge` issue merges itself. |
 | `bake-off` | two developers on different models, and a judge that picks one PR. You merge. |
 
-## Run one
+## Run one from this checkout (the branch you are on)
+
+One command builds the branch, sets the demo up with it, and starts the watcher and the console
+on it, restarting on every edit:
+
+```bash
+pnpm demo squad          # build, clone the demo repo, file the issues, run watcher + console
+pnpm demo reset          # done: close the issues and PRs, clear the state
+pnpm demo                # list the scenarios
+```
+
+Ctrl-C stops the watcher and the console. If `pnpm dev` is already running in another terminal,
+stop it first: both want port 8498 (or give this one `WEAWR_DEV_PORT=8499`).
+
+## Run one with an installed weawr
 
 ```bash
 weawr demo squad                                   # 1. clone the demo repo, write .weawr/, file the issues
 cd ~/.config/weawr/demos/weawr-demo && weawr       # 2. run the watcher on it (needs herdr running)
 weawr console                                      # 3. watch it in the browser (from anywhere)
 weawr demo reset                                   # 4. done: close the issues and PRs, clear the state
-```
-
-Then the next scenario: `weawr demo bake-off`, and so on. `weawr demo` alone lists them.
-
-## From a weawr checkout, on the development build
-
-```bash
-node apps/cli/build/main.js demo squad             # same as step 1, with the dev build (pnpm build first)
-WEAWR_DEV_FACTORY=~/.config/weawr/demos/weawr-demo pnpm dev   # steps 2 and 3: watcher + console, restarting on every edit
-node apps/cli/build/main.js demo reset             # step 4
 ```
 
 ## Good to know

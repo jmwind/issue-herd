@@ -27,6 +27,7 @@
     "test": "turbo run test",
     "lint": "node scripts/check-imports.mjs",
     "dev": "turbo run dev",
+    "demo": "node scripts/demo.mjs",
     "prepare": "node scripts/build.mjs",
     "verify:install": "node scripts/verify-install.mjs",
     "smoke": "node apps/cli/dist/weawr.mjs smoke",
