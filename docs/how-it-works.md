@@ -303,10 +303,11 @@ a workspace herdr would not close does the same: a task with an agent or a works
 is not done, whatever was clicked, and the toast says which. A workspace is only ever closed if it
 is still the run's: herdr numbers workspaces per server session, so after a restart (an upgrade,
 say) the id a run recorded can belong to a workspace made later for somebody else, a person's own
-workspace on the run's old worktree included — the console checks the label the run gave it (or at
-least its `<key> <role>` head), or that the run's agent is standing in it, and a stranger's workspace
-under the run's old id is reported ("was reused by herdr for …") and left alone, without keeping the
-task in Alerts. While herdr is not answering at all
+workspace on the run's old worktree included — the console checks that the workspace is on this
+repository (herdr's workspace metadata names it; `GH-70 review` is an issue and a role in every
+repository) and carries the label the run gave it, or has the run's own agent standing in it. A
+stranger's workspace under the run's old id is reported ("was reused by herdr for …") and left
+alone, without keeping the task in Alerts. While herdr is not answering at all
 the button is refused outright, for the same reason: with nothing visible, nothing can be closed,
 and a sign-off that closed nothing would be the pile again. Worktrees stay, and so do the run's
 archived `brief.md` and `result.json`: the pane was never the long-term record. `onMerged` is

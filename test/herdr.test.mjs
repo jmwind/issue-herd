@@ -214,49 +214,69 @@ test('waitAgent still reads the codes it always did', async () => {
   assert.equal(await h3.waitAgent('x', { timeoutMs: 5000 }), 'blocked');
 });
 
-test('isRunsWorkspace: the label the run gave it, or one with its own key-and-role head; a checkout, a stranger, or nothing is no', () => {
-  const owner = { label: 'GH-7 impl Fix the thing', key: 'GH-7', role: 'impl' };
-  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Fix the thing' }, owner), true);
-  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Fix the thing, retitled' }, owner), true, 'the title moved on between turns');
-  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl' }, owner), true);
-  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-70 impl Migrate to herdr 0.9.0' }, owner), false, 'GH-70 is not GH-7');
-  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 review Fix the thing' }, owner), false, 'another role on the same issue is another run');
-  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-69 impl Rename project to weawr' }, owner), false);
+test('isRunsWorkspace: exactly the label the run gave it, on this repository; a head, a checkout, another repository, or nothing is no', () => {
+  const owner = { label: 'GH-7 impl Fix the thing', repo: '/home/me/a', agentName: 'gh-7-impl' };
+  const onA = { checkout_path: '/home/me/a/.issue-herd/worktrees/gh-7-impl', is_linked_worktree: true, repo_root: '/home/me/a' };
+  const onB = { ...onA, checkout_path: '/home/me/b/.issue-herd/worktrees/gh-7-impl', repo_root: '/home/me/b' };
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onA }, owner), true);
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: { ...onA, repo_root: '/home/me/a/' } }, owner), true, 'repository paths are compared resolved');
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Fix the thing' }, owner), true, 'a workspace herdr reports no repository for can only be matched by name');
+  // Issue keys and roles are not unique across repositories: repo B's GH-7 impl is not ours.
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onB }, owner), false, 'the same label on another repository');
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Repair billing export', worktree: onB }, owner), false);
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Fix the thing, retitled', worktree: onA }, owner), false, 'the head of the label is not the label');
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onA }, { label: 'GH-7 Fix the thing', repo: '/home/me/a' }), false, 'an unroled GH-7 run is not GH-7 impl');
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-7 review Fix the thing', worktree: onA }, owner), false, 'another role on the same issue is another run');
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-69 impl Rename project to weawr', worktree: onA }, owner), false);
   // The worktree outlives the workspace: a person reopening it in a workspace of their own, which
   // inherits the run's old id after a restart, must not be closed by the run's clean-up.
-  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'Personal inspection', worktree: { checkout_path: '/tmp/wt', is_linked_worktree: true } }, owner), false, 'a checkout is no evidence');
-  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'GH-8 Old one' }, { label: null, key: 'GH-8', role: null }), true, 'a run with no role');
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'Personal inspection', worktree: onA }, owner), false, 'a checkout is no evidence');
+  // The run's own agent standing in it, on this repository.
+  const agent = { name: 'gh-7-impl', workspace_id: 'w1' };
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'renamed by hand', worktree: onA }, owner, agent), true);
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'renamed by hand', worktree: onB }, owner, agent), false, 'repo B\'s gh-7-impl, started once ours had exited, is not ours');
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'renamed by hand', worktree: onA }, owner, { name: 'gh-7-review', workspace_id: 'w1' }), false, 'another agent');
+  assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'renamed by hand', worktree: onA }, owner, { name: 'gh-7-impl', workspace_id: 'w2' }), false, 'our agent, elsewhere');
   assert.equal(isRunsWorkspace({ workspace_id: 'w1', label: 'x' }, {}), false, 'a run that recorded nothing cannot claim anything');
   assert.equal(isRunsWorkspace({ workspace_id: 'w1' }, owner), false, 'no label, no claim');
   assert.equal(isRunsWorkspace(null, owner), false);
   assert.equal(isRunsWorkspace(undefined), false);
 });
 
-test('workspaceOwner: what a run recorded, or the label it must have been given', () => {
-  assert.deepEqual(workspaceOwner({ workspaceLabel: 'GH-7 impl Fix', worktreePath: '/tmp/wt', agentName: 'gh-7-impl', issueKey: 'GH-7', role: 'impl', title: 'Fix the thing' }), { label: 'GH-7 impl Fix', key: 'GH-7', role: 'impl', agentName: 'gh-7-impl' });
-  assert.deepEqual(workspaceOwner({ issueKey: 'GH-7', role: 'impl', title: 'Fix the thing', agentName: 'gh-7-impl' }), { label: 'GH-7 impl Fix the thing', key: 'GH-7', role: 'impl', agentName: 'gh-7-impl' });
-  assert.deepEqual(workspaceOwner({ issueKey: 'GH-8', title: 'Old one' }), { label: 'GH-8 Old one', key: 'GH-8', role: null, agentName: null });
+test('workspaceOwner: what a run recorded, or the label it must have been given, and the repository it is in', () => {
+  assert.deepEqual(workspaceOwner({ workspaceLabel: 'GH-7 impl Fix', worktreePath: '/tmp/wt', agentName: 'gh-7-impl', issueKey: 'GH-7', role: 'impl', title: 'Fix the thing' }, '/home/me/a'), { label: 'GH-7 impl Fix', repo: '/home/me/a', agentName: 'gh-7-impl' });
+  assert.deepEqual(workspaceOwner({ issueKey: 'GH-7', role: 'impl', title: 'Fix the thing', agentName: 'gh-7-impl' }), { label: 'GH-7 impl Fix the thing', repo: null, agentName: 'gh-7-impl' });
+  assert.deepEqual(workspaceOwner({ issueKey: 'GH-8', title: 'Old one' }), { label: 'GH-8 Old one', repo: null, agentName: null });
   assert.deepEqual(workspaceOwner(null), {});
 });
 
 test('closeWorkspaceOf closes the run\'s own workspace and leaves a stranger under the same id alone', async () => {
-  const ws = (label) => `printf '%s' '{"result":{"type":"workspace_info","workspace":{"workspace_id":"w3J","label":"${label}","worktree":{"checkout_path":"/tmp/gh-69","is_linked_worktree":true}}}}'`;
+  const ws = (label, root = '/home/me/issue-herd') => `printf '%s' '{"result":{"type":"workspace_info","workspace":{"workspace_id":"w3J","label":"${label}","worktree":{"checkout_path":"${root}/.issue-herd/worktrees/gh-69-impl","is_linked_worktree":true,"repo_root":"${root}"}}}}'`;
+  const A = '/home/me/issue-herd';
   const close = 'touch "$d/closed"; printf \'%s\' \'{"result":{}}\'';
   // Real story: GH-66's usability run had w3J; herdr was restarted for 0.9.0, GH-69 got w3J, and
   // Mark done on GH-66 closed it. The workspace under w3J is GH-69's by label and by worktree.
   const s1 = scriptedHerdr({ 'workspace get': ws('GH-69 impl Rename project to weawr'), 'workspace close': close, 'agent get': err('agent_not_found', 'gone') });
-  assert.equal(await new Herdr({ bin: s1.bin }).closeWorkspaceOf('w3J', { label: 'GH-66 usability Close herdr workspaces on mark', key: 'GH-66', role: 'usability', agentName: 'gh-66-usability' }), 'was reused by herdr for "GH-69 impl Rename project to weawr"');
+  assert.equal(await new Herdr({ bin: s1.bin }).closeWorkspaceOf('w3J', { label: 'GH-66 usability Close herdr workspaces on mark', repo: A, agentName: 'gh-66-usability' }), 'was reused by herdr for "GH-69 impl Rename project to weawr"');
   assert.equal(fs.existsSync(path.join(s1.dir, 'closed')), false, 'not closed');
+  // Another repository's GH-69 impl, under the same recycled id: same key, same role, even the
+  // same title would not make it ours — herdr says which repository the workspace is on.
+  const sB = scriptedHerdr({ 'workspace get': ws('GH-69 impl Rename project to weawr', '/home/me/other-repo'), 'workspace close': close, 'agent get': `printf '%s' '{"result":{"agent":{"name":"gh-69-impl","workspace_id":"w3J"}}}'` });
+  assert.equal(await new Herdr({ bin: sB.bin }).closeWorkspaceOf('w3J', { label: 'GH-69 impl Rename project to weawr', repo: A, agentName: 'gh-69-impl' }), 'was reused by herdr for "GH-69 impl Rename project to weawr"');
+  assert.equal(fs.existsSync(path.join(sB.dir, 'closed')), false, 'not ours by label, and not by the agent of the same name standing in it either');
+  const sU = scriptedHerdr({ 'workspace get': ws('GH-69 impl Rename project to weawr'), 'workspace close': close, 'agent get': err('agent_not_found', 'gone') });
+  assert.equal(await new Herdr({ bin: sU.bin }).closeWorkspaceOf('w3J', { label: 'GH-69 Rename project to weawr', repo: A, agentName: 'gh-69' }), 'was reused by herdr for "GH-69 impl Rename project to weawr"', 'an unroled GH-69 run is not GH-69 impl');
+  assert.equal(fs.existsSync(path.join(sU.dir, 'closed')), false);
   // A person who reopened GH-69's worktree in a workspace of their own, under the same recycled
   // id: the checkout is GH-69's, the workspace is not.
   const s0 = scriptedHerdr({ 'workspace get': ws('Personal inspection'), 'workspace close': close, 'agent get': err('agent_not_found', 'gone') });
-  assert.equal(await new Herdr({ bin: s0.bin }).closeWorkspaceOf('w3J', { label: 'GH-69 impl Rename project to weawr', key: 'GH-69', role: 'impl', agentName: 'gh-69-impl' }), 'was reused by herdr for "Personal inspection"');
+  assert.equal(await new Herdr({ bin: s0.bin }).closeWorkspaceOf('w3J', { label: 'GH-69 impl Rename project to weawr', repo: A, agentName: 'gh-69-impl' }), 'was reused by herdr for "Personal inspection"');
   assert.equal(fs.existsSync(path.join(s0.dir, 'closed')), false, 'somebody\'s workspace on our old checkout is not ours');
-  assert.equal(await new Herdr({ bin: s1.bin }).closeWorkspaceOf('w3J', { label: 'GH-69 impl Rename project to weawr', key: 'GH-69', role: 'impl', agentName: 'gh-69-impl' }), 'closed');
+  assert.equal(await new Herdr({ bin: s1.bin }).closeWorkspaceOf('w3J', { label: 'GH-69 impl Rename project to weawr', repo: A, agentName: 'gh-69-impl' }), 'closed');
   assert.equal(fs.existsSync(path.join(s1.dir, 'closed')), true, 'the owner\'s close goes through');
   // The run's agent standing in the workspace is enough on its own.
   const s2 = scriptedHerdr({ 'workspace get': ws('renamed by hand'), 'workspace close': close, 'agent get': `printf '%s' '{"result":{"agent":{"name":"gh-69-impl","workspace_id":"w3J"}}}'` });
-  assert.equal(await new Herdr({ bin: s2.bin }).closeWorkspaceOf('w3J', { label: 'GH-69 impl Something else', key: 'GH-69', role: 'impl', agentName: 'gh-69-impl' }), 'closed');
+  assert.equal(await new Herdr({ bin: s2.bin }).closeWorkspaceOf('w3J', { label: 'GH-69 impl Something else', repo: A, agentName: 'gh-69-impl' }), 'closed');
   assert.equal(fs.existsSync(path.join(s2.dir, 'closed')), true);
   // Gone already: what we wanted.
   const s3 = scriptedHerdr({ 'workspace get': err('workspace_not_found', 'workspace w3J not found') });

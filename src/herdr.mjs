@@ -1,5 +1,6 @@
 // Thin driver over the `herdr` CLI. Every command returns JSON; errors are JSON on stderr, exit 1.
 import { spawn, execFile } from 'node:child_process';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { workspaceLabel } from './claim.mjs';
 
@@ -76,9 +77,8 @@ export class Herdr {
     if (!ws) return 'was already closed';
     let ours = isRunsWorkspace(ws, owner);
     if (!ours && owner.agentName) {
-      // The third kind of evidence, for a workspace renamed by hand: the run's own agent is in it.
-      const agent = await this.agentGet(owner.agentName).catch(() => null);
-      ours = !!agent && agent.workspace_id === workspaceId;
+      // The other kind of evidence, for a workspace renamed by hand: the run's own agent is in it.
+      ours = isRunsWorkspace(ws, owner, await this.agentGet(owner.agentName).catch(() => null));
     }
     if (!ours) return `was reused by herdr for "${ws.label || workspaceId}"`;
     await this.closeWorkspace(workspaceId);
@@ -262,31 +262,36 @@ export function isBlocked(err) { return err?.code === 'agent_blocked'; }
 export function isNameTaken(err) { return err?.code === 'agent_name_taken'; }
 
 /**
- * Whether the workspace herdr shows under a run's id is the run's own: it carries the label the run
- * gave it, or at least the head of one — `<key> <role>`, which is issue-herd's naming for this run
- * and nobody else's, so a title that changed between turns still matches. The checkout it is on is
- * no evidence: a worktree outlives its workspace, and a person can reopen it in a workspace of
- * their own that inherits the old id. A run that recorded nothing cannot be told apart from a
- * stranger, and a stranger's workspace is the one thing this must never say yes to. Where the run's
- * agent stands is the third kind of evidence; that needs a live herdr, so it is the caller's
- * (closeWorkspaceOf(), and the console's view).
+ * Whether the workspace herdr shows under a run's id is the run's own. Two kinds of evidence count:
+ * the workspace carries exactly the label the run gave it, or the run's own agent (`agent`, looked
+ * up by the run's name, if the caller has it) is standing in it. Both only within the run's
+ * repository: herdr's workspace metadata names the repository a workspace is on, and an issue key,
+ * a role, an agent name — `GH-70 review`, `gh-70-review` — are the same in every repository
+ * issue-herd watches, so a label or an agent that matches on another repository's workspace is
+ * somebody else's. (A workspace herdr reports no repository for can only be matched by name.)
+ *
+ * Nothing else counts. Not the checkout: a worktree outlives its workspace, and a person can reopen
+ * it in a workspace of their own that inherits the old id. Not the head of the label: `GH-70` is
+ * also the head of `GH-70 review …`. A run that recorded no label cannot be told apart from a
+ * stranger, and a stranger's workspace is the one thing this must never say yes to.
  */
-export function isRunsWorkspace(ws, { label = null, key = null, role = null } = {}) {
+export function isRunsWorkspace(ws, { label = null, repo = null, agentName = null } = {}, agent = null) {
   if (!ws || typeof ws.label !== 'string') return false;
-  if (label && ws.label === label) return true;
-  const head = key ? workspaceLabel({ key, role }) : null;
-  return !!head && (ws.label === head || ws.label.startsWith(head + ' '));
+  const root = ws.worktree?.repo_root;
+  if (repo && root && path.resolve(root) !== path.resolve(repo)) return false;
+  if (agent && agentName && agent.name === agentName && agent.workspace_id === ws.workspace_id) return true;
+  return !!label && ws.label === label;
 }
 
 /**
  * What a run knows about its workspace, for isRunsWorkspace(): the label it was given (recorded at
- * pickup; rebuilt from the run's key, role and title for runs recorded before it was), the key and
- * role the label was made from, and the agent it hosts.
+ * pickup; rebuilt from the run's key, role and title for runs recorded before it was), the
+ * repository the run is in, and the agent it hosts.
  */
-export function workspaceOwner(run) {
+export function workspaceOwner(run, repo = null) {
   if (!run) return {};
   const label = run.workspaceLabel || (run.issueKey ? workspaceLabel({ key: run.issueKey, role: run.role, title: run.title }) : null);
-  return { label, key: run.issueKey || null, role: run.role || null, agentName: run.agentName || null };
+  return { label, repo: repo || null, agentName: run.agentName || null };
 }
 
 /** Where an existing agent sits, in the shape the workspace calls return. */

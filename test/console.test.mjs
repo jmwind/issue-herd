@@ -62,12 +62,19 @@ test('a workspace is open for a run only while the workspace under its id is the
   // or Mark done and Tidy close it (that is how GH-69's agent died).
   const state = { runs: { 'GH-7@impl': { ...fixtureState().runs['GH-7@impl'], workspaceLabel: 'GH-7 impl Fix the thing', worktreePath: '/tmp/wt' } } };
   const open = (snapshot, runs = state.runs) => factoryView({ id: 'app', repo: '/r', config: CONFIG, state: { runs }, index: indexSnapshot({ ...snapshot }), now: T(15, 0) }).issues[0].runs[0].workspaceOpen;
-  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing' }] }), true, 'the label the run gave it');
-  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-69 impl Rename project to weawr' }] }), false, 'a stranger under our old id');
-  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing, retitled' }] }), true, 'issue-herd\'s own naming for this run, whatever the title became');
-  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'Personal inspection', worktree: { checkout_path: '/tmp/wt', is_linked_worktree: true } }] }), false, 'a person\'s workspace reopened on the run\'s worktree, under its recycled id, is not the run\'s');
-  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 review Fix the thing' }] }), false, 'another role\'s workspace is another run\'s');
-  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'stranger' }], agents: [{ name: 'gh-7-impl', agent_status: 'working', workspace_id: 'w1' }] }), true, 'our agent standing in it');
+  const onR = { checkout_path: '/tmp/wt', is_linked_worktree: true, repo_root: '/r' };
+  const onOther = { ...onR, repo_root: '/other' };
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onR }] }), true, 'the label the run gave it, on this repository');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing' }] }), true, 'herdr reporting no repository leaves the name');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-69 impl Rename project to weawr', worktree: onR }] }), false, 'a stranger under our old id');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onOther }] }), false, 'another factory\'s GH-7 impl: keys and roles repeat across repositories');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Repair billing export', worktree: onOther }] }), false);
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing, retitled', worktree: onR }] }), false, 'the head of the label is not the label');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'Personal inspection', worktree: onR }] }), false, 'a person\'s workspace reopened on the run\'s worktree, under its recycled id, is not the run\'s');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 review Fix the thing', worktree: onR }] }), false, 'another role\'s workspace is another run\'s');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onR }] }, { 'GH-7': { ...fixtureState().runs['GH-7@impl'], role: null, workspaceLabel: 'GH-7 Fix the thing' } }), false, 'an unroled GH-7 run is not GH-7 impl');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'stranger', worktree: onR }], agents: [{ name: 'gh-7-impl', agent_status: 'working', workspace_id: 'w1' }] }), true, 'our agent standing in it');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'stranger', worktree: onOther }], agents: [{ name: 'gh-7-impl', agent_status: 'working', workspace_id: 'w1' }] }), false, 'an agent of our name on another repository is not ours');
   assert.equal(open({ workspaces: [] }), false, 'gone');
   assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing' }] }, { 'GH-7@impl': fixtureState().runs['GH-7@impl'] }), true, 'a run recorded before labels were kept is matched on the label it must have been given');
   assert.equal(factoryView({ id: 'app', repo: '/r', config: CONFIG, state, index: indexSnapshot(null), now: T(15, 0) }).issues[0].runs[0].workspaceOpen, null, 'unknown while herdr is not answering');
@@ -413,10 +420,10 @@ test('markDone: the one action — every agent still up on the task gets its exi
   // An id herdr has since handed to another workspace (it numbers them per server session) is
   // reported and left alone — it is not this run's, so it is not a workspace still on the task.
   // That is the GH-69 story: Mark done on GH-66 closed `w3J`, which had become GH-69's session.
-  herdr.closeWorkspaceOf = async (id, owner) => (id === 'w3' ? `was reused by herdr for "GH-69 impl Rename project to weawr"` : `closed (${owner.key} ${owner.role} ${owner.agentName})`);
+  herdr.closeWorkspaceOf = async (id, owner) => (id === 'w3' ? `was reused by herdr for "GH-69 impl Rename project to weawr"` : `closed (${owner.repo} ${owner.agentName})`);
   const reused = await app.markDone({ factory: 'f', issue: 'GH-1' });
   assert.equal(reused.done, true, 'somebody else\'s workspace under our old id does not keep the task in Alerts');
-  assert.deepEqual(reused.outcomes.map((o) => o.workspace), ['closed (GH-1 impl gh-1-impl)', 'closed (GH-1 review gh-1-review)', 'was reused by herdr for "GH-69 impl Rename project to weawr"'], 'the close is asked for by run, so herdr can check the workspace is the run\'s');
+  assert.deepEqual(reused.outcomes.map((o) => o.workspace), ['closed (/r gh-1-impl)', 'closed (/r gh-1-review)', 'was reused by herdr for "GH-69 impl Rename project to weawr"'], 'the close is asked for by run, so herdr can check the workspace is the run\'s');
   app.stop();
 });
 

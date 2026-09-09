@@ -324,14 +324,14 @@ export class FactoryConsole {
    * 'is still open (why)') — null when the run never had one.
    */
   async closeTask({ factory, issue }) {
-    const { iss } = this.findTask({ factory, issue });
+    const { f, iss } = this.findTask({ factory, issue });
     const outcomes = [];
     for (const r of iss.runs) {
       const hasWorkspace = !!r.workspaceId && r.workspaceOpen !== false;
       if (!r.agentAlive && !hasWorkspace) continue;
       const outcome = r.agentAlive ? await this.herdr.stopAgent(r.agent, { exitCommand: exitCommandFor(r.agentKind) }) : 'was already gone';
       let workspace = null;
-      if (hasWorkspace) workspace = outcome === 'is still running' ? 'left open' : await this.closeWorkspace(iss, r);
+      if (hasWorkspace) workspace = outcome === 'is still running' ? 'left open' : await this.closeWorkspace(f, r);
       outcomes.push({ run: r.key, role: r.role, agent: r.agent, outcome, workspaceId: r.workspaceId || null, workspace });
       this.sizes.delete(r.key);
     }
@@ -343,8 +343,8 @@ export class FactoryConsole {
    * reused by herdr for "…"' (the id names somebody else's workspace now — herdr numbers them per
    * server session — and that one is left alone), or 'is still open (why)'.
    */
-  async closeWorkspace(iss, r) {
-    try { return await this.herdr.closeWorkspaceOf(r.workspaceId, { label: r.workspaceLabel, key: iss.key, role: r.role, agentName: r.agent }); } catch (e) {
+  async closeWorkspace(f, r) {
+    try { return await this.herdr.closeWorkspaceOf(r.workspaceId, { label: r.workspaceLabel, repo: f.repo, agentName: r.agent }); } catch (e) {
       if (isNotFound(e)) return 'was already closed';
       this.log(`console: could not close workspace ${r.workspaceId}: ${e.message}`);
       return `is still open (${e.message})`;
@@ -367,7 +367,7 @@ export class FactoryConsole {
         if (!iss.cleared || iss.bucket === 'inflight') continue;
         for (const r of iss.runs) {
           if (r.agentAlive || !r.workspaceId || !r.workspaceOpen) continue;
-          outcomes.push({ factory: f.id, issue: iss.key, run: r.key, role: r.role, workspaceId: r.workspaceId, workspace: await this.closeWorkspace(iss, r) });
+          outcomes.push({ factory: f.id, issue: iss.key, run: r.key, role: r.role, workspaceId: r.workspaceId, workspace: await this.closeWorkspace(f, r) });
         }
       }
     }

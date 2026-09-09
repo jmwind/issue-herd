@@ -1209,7 +1209,7 @@ export class IssueHerd {
    */
   async closeRunWorkspace(key, run) {
     let how;
-    try { how = await this.herdr.closeWorkspaceOf(run.workspaceId, workspaceOwner(run)); }
+    try { how = await this.herdr.closeWorkspaceOf(run.workspaceId, workspaceOwner(run, REPO)); }
     catch (e) { how = `is still open (${e.message})`; }
     log(`${key}: workspace ${run.workspaceId} ${how}`);
     return how;
