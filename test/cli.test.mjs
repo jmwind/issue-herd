@@ -209,3 +209,33 @@ test('"basedOn" is refused where issue-herd does not make the worktree', (t) => 
     assert.match(r.out, /"basedOn" needs "worktree": "self"/, mode);
   }
 });
+
+test('"maxNudges" is checked at config load, and 0 is how nudging is turned off', (t) => {
+  const bad = repo(t, { '.issue-herd/config.json': config({ maxNudges: -2 }) });
+  const r = run(bad, ['status']);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /"maxNudges" must be a whole number of 0 or more \(0 turns nudging off\), not -2/);
+  const off = repo(t, { '.issue-herd/config.json': config({ maxNudges: 0 }) });
+  assert.equal(run(off, ['status']).status, 0);
+});
+
+test('reset by issue key hands the issue\'s nudge budget back too', (t) => {
+  const dir = repo(t, { '.issue-herd/config.json': config() });
+  const statePath = path.join(dir, '.issue-herd', 'state', 'state.json');
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  const runOn = (key) => ({ rule: 'r', role: 'impl', status: 'done', startedAt: '2026-01-01T00:00:00.000Z', issueKey: key });
+  fs.writeFileSync(statePath, JSON.stringify({
+    runs: { 'GH-7@impl': runOn('GH-7'), 'GH-8@impl': runOn('GH-8') },
+    nudges: { 'GH-7': [{ from: 'review', to: 'impl', outcome: 'turn', at: '2026-01-01T01:00:00Z', message: 'fix it' }], 'GH-8': [{ from: 'review', to: 'impl', outcome: 'turn', at: '2026-01-01T01:00:00Z', message: 'and this' }] },
+  }));
+  // status shows the conversation against the cap
+  const before = run(dir, ['status']);
+  assert.equal(before.status, 0, before.out);
+  assert.match(before.out, /GH-7: 1 of 6 nudges used/);
+  assert.match(before.out, /review → impl turn: fix it/);
+  const r = run(dir, ['reset', 'GH-7']);
+  assert.equal(r.status, 0, r.out);
+  const s = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.deepEqual(Object.keys(s.runs), ['GH-8@impl']);
+  assert.deepEqual(Object.keys(s.nudges), ['GH-8'], 'the other issue keeps its record');
+});

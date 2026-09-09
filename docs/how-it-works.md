@@ -62,7 +62,11 @@ whatever your rule says (`not state:started` excludes anything already In Progre
 
 A rule with `"passes"` above 1 is the one deliberate exception: it may take an issue again, but
 only after the issue has moved on since it last finished, and only up to the number of turns it was
-given. See [More than one turn](roles.md#more-than-one-turn-passes).
+given. See [More than one turn](roles.md#more-than-one-turn-passes). A role can also be given a
+turn by *another role*: a result that says `"nudge": { "role": "impl", "message": "…" }` hands
+that role its next turn at once, through `herdr agent prompt`, without waiting for a poll or for
+the issue to move — capped per issue by `maxNudges`, after which a person is asked in. See
+[Working together](roles.md#working-together-nudges).
 
 
 ## How a run works

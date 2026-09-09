@@ -112,6 +112,9 @@ The same fields work on every tracker; what they map to on GitHub is in
   "pullBase": true,           // fast-forward the checkout you started the watcher in onto that branch, at
                               // pickup and when one of its PRs is merged. Only forwards, only when the checkout
                               // is clean and standing on it; anything else is reported and left alone
+  "maxNudges": 6,             // how many times, per issue, the roles may hand work to each other (a result's
+                              // "nudge" gives another role its next turn) before a person is asked in. 0 turns
+                              // it off. See Roles, "Working together"
   "defaults": {               // every rule inherits these
     "worktree": "self",       // who creates the git worktree the run works in.
                               // "self":  issue-herd does, with one `git worktree add` on the branch below.

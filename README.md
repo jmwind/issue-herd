@@ -127,7 +127,10 @@ change and can run the tests. `passes` gives it three turns — review, confirm 
 and each later turn is granted only when the issue has really moved on, so a reviewer can never be
 woken by its own comment. A reviewer also needs its own brief: the built-in one tells an agent to
 implement the issue, which is not the job. `prompts/review-lead.md` ships with the tool, alongside
-usability and security briefs — a rule can name one without copying it.
+usability and security briefs — a rule can name one without copying it. And the two talk to each
+other: a review that says "not yet" nudges the implementer, whose fix nudges the reviewer back,
+each nudge a new turn in the other's pane with the ask in its brief — up to `maxNudges` per issue
+(six), after which a person is asked in.
 
 ```json
 {
@@ -229,7 +232,7 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 |---|---|
 | [Configuration](docs/configuration.md) | `config.json` reference, the rule language, per-machine overrides |
 | [Issue trackers](docs/trackers.md) | Linear and GitHub Issues, what the fields map to, signing in, adding a tracker |
-| [Roles](docs/roles.md) | several agents on one issue, a reviewer on another provider, `basedOn`, `passes` |
+| [Roles](docs/roles.md) | several agents on one issue, a reviewer on another provider, `basedOn`, `passes`, nudges between roles |
 | [How it works](docs/how-it-works.md) | the guards, a run start to finish, what happens when the PR merges, the console, troubleshooting |
 | [Maintainers](docs/maintainers.md) | cutting a release, hacking on the tool |
 | [The mark](assets/logo/README.md) | the logo, and the rules for using it |

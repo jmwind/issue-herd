@@ -49,6 +49,14 @@ which role you are.
 - **`review`** (tech lead) and **`usability`** read that PR and report back as a comment on the
   issue. They do not commit, push, merge, or touch labels: the handoff is the implementer's to
   make, and the merge is never theirs.
+- **Talk to each other, not to the owner.** A reviewer whose verdict is `NOT OK` or has blocking
+  findings puts them in `notes` *and* nudges the implementer in its result
+  (`"nudge": { "role": "impl", "message": "<what must change>" }`) — a comment alone leaves the
+  implementer's agent idle. The implementer fixes, pushes to the same PR, writes its result again
+  with the same PR URL, and nudges back the reviewer(s) that asked (`[{ "role": "review", … },
+  { "role": "usability", … }]`) naming the commits to re-read. An `OK` verdict needs no nudge. The
+  issue has `maxNudges` (six) of these before issue-herd asks the owner in; if you cannot agree
+  before then, or the owner has asked to be involved, write `needs_human` and say why.
 
 ## Who merges
 

@@ -28,6 +28,15 @@ test('the reviewing briefs still never merge', () => {
   }
 });
 
+test('every brief that a role can run leaves room for how to nudge the other roles', () => {
+  // GH-61: the roles on an issue hand work to each other through the result file's `nudge`, and
+  // the brief is the only place an agent learns that. The block is rendered by the watcher, so a
+  // template that drops the placeholder silently turns the feature off for that role.
+  for (const name of ['default.md', 'review-lead.md', 'review-usability.md', 'review-security.md']) {
+    assert.match(read(name), /\{\{nudgeLines\}\}/, `${name} must carry {{nudgeLines}}`);
+  }
+});
+
 // GH-59: a PR that drifts into conflicts while a person gets round to reviewing is one nobody can
 // merge. The implementer owns keeping it mergeable, and the safe way to do that on a pushed branch
 // is a merge of the base — never a rewrite. Keep that in the brief; the watcher's conflict message

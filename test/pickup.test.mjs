@@ -44,7 +44,13 @@ if (noun === 'agent' && verb === 'prompt') {
   const n = bump('prompts');
   if (mode === 'blocked-first' && n === 1) no('agent_blocked', 'agent ' + rest[0] + ' is blocked and requires interactive input');
   const brief = /is in (\\S+brief\\.md)/.exec(rest[1] || '');
-  if (brief) fs.writeFileSync(path.join(path.dirname(brief[1]), 'result.json'), JSON.stringify({ status: 'pr_open', prUrl: 'https://example.test/pr/1', summary: 'fake agent' }));
+  // mode "nudge": the first result is a reviewer's, and it asks the implementer to act; whatever
+  // turn that starts answers with a plain result, as an implementer that fixed the findings would.
+  const result = mode === 'nudge' && n === 1
+    ? { status: 'nothing_to_do', summary: 'NOT OK TO MERGE TO MAIN — one finding', nudge: { role: 'impl', message: 'Fix the null check in src/a.mjs:12, then push.' } }
+    : mode === 'nudge' ? { status: 'pr_open', prUrl: 'https://github.com/example/repo/pull/1', summary: 'fixed the finding' }
+      : { status: 'pr_open', prUrl: 'https://example.test/pr/1', summary: 'fake agent' };
+  if (brief) fs.writeFileSync(path.join(path.dirname(brief[1]), 'result.json'), JSON.stringify(result));
   ok({});
 }
 if (noun === 'agent' && verb === 'wait') { if (mode === 'working' && !rest.includes('--until')) no('timeout', 'agent ' + rest[0] + ' did not settle'); ok({ agent: { agent_status: 'idle' } }); }
@@ -57,18 +63,18 @@ ok({});
 }
 
 /** A git repository configured for issue-herd, cleaned up when the test ends. */
-function repo(t, defaults = null) {
+function repo(t, defaults = null, config = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-herd-pickup-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q', dir]);
   fs.mkdirSync(path.join(dir, '.issue-herd'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.issue-herd', 'config.json'), JSON.stringify({ tracker: 'linear', rules: [{ name: 'r', match: 'any:true' }], ...(defaults ? { defaults } : {}) }));
+  fs.writeFileSync(path.join(dir, '.issue-herd', 'config.json'), JSON.stringify({ tracker: 'linear', rules: [{ name: 'r', match: 'any:true' }], ...(defaults ? { defaults } : {}), ...config }));
   return fs.realpathSync(dir);
 }
 
 /** `issue-herd smoke` in `dir`, with the fake herdr first on PATH. Returns { status, out }. */
-function smoke(dir, herdr) {
-  const r = spawnSync(process.execPath, [BIN, 'smoke'], {
+function smoke(dir, herdr, args = []) {
+  const r = spawnSync(process.execPath, [BIN, 'smoke', ...args], {
     cwd: dir, encoding: 'utf8', timeout: 60_000,
     env: { ...process.env, ISSUE_HERD_NO_UPDATE_CHECK: '1', PATH: `${herdr.dir}:${process.env.PATH}` },
   });
@@ -194,4 +200,92 @@ test('the checkout a run works in is pulled up to the base branch first', (t) =>
   assert.match(r.out, /fast-forwarded onto origin\/main/);
   assert.equal(fs.readFileSync(path.join(at, 'merged.txt'), 'utf8'), 'a pull request that landed\n');
   assert.equal(r.status, 0);
+});
+
+/**
+ * An issue with a finished `impl` run on it, as state.json records one: done, its result in, its
+ * session (per the fake herdr) still up in `dir`. This is what a reviewer's nudge wakes.
+ */
+function seedImplRun(dir, key) {
+  const runDir = path.join(dir, '.issue-herd', 'state', 'runs', `${key}@impl`);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'result.json'), JSON.stringify({ status: 'pr_open', prUrl: 'https://github.com/example/repo/pull/1', summary: 'first turn' }));
+  const run = {
+    rule: 'impl', role: 'impl', pass: 1, status: 'awaiting_merge', claimed: 'herdr:impl',
+    issueId: 'fake', issueKey: key, title: 'issue-herd smoke test', url: 'https://linear.app/example',
+    startedAt: '2026-01-01T00:00:00.000Z', finishedAt: '2026-01-01T01:00:00.000Z',
+    archiveDir: path.join(dir, '.issue-herd', 'state', 'runs', `${key}@impl`),
+    worktree: 'none', agentName: `${key.toLowerCase()}-impl`, notified: {}, workspaceId: 'w9', paneId: 'w9:p1',
+    workDir: dir, dir: runDir, resultPath: path.join(runDir, 'result.json'), prUrl: 'https://github.com/example/repo/pull/1',
+    result: { status: 'pr_open', prUrl: 'https://github.com/example/repo/pull/1' },
+  };
+  const statePath = path.join(dir, '.issue-herd', 'state', 'state.json');
+  fs.writeFileSync(statePath, JSON.stringify({ runs: { [`${key}@impl`]: run } }));
+  return { runDir, state: () => JSON.parse(fs.readFileSync(statePath, 'utf8')) };
+}
+
+/** The reviewer-and-implementer pair this repository runs, in "none" worktree mode so no commits are needed. */
+const TWO_ROLES = { roles: ['impl', 'review'], rules: [{ name: 'r', match: 'any:true' }, { name: 'impl', role: 'impl', match: 'any:true', worktree: 'none' }] };
+
+test('a reviewer\'s nudge gives the implementer its next turn, through herdr, with the ask in its brief', (t) => {
+  // GH-61: a reviewer that found something wrong could only say so on the issue, and the
+  // implementer's agent sat idle in the next pane until a person carried the message over.
+  const dir = repo(t, { role: 'review', worktree: 'none' }, TWO_ROLES);
+  const seeded = seedImplRun(dir, 'SMOKE-1');
+  const herdr = fakeHerdr(t, { mode: 'nudge', cwd: dir });
+  const r = smoke(dir, herdr, ['--key', 'SMOKE-1']);
+  assert.equal(r.status, 0, r.out);
+  // the review's result asked for impl, and the watcher gave impl a turn
+  assert.match(r.out, /SMOKE-1@review: nudge → SMOKE-1@impl: turn/);
+  assert.match(r.out, /picking up SMOKE-1@impl .*turn 2, nudged by review/);
+  // it went to the implementer's own session — the herdr API, not a comment somebody has to read
+  assert.match(herdr.calls(), /agent prompt smoke-1-impl /);
+  assert.doesNotMatch(herdr.calls(), /agent start smoke-1-impl/);
+  // the brief quotes the ask, says whose turn this is, and points at the last turn's result
+  const brief = fs.readFileSync(path.join(seeded.runDir, 'brief.md'), 'utf8');
+  assert.match(brief, /Turn: \*\*2\*\* on this issue for this rule, because `review` nudged you/);
+  assert.match(brief, /> Fix the null check in src\/a\.mjs:12, then push\./);
+  assert.match(brief, /result\.pass1\.json/);
+  assert.ok(fs.existsSync(path.join(seeded.runDir, 'result.pass1.json')), 'the first turn\'s result was set aside, not overwritten');
+  // and the brief teaches the implementer to nudge back, with the budget
+  assert.match(brief, /other roles on this issue are `review`/);
+  assert.match(brief, /\*\*5\*\* nudges left/);
+  // the implementer's turn ran to a result and the watch on its PR survived
+  const s = seeded.state();
+  assert.equal(s.runs['SMOKE-1@impl'].pass, 2);
+  assert.equal(s.runs['SMOKE-1@impl'].status, 'awaiting_merge');
+  assert.equal(s.runs['SMOKE-1@impl'].prUrl, 'https://github.com/example/repo/pull/1');
+  assert.deepEqual(s.nudges['SMOKE-1'].map((e) => [e.from, e.to, e.outcome]), [['review', 'impl', 'turn']]);
+});
+
+test('with maxNudges 0 the nudge is refused and nobody is woken', (t) => {
+  const dir = repo(t, { role: 'review', worktree: 'none' }, { ...TWO_ROLES, maxNudges: 0 });
+  const seeded = seedImplRun(dir, 'SMOKE-2');
+  const herdr = fakeHerdr(t, { mode: 'nudge', cwd: dir });
+  const r = smoke(dir, herdr, ['--key', 'SMOKE-2']);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /SMOKE-2@review: nudge → SMOKE-2@impl: refused \(nudging is off/);
+  assert.doesNotMatch(herdr.calls(), /agent prompt smoke-2-impl/);
+  assert.equal(seeded.state().runs['SMOKE-2@impl'].pass, 1);
+  // and the reviewer's brief did not teach a move it could not make
+  const brief = /is in (\S+brief\.md)/.exec(herdr.calls());
+  assert.doesNotMatch(fs.readFileSync(brief[1], 'utf8'), /Working with the other roles/);
+});
+
+test('a nudge over the cap is refused and the issue is handed to a person', (t) => {
+  const dir = repo(t, { role: 'review', worktree: 'none' }, { ...TWO_ROLES, maxNudges: 1 });
+  const seeded = seedImplRun(dir, 'SMOKE-3');
+  // one nudge already spent on this issue
+  const statePath = path.join(dir, '.issue-herd', 'state', 'state.json');
+  const s = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  s.nudges = { 'SMOKE-3': [{ from: 'impl', to: 'review', at: '2026-01-01T02:00:00Z', outcome: 'turn', message: 'look again' }] };
+  fs.writeFileSync(statePath, JSON.stringify(s));
+  const herdr = fakeHerdr(t, { mode: 'nudge', cwd: dir });
+  const r = smoke(dir, herdr, ['--key', 'SMOKE-3']);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /nudge → SMOKE-3@impl: refused \(the agents have already nudged each other 1 time on this issue/);
+  assert.doesNotMatch(herdr.calls(), /agent prompt smoke-3-impl/);
+  // the person is told through the notification the smoke rule keeps on
+  assert.match(herdr.calls(), /notification show issue-herd SMOKE-3@review --body .*have nudged each other 1 times, which is the limit/);
+  assert.equal(seeded.state().runs['SMOKE-3@impl'].pass, 1);
 });

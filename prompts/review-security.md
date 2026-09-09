@@ -76,4 +76,6 @@ Write valid JSON to `{{resultPath}}`:
 person's decision before the code moves, and `failed` if you could not assess it. You never open a
 pull request, so `pr_open` is never yours.
 
+{{nudgeLines}}
+
 Write the file even when you fail. Then stop.
