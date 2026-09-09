@@ -45,6 +45,12 @@ export interface AcquireOptions {
 /** The moment this process started, from Node's own clock: what tells a live owner from a reused PID. */
 export function processStartedAt(): number { return Math.round(Date.now() - process.uptime() * 1000); }
 
+// The lock lives exactly as long as its connection, and a `DatabaseSync` nobody references is
+// closed by the garbage collector — which would give the factory away the first time a caller let
+// the acquire result go out of scope. So every held lock is pinned here until it is released, and
+// a caller's bookkeeping cannot cost it ownership.
+const held = new Set<DatabaseSync>();
+
 /**
  * Try to become the factory's owner. Never blocks: a busy lock is an answer, not a wait.
  */
@@ -76,6 +82,7 @@ export function acquireOwnership({ lockPath, ownerPath, card }: AcquireOptions):
     heartbeatAt: new Date().toISOString(),
   };
   writeJsonAtomic(ownerPath, full);
+  held.add(db);
   let released = false;
   return {
     ok: true,
@@ -85,6 +92,7 @@ export function acquireOwnership({ lockPath, ownerPath, card }: AcquireOptions):
       release() {
         if (released) return;
         released = true;
+        held.delete(db);
         try { db.exec('ROLLBACK'); } catch { /* already gone */ }
         try { db.close(); } catch { /* already gone */ }
         try { fs.rmSync(ownerPath, { force: true }); } catch { /* best effort */ }

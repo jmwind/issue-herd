@@ -54,3 +54,26 @@ test('a lock held by another process is busy until that process dies — even wh
   assert.equal(readCard(ownerPath).pid, process.pid);
   after.ownership.release();
 });
+
+test('a lock stays held when its owner drops every reference and the garbage collector runs', async (t) => {
+  // A `DatabaseSync` nobody references is closed by the collector, and closing it would give the
+  // lock away. The acquire result here is used once and never kept: the lock must survive that.
+  const { lockPath, ownerPath } = tmp();
+  const child = spawn(process.execPath, ['--expose-gc', '--input-type=module', '-e', `
+    import { acquireOwnership } from ${JSON.stringify(OWN)};
+    process.stdout.write(acquireOwnership({ lockPath: ${JSON.stringify(lockPath)}, ownerPath: ${JSON.stringify(ownerPath)}, card: { factoryId: 'f1', hostId: 'h1', startedAt: 'x', version: 'v', socketPath: null } }).ok ? 'held\\n' : 'busy\\n');
+    setTimeout(() => { globalThis.gc(); globalThis.gc(); process.stdout.write('collected\\n'); }, 100);
+    setInterval(() => {}, 1000);
+  `], { stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => child.kill('SIGKILL'));
+  const lines = [];
+  const seen = (word) => new Promise((resolve) => { const check = (d) => { lines.push(String(d)); if (lines.join('').includes(word)) { child.stdout.off('data', check); resolve(); } }; child.stdout.on('data', check); check(''); });
+  await seen('held');
+  assert.equal(currentOwner({ lockPath, ownerPath }).owned, true);
+  await seen('collected');
+  assert.equal(currentOwner({ lockPath, ownerPath }).owned, true, 'still owned after the child collected garbage');
+  assert.equal(acquireOwnership({ lockPath, ownerPath, card: card('f1') }).ok, false);
+  child.kill('SIGKILL');
+  await new Promise((resolve) => child.on('exit', resolve));
+  assert.equal(currentOwner({ lockPath, ownerPath }).owned, false);
+});
