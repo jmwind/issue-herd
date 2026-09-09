@@ -56,6 +56,31 @@ test('the snapshot is indexed and watcher workspaces are found by their label', 
   assert.equal(indexSnapshot(null).agents.size, 0); assert.equal(indexSnapshot(null).available, false); assert.equal(idx.available, true);
 });
 
+test('a workspace is open for a run only while the workspace under its id is the run\'s own', () => {
+  // herdr numbers workspaces per server session: after a restart, `w1` — recorded on this run when
+  // its workspace was made — can be somebody else's. The view must not count that one as ours,
+  // or Mark done and Tidy close it (that is how GH-69's agent died).
+  const state = { runs: { 'GH-7@impl': { ...fixtureState().runs['GH-7@impl'], workspaceLabel: 'GH-7 impl Fix the thing', worktreePath: '/tmp/wt' } } };
+  const open = (snapshot, runs = state.runs) => factoryView({ id: 'app', repo: '/r', config: CONFIG, state: { runs }, index: indexSnapshot({ ...snapshot }), now: T(15, 0) }).issues[0].runs[0].workspaceOpen;
+  const onR = { checkout_path: '/tmp/wt', is_linked_worktree: true, repo_root: '/r' };
+  const onOther = { ...onR, repo_root: '/other' };
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onR }] }), true, 'the label the run gave it, on this repository');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing' }] }), true, 'herdr reporting no repository leaves the name');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-69 impl Rename project to weawr', worktree: onR }] }), false, 'a stranger under our old id');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onOther }] }), false, 'another factory\'s GH-7 impl: keys and roles repeat across repositories');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Repair billing export', worktree: onOther }] }), false);
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing, retitled', worktree: onR }] }), false, 'the head of the label is not the label');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'Personal inspection', worktree: onR }] }), false, 'a person\'s workspace reopened on the run\'s worktree, under its recycled id, is not the run\'s');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 review Fix the thing', worktree: onR }] }), false, 'another role\'s workspace is another run\'s');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing', worktree: onR }] }, { 'GH-7': { ...fixtureState().runs['GH-7@impl'], role: null, workspaceLabel: 'GH-7 Fix the thing' } }), false, 'an unroled GH-7 run is not GH-7 impl');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'stranger', worktree: onR }], agents: [{ name: 'gh-7-impl', agent_status: 'working', workspace_id: 'w1' }] }), true, 'our agent standing in it');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'stranger', worktree: onOther }], agents: [{ name: 'gh-7-impl', agent_status: 'working', workspace_id: 'w1' }] }), false, 'an agent of our name on another repository is not ours');
+  assert.equal(open({ workspaces: [] }), false, 'gone');
+  assert.equal(open({ workspaces: [{ workspace_id: 'w1', label: 'GH-7 impl Fix the thing' }] }, { 'GH-7@impl': fixtureState().runs['GH-7@impl'] }), true, 'a run recorded before labels were kept is matched on the label it must have been given');
+  assert.equal(factoryView({ id: 'app', repo: '/r', config: CONFIG, state, index: indexSnapshot(null), now: T(15, 0) }).issues[0].runs[0].workspaceOpen, null, 'unknown while herdr is not answering');
+  assert.equal(factoryView({ id: 'app', repo: '/r', config: CONFIG, state, index: indexSnapshot({}), now: T(15, 0) }).issues[0].runs[0].workspaceLabel, 'GH-7 impl Fix the thing', 'the view carries the label so a close can be checked against it');
+});
+
 test('runState maps run + agent onto a light, a phrase and whether a person is needed', () => {
   assert.deepEqual(runState({ status: 'running' }, { agent_status: 'blocked' }), { light: 'red', phrase: 'blocked on a dialog', needsYou: 'blocked' });
   assert.equal(runState({ status: 'running' }, { agent_status: 'idle' }).needsYou, 'question');
@@ -346,7 +371,7 @@ test('markDone: the one action — every agent still up on the task gets its exi
   const herdr = {
     run: async () => null,
     stopAgent: async (agent, opts) => { stopped.push([agent, opts.exitCommand]); order.push(agent); return 'exited'; },
-    closeWorkspace: async (id) => { closed.push(id); order.push(id); },
+    closeWorkspaceOf: async (id) => { closed.push(id); order.push(id); return 'closed'; },
   };
   const app = new FactoryConsole({ herdr, registryFile: path.join(dir, 'factories.json'), hostname: 'box' });
   app.current.herdr = { connected: true, version: '0.8.2' };
@@ -382,22 +407,29 @@ test('markDone: the one action — every agent still up on the task gets its exi
   assert.deepEqual(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done, {}, 'a partial shutdown is not a done note');
   // A workspace herdr will not close is surfaced the same way, not left as a zombie behind a done note.
   herdr.stopAgent = async () => 'exited';
-  herdr.closeWorkspace = async (id) => { if (id === 'w2') throw new Error('herdr workspace close: socket gone'); };
+  herdr.closeWorkspaceOf = async (id) => { if (id === 'w2') throw new Error('herdr workspace close: socket gone'); return 'closed'; };
   const zombie = await app.markDone({ factory: 'f', issue: 'GH-1' });
   assert.equal(zombie.done, false);
   assert.match(zombie.error, /review workspace w2 is still open \(herdr workspace close: socket gone\); not marked done/);
   assert.deepEqual(JSON.parse(fs.readFileSync(process.env.WEAWR_CONSOLE_NOTES, 'utf8')).done, {});
   // A workspace herdr no longer has is not a failure: it is what we wanted.
-  herdr.closeWorkspace = async () => { const e = new Error('herdr workspace close: no such workspace'); e.code = 'workspace_not_found'; throw e; };
+  herdr.closeWorkspaceOf = async () => { const e = new Error('herdr workspace close: no such workspace'); e.code = 'workspace_not_found'; throw e; };
   const gone = await app.markDone({ factory: 'f', issue: 'GH-1' });
   assert.equal(gone.done, true);
   assert.deepEqual(gone.outcomes.map((o) => o.workspace), ['was already closed', 'was already closed', 'was already closed']);
+  // An id herdr has since handed to another workspace (it numbers them per server session) is
+  // reported and left alone — it is not this run's, so it is not a workspace still on the task.
+  // That is the GH-69 story: Mark done on GH-66 closed `w3J`, which had become GH-69's session.
+  herdr.closeWorkspaceOf = async (id, owner) => (id === 'w3' ? `was reused by herdr for "GH-69 impl Rename project to weawr"` : `closed (${owner.repo} ${owner.agentName})`);
+  const reused = await app.markDone({ factory: 'f', issue: 'GH-1' });
+  assert.equal(reused.done, true, 'somebody else\'s workspace under our old id does not keep the task in Alerts');
+  assert.deepEqual(reused.outcomes.map((o) => o.workspace), ['closed (/r gh-1-impl)', 'closed (/r gh-1-review)', 'was reused by herdr for "GH-69 impl Rename project to weawr"'], 'the close is asked for by run, so herdr can check the workspace is the run\'s');
   app.stop();
 });
 
 test('tidy: closes the workspaces of exited agents on tasks already marked done, and nothing else', async (t) => {
   const closed = [];
-  const herdr = { run: async () => null, stopAgent: async () => { throw new Error('tidy must not touch agents'); }, closeWorkspace: async (id) => { if (id === 'w9') throw new Error('herdr workspace close: nope'); closed.push(id); } };
+  const herdr = { run: async () => null, stopAgent: async () => { throw new Error('tidy must not touch agents'); }, closeWorkspaceOf: async (id) => { if (id === 'w9') throw new Error('herdr workspace close: nope'); if (id === 'w8') return 'was reused by herdr for "GH-70 impl Migrate to herdr 0.9.0"'; closed.push(id); return 'closed'; } };
   const app = new FactoryConsole({ herdr, registryFile: path.join(os.tmpdir(), 'ih-none.json'), hostname: 'box' });
   app.current.herdr = { connected: true, version: '0.8.2' };
   const run = (key, role, o) => ({ key, role, agent: key.toLowerCase(), agentKind: 'claude', agentAlive: false, workspaceOpen: true, ...o });
@@ -413,8 +445,8 @@ test('tidy: closes the workspaces of exited agents on tasks already marked done,
   const one = await app.tidy({ factory: 'a' });
   assert.deepEqual(one.map((o) => [o.issue, o.workspaceId, o.workspace]), [['GH-1', 'w1', 'closed']], 'marked done, agent gone, workspace open: that and only that; one factory when asked');
   const all = await app.tidy();
-  assert.deepEqual(all.map((o) => [o.factory, o.workspaceId, o.workspace]), [['a', 'w1', 'closed'], ['b', 'w8', 'closed'], ['b', 'w9', 'is still open (herdr workspace close: nope)']], 'every factory otherwise, and a refusal is reported, not hidden');
-  assert.deepEqual(closed, ['w1', 'w1', 'w8']);
+  assert.deepEqual(all.map((o) => [o.factory, o.workspaceId, o.workspace]), [['a', 'w1', 'closed'], ['b', 'w8', 'was reused by herdr for "GH-70 impl Migrate to herdr 0.9.0"'], ['b', 'w9', 'is still open (herdr workspace close: nope)']], 'every factory otherwise; a refusal, and an id herdr gave to another workspace, are reported, not hidden');
+  assert.deepEqual(closed, ['w1', 'w1']);
   app.stop();
 });
 
@@ -427,7 +459,7 @@ test('markDone and tidy: herdr not answering is not a shutdown — nothing is cl
   const v = factoryView({ id: 'app', repo: '/r', config: CONFIG, state: fixtureState(), index: indexSnapshot(null), now: T(15, 0) });
   assert.deepEqual(v.issues.map((i) => i.runs.map((r) => [r.agentAlive, r.workspaceId, r.workspaceOpen])), [[[false, 'w1', null]], [[false, 'w2', null]], [[false, null, false]]]);
   const calls = [];
-  const herdr = { run: async () => { throw new Error('connect ECONNREFUSED'); }, stopAgent: async (a) => { calls.push(['stop', a]); return 'exited'; }, closeWorkspace: async (id) => { calls.push(['close', id]); } };
+  const herdr = { run: async () => { throw new Error('connect ECONNREFUSED'); }, stopAgent: async (a) => { calls.push(['stop', a]); return 'exited'; }, closeWorkspaceOf: async (id) => { calls.push(['close', id]); return 'closed'; } };
   const app = new FactoryConsole({ herdr, registryFile: path.join(dir, 'factories.json'), hostname: 'box' });
   app.current.herdr = { connected: false, version: null };
   app.current.factories = [{ id: 'f', repo: '/r', issues: [{ key: 'GH-1', cleared: false, bucket: 'done', runs: [{ key: 'GH-1@impl', role: 'impl', agent: 'gh-1-impl', agentKind: 'claude', agentAlive: false, workspaceId: 'w1', workspaceOpen: null }] }] }];
