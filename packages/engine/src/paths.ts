@@ -62,10 +62,22 @@ function socketPathFor(repo: string, stateDir: string): string {
   return path.join(os.tmpdir(), `weawr-${shortHash(repo)}.sock`);
 }
 
-/** The git toplevel that contains `cwd`, or `cwd` itself when it is not a repository. */
+/**
+ * The repository that contains `cwd`, or `cwd` itself when it is not one. A linked worktree — the
+ * kind weawr makes for a run — resolves to the main working tree, because the factory (its
+ * `.weawr/`, its state) lives there: `weawr merge` and `weawr result` are run by agents from
+ * inside their worktrees, and must find the factory that started them, not an empty one.
+ */
 export function findRepoRoot(cwd: string): string {
-  try { return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
-  catch { return cwd; }
+  const git = (args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  let top: string;
+  try { top = git(['rev-parse', '--show-toplevel']); } catch { return cwd; }
+  try {
+    const common = path.resolve(cwd, git(['rev-parse', '--git-common-dir']));
+    const main = path.dirname(common);
+    if (path.basename(common) === '.git' && realpathOr(main) !== realpathOr(top)) return main;
+  } catch { /* an older git, or a bare repository: the toplevel is what there is */ }
+  return top;
 }
 
 /** Where per-user weawr files live: credentials, host id, factory registrations. */

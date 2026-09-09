@@ -86,6 +86,8 @@ export interface EngineOptions {
   store?: StateStore;
   ids: Identities;
   version?: string;
+  /** How to invoke this weawr from a shell, for briefs: `weawr` when it is the one on PATH, else the explicit command. */
+  cli?: string | null;
   git?: GitRunner;
   clock?: () => Date;
   log?: (line: string) => void;
@@ -130,6 +132,7 @@ export class FactoryEngine {
   readonly store: StateStore;
   readonly ids: Identities;
   readonly version: string;
+  readonly cli: string | null;
   readonly git: GitRunner;
   readonly clock: () => Date;
   readonly hooks: EngineHooks;
@@ -154,7 +157,7 @@ export class FactoryEngine {
   /** How many times a pending external action is tried before it is left for a person. */
   static readonly MAX_PENDING_ATTEMPTS = 3;
 
-  constructor({ cfg, tracker, herdr, dry = false, paths, promptsRoot, store, ids, version = '0.0.0', git = defaultGit, clock = () => new Date(), log, live, hooks = {}, registration = null, fetchImpl = fetch }: EngineOptions) {
+  constructor({ cfg, tracker, herdr, dry = false, paths, promptsRoot, store, ids, version = '0.0.0', cli = null, git = defaultGit, clock = () => new Date(), log, live, hooks = {}, registration = null, fetchImpl = fetch }: EngineOptions) {
     this.cfg = cfg;
     this.tracker = tracker; // null in smoke mode
     this.herdr = herdr;
@@ -164,6 +167,7 @@ export class FactoryEngine {
     this.store = store ?? new JsonStateStore(paths.statePath);
     this.ids = ids;
     this.version = version;
+    this.cli = cli;
     this.git = git;
     this.clock = clock;
     this.hooks = { live: live ?? (() => {}), ...hooks };
@@ -716,7 +720,7 @@ export class FactoryEngine {
         try { fs.renameSync(run.resultPath, run.previousResultPath); }
         catch (e: any) { this.log(`${key}: could not set the previous result aside (${e.message}); removing it instead`); fs.rmSync(run.resultPath, { force: true }); run.previousResultPath = null; }
       }
-      const brief = renderBrief(this.readTemplate(rule.prompt, run.recipeRevision, rule), briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, nudging: this.nudging(issue.identifier), runKey: key, mergeLabel: this.cfg.mergeLabel }));
+      const brief = renderBrief(this.readTemplate(rule.prompt, run.recipeRevision, rule), briefVars({ issue, rule, run, tracker: this.cfg.Tracker.label, cli: this.cli, nudging: this.nudging(issue.identifier), runKey: key, mergeLabel: this.cfg.mergeLabel }));
       run.briefPath = path.join(run.dir, 'brief.md');
       fs.writeFileSync(run.briefPath, brief);
       // The attempt's immutable record: which words it was given and under which policy. Written
@@ -1137,7 +1141,7 @@ export class FactoryEngine {
       const trail = (this.state.nudges[issueKey] ??= []);
       if (trail.some((n: any) => n.from === 'coordinator' && n.outcome === 'merge' && n.head === c.head)) continue;
       const who = c.reviewers.map((r) => `\`${r}\``).join(', ');
-      const message = `Every reviewing role (${who}) has approved ${c.prUrl} at \`${c.head.slice(0, 7)}\`, and ${issueKey} carries \`${this.cfg.mergeLabel}\`. Run \`weawr merge ${implKey}\` from your worktree now, then write your result file again. If it refuses, say why in the result and stop.`;
+      const message = `Every reviewing role (${who}) has approved ${c.prUrl} at \`${c.head.slice(0, 7)}\`, and ${issueKey} carries \`${this.cfg.mergeLabel}\`. Run \`${this.cli || 'weawr'} merge ${implKey}\` from your worktree now, then write your result file again. If it refuses, say why in the result and stop.`;
       const at = this.clock().toISOString();
       const nudge = { from: 'coordinator', message, at };
       trail.push({ from: 'coordinator', to: run.role, at, outcome: 'merge', head: c.head, message: message.slice(0, 200) }); this.saveState();
@@ -1145,7 +1149,7 @@ export class FactoryEngine {
       this.emit('run.merge_ready', implKey, { prUrl: c.prUrl, headSha: c.head, reviewers: c.reviewers });
       // On the issue whatever the rule's comment policy says, like the merge itself: this is the
       // moment the trail has to show, or a merge appears out of nowhere.
-      const body = coordinator(`🔀 every reviewing role (${who}) approved ${c.prUrl} at \`${c.head.slice(0, 7)}\`, and ${issueKey} carries \`${this.cfg.mergeLabel}\`: asking \`${run.role || run.rule}\` to run \`weawr merge ${implKey}\`.`);
+      const body = coordinator(`🔀 every reviewing role (${who}) approved ${c.prUrl} at \`${c.head.slice(0, 7)}\`, and ${issueKey} carries \`${this.cfg.mergeLabel}\`: asking \`${run.role || run.rule}\` to run \`${this.cli || 'weawr'} merge ${implKey}\`.`);
       await this.performOwed([{ id: this.owe('tracker.comment', { issueId: run.issueId, issueKey, body }, implKey), kind: 'tracker.comment', data: { issueId: run.issueId, issueKey, body }, runKey: implKey }]);
       if (this.supervising.has(implKey) || this.reserved.has(implKey) || run.status === 'running' || run.status === 'starting') { (run.queuedNudges ??= []).push(nudge); this.saveState(); continue; }
       this.reserved.add(implKey);

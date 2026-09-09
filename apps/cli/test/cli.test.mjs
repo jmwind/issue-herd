@@ -243,3 +243,15 @@ test('reset by issue key hands the issue\'s nudge budget back too', (t) => {
   assert.deepEqual(Object.keys(runsIn(dir)), ['GH-8@impl']);
   assert.deepEqual(Object.keys(nudgesIn(dir)), ['GH-8'], 'the other issue keeps its record');
 });
+
+test('the command an agent is told to run is this weawr: `weawr` when PATH resolves to it, else the explicit invocation', async () => {
+  const { cliCommand } = await import('../build/context.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-cli-'));
+  const self = path.join(dir, 'weawr.mjs'); fs.writeFileSync(self, '');
+  const bin = path.join(dir, 'bin'); fs.mkdirSync(bin); fs.symlinkSync(self, path.join(bin, 'weawr'));
+  assert.equal(cliCommand(self, { PATH: bin }), 'weawr', 'PATH reaches this very file');
+  const other = path.join(dir, 'other'); fs.mkdirSync(other); fs.writeFileSync(path.join(other, 'weawr'), '');
+  assert.equal(cliCommand(self, { PATH: other }), `${process.execPath} ${self}`, 'PATH reaches another install: say exactly which to run');
+  assert.equal(cliCommand(self, { PATH: '' }), `${process.execPath} ${self}`, 'no weawr on PATH at all');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

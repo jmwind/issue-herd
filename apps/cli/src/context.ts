@@ -31,6 +31,8 @@ export const INSTALL_SPEC = 'github:jmwind/weawr';
 export interface Context {
   ui: Ui;
   version: string;
+  /** How a shell reaches this very weawr: `weawr` when that is what PATH resolves to, else the explicit command. What briefs tell agents to run. */
+  cli: string;
   pkgDir: string;
   promptsRoot: string;
   /** The shipped example plugins. */
@@ -52,6 +54,26 @@ export interface Context {
   loadEnv(): void;
 }
 
+/**
+ * The command that reaches this program from a shell. Agents are told to run `weawr merge` and
+ * `weawr result`; a machine with a development build, or two installs, must have them run the
+ * weawr that runs their factory, so unless PATH resolves `weawr` to this very file the brief
+ * carries the explicit command.
+ */
+export function cliCommand(argv1: string | undefined = process.argv[1], env: NodeJS.ProcessEnv = process.env): string {
+  if (!argv1) return 'weawr';
+  const real = (p: string) => { try { return fs.realpathSync(p); } catch { return null; } };
+  const self = real(argv1);
+  const name = process.platform === 'win32' ? 'weawr.cmd' : 'weawr';
+  for (const dir of (env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    const found = real(path.join(dir, name));
+    if (!found) continue;
+    return found === self ? 'weawr' : `${quote(process.execPath)} ${quote(argv1)}`;
+  }
+  return `${quote(process.execPath)} ${quote(argv1)}`;
+}
+const quote = (p: string) => (/[\s"']/.test(p) ? JSON.stringify(p) : p);
+
 export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: string }): Context {
   const paths = factoryPaths(findRepoRoot(cwd));
   // In development (scripts/dev.mjs) the runtime assets are read from the source tree instead of
@@ -66,7 +88,7 @@ export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: strin
   let cfg: FactoryConfig | null = null;
   let reg: Promise<PluginRegistry> | null = null;
   return {
-    ui, version: VERSION, pkgDir: PKG_DIR, promptsRoot, pluginsRoot, demosRoot, webDir: process.env.WEAWR_WEB_DIR || path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
+    ui, version: VERSION, cli: cliCommand(), pkgDir: PKG_DIR, promptsRoot, pluginsRoot, demosRoot, webDir: process.env.WEAWR_WEB_DIR || path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
     herdr: new (Herdr as any)({ log: (m: string) => { if (process.env.WEAWR_DEBUG) ui.log('  $', m); } }),
     config() { return (cfg ??= loadConfig(sources)); },
     plugins() { return (reg ??= loadPlugins(pluginSpecs(paths), { examplesRoot: pluginsRoot, userRoot: path.join(uDir, 'plugins'), configDir: paths.configDir }).then((r) => { sources.plugins = r; cfg = null; return r; })); },
@@ -117,7 +139,7 @@ export function storeFor(ctx: Context, ownership: Ownership | null): StateStore 
 /** An engine for this repository, logging through the terminal, registered on this machine when it owns the factory. */
 export function makeEngine(ctx: Context, { cfg, tracker, dry = false, ownership = null, register = false }: EngineBuild): FactoryEngine {
   return new FactoryEngine({
-    cfg, tracker, herdr: ctx.herdr, dry, paths: ctx.paths, promptsRoot: ctx.promptsRoot, ids: ctx.ids, version: ctx.version,
+    cfg, tracker, herdr: ctx.herdr, dry, paths: ctx.paths, promptsRoot: ctx.promptsRoot, ids: ctx.ids, version: ctx.version, cli: ctx.cli,
     store: storeFor(ctx, ownership),
     log: (line) => ctx.ui.print(line), live: (text) => ctx.ui.live(text),
     registration: register ? { dir: registrationsDir(ctx.userDir), socketPath: ctx.paths.socketPath, ownership } : null,

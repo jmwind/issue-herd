@@ -43,7 +43,7 @@ ${nudgeQuote(run.nudges)}
 
 export interface Nudging { role: string | null; roles: string[]; left: number; max: number }
 
-export function briefVars({ issue, rule, run, tracker, nudging = null, now = new Date(), runKey = '', mergeLabel = null }: { issue: any; rule: Rule; run: any; tracker: string; nudging?: Omit<Nudging, 'role'> | null; now?: Date; runKey?: string; mergeLabel?: string | null }): Record<string, string> {
+export function briefVars({ issue, rule, run, tracker, nudging = null, now = new Date(), runKey = '', mergeLabel = null, cli = null }: { issue: any; rule: Rule; run: any; tracker: string; nudging?: Omit<Nudging, 'role'> | null; now?: Date; runKey?: string; mergeLabel?: string | null; cli?: string | null }): Record<string, string> {
   const comments = issue.comments?.length
     ? issue.comments.map((c: any) => `- **${c.author}** (${c.createdAt.slice(0, 10)}): ${c.body.replace(/\r?\n/g, '\n  ')}`).join('\n')
     : '_none_';
@@ -65,6 +65,9 @@ export function briefVars({ issue, rule, run, tracker, nudging = null, now = new
     // Where the agent actually is. Named, because "the repository" alone sent agents to the main
     // checkout — another branch, and a permission prompt away.
     worktree: run.workDir || rule.repo,
+    // The weawr an agent is told to run is the one running this factory — not whatever a PATH
+    // lookup finds, which may be another install with another store, or none.
+    weawr: cli || 'weawr',
     branch: run.branch || '(current branch)',
     basedOn: run.basedOn || '',
     // A worktree started from another role's branch already holds the code under review, which is

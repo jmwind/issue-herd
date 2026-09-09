@@ -36,10 +36,10 @@ test('revision 1: the implementer brief lets the issue grant the merge, gated on
 test('revision 2: the implementer never merges by hand; the merge label and `weawr merge` are the only route', () => {
   const brief = read(2, 'default.md');
   assert.match(brief, /Never merge the PR yourself/);
-  assert.match(brief, /weawr merge \{\{runKey\}\}/);
+  assert.match(brief, /\{\{weawr\}\} merge \{\{runKey\}\}/, 'the command names the weawr that runs the factory');
   assert.match(brief, /\{\{mergeLabel\}\}/);
   assert.match(brief, /a missing verdict is not a yes/);
-  assert.match(brief, /only the `\{\{mergeLabel\}\}` label and `weawr merge` \(step 5\) can do that/);
+  assert.match(brief, /only the `\{\{mergeLabel\}\}` label and `\{\{weawr\}\} merge` \(step 5\) can do that/);
   assert.doesNotMatch(brief, /Do not merge unless the issue says you may/, 'the issue-text grant is gone');
   assert.match(brief, /not with `gh pr merge`/);
   assert.match(brief, /temporary name in the same directory and rename/, 'results are published atomically');

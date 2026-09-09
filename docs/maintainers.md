@@ -100,7 +100,10 @@ package's output changes:
 
 To try a change end to end, `pnpm demo squad` builds the checkout, sets a demo factory up with
 it (`apps/cli/demos/README.md`) and runs this loop on that factory; `pnpm demo reset` cleans up
-after. It is `weawr demo` plus `WEAWR_DEV_FACTORY=<the demo directory> pnpm dev`.
+after. It is `weawr demo` plus `WEAWR_DEV_FACTORY=<the demo directory> pnpm dev`. The agents run
+the same weawr as the watcher: a brief names the command that reaches the running program
+(`{{weawr}}` — plain `weawr` when PATH resolves to it, else the explicit invocation), so a
+development build is what `weawr merge` and `weawr result` run even with a release installed.
 
 Nothing in the loop is cached and nothing goes through the bundled artifact, which is also why the
 built artifact never hot-reloads: it serves copies of the page read once at startup, and Turborepo
