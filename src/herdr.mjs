@@ -1,6 +1,5 @@
 // Thin driver over the `herdr` CLI. Every command returns JSON; errors are JSON on stderr, exit 1.
 import { spawn, execFile } from 'node:child_process';
-import path from 'node:path';
 import { promisify } from 'node:util';
 import { workspaceLabel } from './claim.mjs';
 
@@ -77,6 +76,7 @@ export class Herdr {
     if (!ws) return 'was already closed';
     let ours = isRunsWorkspace(ws, owner);
     if (!ours && owner.agentName) {
+      // The third kind of evidence, for a workspace renamed by hand: the run's own agent is in it.
       const agent = await this.agentGet(owner.agentName).catch(() => null);
       ours = !!agent && agent.workspace_id === workspaceId;
     }
@@ -167,7 +167,18 @@ export class Herdr {
       if (left !== null && left < 1000) return 'timeout';
       const st = await this.waitAgentOnce(target, { until, timeoutMs: left });
       if (st !== 'error:agent_not_running') return st;
-      if (!(await this.agentGet(target).catch(() => null))) return 'gone';
+      let agent;
+      try { agent = await this.agentGet(target); }
+      catch (err) {
+        // herdr could not be asked (socket gone, a timeout): that is not an exit, and 'gone' would
+        // have the supervisor write a live run off. Ask again while there is time — a wait that
+        // runs out is a timeout, which comes back round — and with no deadline hand the failure
+        // back as a result the caller can retry on.
+        this.log(`agent ${target}: could not be looked up after agent_not_running: ${err.message}`);
+        if (deadline === null) return `error:${err.code || 'agent_lookup_failed'}`;
+        await sleep(1000); continue;
+      }
+      if (!agent) return 'gone';
       await sleep(1000);
     }
   }
@@ -252,28 +263,30 @@ export function isNameTaken(err) { return err?.code === 'agent_name_taken'; }
 
 /**
  * Whether the workspace herdr shows under a run's id is the run's own: it carries the label the run
- * gave it, or it is the git worktree the run was opened on. A run that recorded neither cannot be
- * told apart from a stranger, and a stranger's workspace is the one thing this must never say yes
- * to. Where the run's agent stands is the third kind of evidence; that needs a live herdr, so it is
- * the caller's (closeWorkspaceOf(), and the console's view).
+ * gave it, or at least the head of one — `<key> <role>`, which is issue-herd's naming for this run
+ * and nobody else's, so a title that changed between turns still matches. The checkout it is on is
+ * no evidence: a worktree outlives its workspace, and a person can reopen it in a workspace of
+ * their own that inherits the old id. A run that recorded nothing cannot be told apart from a
+ * stranger, and a stranger's workspace is the one thing this must never say yes to. Where the run's
+ * agent stands is the third kind of evidence; that needs a live herdr, so it is the caller's
+ * (closeWorkspaceOf(), and the console's view).
  */
-export function isRunsWorkspace(ws, { label = null, path: checkout = null } = {}) {
-  if (!ws) return false;
+export function isRunsWorkspace(ws, { label = null, key = null, role = null } = {}) {
+  if (!ws || typeof ws.label !== 'string') return false;
   if (label && ws.label === label) return true;
-  const at = ws.worktree?.checkout_path;
-  if (checkout && at && ws.worktree?.is_linked_worktree && path.resolve(at) === path.resolve(checkout)) return true;
-  return false;
+  const head = key ? workspaceLabel({ key, role }) : null;
+  return !!head && (ws.label === head || ws.label.startsWith(head + ' '));
 }
 
 /**
  * What a run knows about its workspace, for isRunsWorkspace(): the label it was given (recorded at
- * pickup; rebuilt from the run's key, role and title for runs recorded before it was), the worktree
- * it was opened on, and the agent it hosts.
+ * pickup; rebuilt from the run's key, role and title for runs recorded before it was), the key and
+ * role the label was made from, and the agent it hosts.
  */
 export function workspaceOwner(run) {
   if (!run) return {};
   const label = run.workspaceLabel || (run.issueKey ? workspaceLabel({ key: run.issueKey, role: run.role, title: run.title }) : null);
-  return { label, path: run.worktreePath || null, agentName: run.agentName || null };
+  return { label, key: run.issueKey || null, role: run.role || null, agentName: run.agentName || null };
 }
 
 /** Where an existing agent sits, in the shape the workspace calls return. */

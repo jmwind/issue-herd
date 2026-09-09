@@ -302,10 +302,11 @@ nothing is recorded — its workspace is left alone, too, rather than pulled out
 a workspace herdr would not close does the same: a task with an agent or a workspace still on it
 is not done, whatever was clicked, and the toast says which. A workspace is only ever closed if it
 is still the run's: herdr numbers workspaces per server session, so after a restart (an upgrade,
-say) the id a run recorded can belong to a workspace made later for somebody else — the console
-checks the label the run gave it, the worktree it was opened on, or that the run's agent is standing
-in it, and a stranger's workspace under the run's old id is reported ("was reused by herdr for …")
-and left alone, without keeping the task in Alerts. While herdr is not answering at all
+say) the id a run recorded can belong to a workspace made later for somebody else, a person's own
+workspace on the run's old worktree included — the console checks the label the run gave it (or at
+least its `<key> <role>` head), or that the run's agent is standing in it, and a stranger's workspace
+under the run's old id is reported ("was reused by herdr for …") and left alone, without keeping the
+task in Alerts. While herdr is not answering at all
 the button is refused outright, for the same reason: with nothing visible, nothing can be closed,
 and a sign-off that closed nothing would be the pile again. Worktrees stay, and so do the run's
 archived `brief.md` and `result.json`: the pane was never the long-term record. `onMerged` is

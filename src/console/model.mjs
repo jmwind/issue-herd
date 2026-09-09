@@ -234,8 +234,8 @@ export function factoryView({ id, repo, config = {}, state = { runs: {} }, event
     return {
       key, role: run.role || null, rule: run.rule, pass: run.pass || 1, status: run.status, ownsPr: ownsPr(run),
       agent: run.agentName, agentKind: rules.find((r) => r.name === run.rule)?.agent || 'claude', agentStatus: agent?.agent_status || null, agentAlive: !!agent,
-      // Still open in herdr: the agent is standing in it right now, or the snapshot lists it and it
-      // is recognisably this run's — herdr reuses a closed workspace's id after a restart, and a
+      // Still open in herdr: the agent is standing in it right now, or the snapshot lists it under
+      // a label that is this run's — herdr reuses a closed workspace's id after a restart, and a
       // stranger's workspace under the run's old id is not this run's to close (isRunsWorkspace).
       // Null when herdr did not answer: unknown is not closed.
       workspaceId: wsId, workspaceLabel: owner.label,
