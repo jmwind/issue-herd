@@ -52,6 +52,9 @@ One line per thing that happened, and one live line at the bottom rewritten afte
 - **It knows when it is done.** After the PR opens the run keeps watching it. When it merges you get
   told, and it tears down only what you asked it to. If the issue said the PR may be merged once
   reviewed, the implementer merges it itself — once every reviewer has said OK, and never without one.
+- **It keeps its PRs mergeable.** While a PR waits on you, other PRs land. When GitHub says one has
+  drifted into conflicts, the implementer is sent back to merge the base in and push, so what you
+  open to review is still something you can merge.
 - **It fails visibly.** An agent stuck on a permission dialog or stopped with a question gets one
   comment on the issue and one notification, naming the workspace to open. It does not sit there
   silently burning an afternoon.

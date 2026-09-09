@@ -44,7 +44,7 @@ import { newerVersion } from '../src/version.mjs';
 import { desiredBranch, reconcileBranch } from '../src/branch.mjs';
 import { catchUp, defaultBranch, makeWorktree, pullBase, removeWorktree } from '../src/worktree.mjs';
 import { agentArgv, describeAgent, exitCommandFor, TRANSLATED_KINDS } from '../src/agents.mjs';
-import { parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
+import { conflictPrompt, keepMergeable, parsePrUrl, prState, watchesMerge } from '../src/pr.mjs';
 import { DEFAULT_MAX_NUDGES, normalizeMaxNudges, nudgeInstructions, nudgeQuote, nudgedByLabel, nudgesIn, nudgesLeft, nudgesSent, planNudge } from '../src/nudge.mjs';
 import { GitHubTracker } from '../src/trackers/github.mjs';
 import { askSecret, loadCredentials } from '../src/auth.mjs';
@@ -451,6 +451,8 @@ export class IssueHerd {
 
   /** How many runs are done but still waiting for their pull request to be merged. */
   awaitingMerge() { return Object.values(this.state.runs).filter((r) => r.status === 'awaiting_merge').length; }
+  /** ...and how many of those GitHub currently reports as conflicting with their base. */
+  inConflict() { return Object.values(this.state.runs).filter((r) => r.status === 'awaiting_merge' && r.conflictHead).length; }
 
   /** "DEV-12 w3 working · DEV-15 w4 blocked" for the heartbeat and `status`. */
   async runningSummary() {
@@ -1139,7 +1141,8 @@ export class IssueHerd {
       try { pr = await this.askPr(run.prUrl); }
       catch (e) { this.warnOnce(`pr:${key}:${e.message}`, `${key}: cannot read ${run.prUrl}, so a merge cannot be seen: ${e.message}`); }
       run.prCheckedAt = new Date().toISOString(); saveState(this.state);
-      if (!pr || pr.state === 'open') continue;
+      if (!pr) continue;
+      if (pr.state === 'open') { await this.keepMergeable(key, run, rule, pr); continue; }
       if (pr.state === 'closed') {
         run.status = 'done'; run.finishedAt ||= new Date().toISOString(); saveState(this.state);
         log(`${key}: ${run.prUrl} was closed without merging; leaving workspace ${run.workspaceId} and the worktree alone`);
@@ -1160,6 +1163,28 @@ export class IssueHerd {
       await this.report(key, rule, rule.onMerged, lines.join('\n'), 'done');
       await this.stampAnswered(key, run, rule);
     }
+  }
+
+  /**
+   * An open pull request that has drifted into conflicts is one nobody can merge, and the person
+   * it is waiting on is the one least placed to fix it. The implementer's brief makes the PR its
+   * own to keep mergeable until it is merged or closed; this is the half of that it cannot do
+   * itself — noticing. The watcher is already asking GitHub about the PR once a minute, so when
+   * the answer says "dirty" the implementer's session, still up in its pane, is typed the one
+   * message that sends it back to work. Once per conflict, not once a minute; a session that has
+   * gone — exited by hand, or `onDone.closeWorkspace` — has nobody to tell, so the person is told
+   * instead, through the same channels as a blocked agent. The decisions are in src/pr.mjs; this
+   * is the wiring to herdr, the tracker and state.json.
+   */
+  async keepMergeable(key, run, rule, pr) {
+    const base = pr.baseRef || 'the base branch';
+    const did = await keepMergeable(run, pr, {
+      log: (m) => log(`${key}: ${m}`),
+      lookupAgent: () => (run.agentName ? this.herdr.agentGet(run.agentName) : null),
+      nudge: () => this.herdr.prompt(run.agentName, conflictPrompt({ prUrl: run.prUrl, branch: run.branch, baseRef: pr.baseRef, briefPath: run.dir ? path.join(run.dir, 'brief.md') : null })),
+      tellPerson: () => this.report(key, rule, rule.onBlocked, `⚠️ ${run.prUrl} conflicts with \`${base}\` and the implementer's session for ${key} has ended, so nobody is there to bring the branch up to date. Merge \`${base}\` into \`${run.branch || 'the branch'}\` by hand, or open a new session on it.`, 'request'),
+    });
+    if (did && did !== 'retry') saveState(this.state);
   }
 
   /**
@@ -1353,7 +1378,7 @@ export class IssueHerd {
         const r = await this.pollOnce();
         if (r.picked.length) log(`poll #${polls}: ${r.scanned} open issues, ${r.candidates} matched, picked ${r.picked.join(', ')}`);
         const running = await this.runningSummary();
-        summary = `${hms()} poll #${polls} · ${r.scanned} open · ${r.candidates} matched · ${r.picked.length} picked${r.waiting.length ? ` · ${r.waiting.length} waiting for a slot` : ''} · running ${running.length}${running.length ? `: ${running.join(' · ')}` : ''}${this.awaitingMerge() ? ` · ${this.awaitingMerge()} awaiting merge` : ''} · next in ${this.cfg.pollSeconds}s${this.tracker.budget?.() ? ` · ${this.tracker.budget()}` : ''}`;
+        summary = `${hms()} poll #${polls} · ${r.scanned} open · ${r.candidates} matched · ${r.picked.length} picked${r.waiting.length ? ` · ${r.waiting.length} waiting for a slot` : ''} · running ${running.length}${running.length ? `: ${running.join(' · ')}` : ''}${this.awaitingMerge() ? ` · ${this.awaitingMerge()} awaiting merge${this.inConflict() ? ` (${this.inConflict()} in conflict)` : ''}` : ''} · next in ${this.cfg.pollSeconds}s${this.tracker.budget?.() ? ` · ${this.tracker.budget()}` : ''}`;
       } catch (e) {
         this.warnOnce(`poll:${e.message}`, `poll #${polls} failed: ${e.message} (further identical failures show only in the live line)`);
         summary = `${hms()} poll #${polls} FAILED (${e.message.slice(0, 60)}) · retry in ${this.cfg.pollSeconds}s`;

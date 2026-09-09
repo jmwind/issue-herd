@@ -37,6 +37,8 @@ button{font:inherit;color:inherit}
 .sub .n{font:600 12px var(--font);padding:0 7px;background:var(--frame-2);color:var(--text);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo)}
 .sub .n.hot{background:var(--red);color:#fff}
 .sub .more{margin-left:auto;font:600 12px var(--font);color:var(--orange-2);text-decoration:none;background:none;border:0;cursor:pointer;padding:0}
+.sub .tidy + .more{margin-left:12px}
+.sub .more:disabled{opacity:.5;cursor:default}
 .pane{padding:8px;display:flex;flex-direction:column;gap:8px}
 .empty{padding:10px 8px;color:var(--muted);font-size:14px}
 /* status lights */
@@ -58,6 +60,10 @@ button{font:inherit;color:inherit}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.confirm{background:linear-gradient(var(--green-2),var(--green));color:#0D2611;box-shadow:inset 1px 1px 0 #A8E8AD,inset -1px -1px 0 #2E6B36,0 0 0 1px var(--edge)}
 .btn.done{color:var(--green-2)}
+.btn.busy:disabled{opacity:1;cursor:progress;color:var(--yellow)}
+.btn.busy .gear{width:16px;height:16px;color:currentColor;animation-duration:1.6s}
+.alert.busy{position:relative}
+.alert.busy .craft i{background:var(--yellow)}
 .btn.cancel{background:linear-gradient(var(--red-2),var(--red));color:#fff;box-shadow:inset 1px 1px 0 #F08A8A,inset -1px -1px 0 #6E1E1E,0 0 0 1px var(--edge)}
 .btn:focus-visible,.row:focus-visible,.picker:focus-visible,.opt:focus-visible,.keys button:focus-visible{outline:2px solid var(--orange-2);outline-offset:2px}
 /* machine rows */

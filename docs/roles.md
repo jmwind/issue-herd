@@ -283,7 +283,10 @@ MAIN` and `USABILITY: OK` have both landed on the issue. The implementer's brief
 up after its result is in, waiting for the two reports, and to merge nothing while either is
 missing. That needs `onDone.closeWorkspace` off (the default) on the implementer's rule, and
 `onDone.comment` on for every reviewer's — a verdict the implementer cannot see on the issue is a
-verdict it will wait for forever.
+verdict it will wait for forever. The same open session is what lets the implementer keep its PR
+mergeable while the reviews take their time: the watcher tells it when GitHub reports conflicts,
+and the brief has it merge the base branch in and push
+([how it works](how-it-works.md#keeping-up-with-main)).
 
 Once the reviewers have run, the loop closes without anyone typing: a `NOT OK` review nudges
 `impl`, which fixes, pushes and nudges both reviewers back; a second `OK` is a comment the

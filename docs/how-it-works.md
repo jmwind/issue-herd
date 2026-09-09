@@ -111,7 +111,9 @@ the issue to move — capped per issue by `maxNudges`, after which a person is a
    you ([roles](roles.md#the-briefs-that-ship)). When GitHub says it is **merged**, you get a
    notification saying so and naming the workspace and worktree the run is still holding, and the
    run is recorded as `merged`. Nothing is torn down unless you asked for it in `onMerged` — see
-   below. A PR **closed without merging** just stops being watched.
+   below. A PR **closed without merging** just stops being watched. While it is open, the same
+   once-a-minute read also notices when it has drifted into **conflicts** with its base — see
+   [Keeping up with `main`](#keeping-up-with-main).
 
 If you restart the watcher, it re-attaches to agents that are still alive, finalizes any run whose
 result file appeared while it was down, and goes on watching the pull requests it had not seen
@@ -145,6 +147,25 @@ merged:
 
 Neither needs a remote or a network: a fetch that fails is not an error, and the local branch is
 then the best answer there is.
+
+The third thing is the pull request itself, after it is open. Several issues being worked at once
+means several PRs waiting on one person, and the ones that wait longest are the ones the others
+land on top of — by the time someone reviews, GitHub says *This branch has conflicts*, and the
+person least placed to resolve them is the reviewer. So the implementer's brief makes the PR **its
+own to keep mergeable until it is merged or closed**, and the watcher does the half of that a
+stopped session cannot: the read it already makes of every open PR once a minute also returns
+GitHub's `mergeable_state`, and when that says `dirty` the implementer's session — still up in its
+pane, because `onDone.closeWorkspace` is off — is typed one message saying so. The brief tells it
+what to do with that: fetch, **merge** the base branch in (never a rebase, never a force-push — the
+branch has been pushed and the reviewers have it), resolve, re-run the checks, push, and say on the
+PR what it merged in. It is told once per conflict, not once a minute: the head the PR had when it
+was told is remembered, the same conflicts on the same commits are nothing new, and a PR that reads
+clean again forgets the marker so the next drift is a fresh episode. The watcher's heartbeat counts
+these as `awaiting merge (1 in conflict)`.
+
+If the session is gone — exited by hand, or by `onDone.closeWorkspace` — there is nobody to tell,
+so you are told instead, once per conflict, through the same `onBlocked` comment and notification a
+blocked agent gets. `"onMerged": null` switches the PR watch off altogether, and this with it.
 
 ## When the PR is merged
 
@@ -264,14 +285,30 @@ Nothing is written except the registry.
 **Mark done.** The one action on a task, and a person's to take: a finished task sits in Alerts
 — even after an auto-merge — until someone has looked at it (the reports, the scrollback) and
 says it is done. The button sends every agent still up on the task its own exit command
-(`/exit` for Claude Code, `/quit` for codex, each shutting down the way it wants), clears the
-task's alerts and moves it to output. The decision is recorded in
-`~/.config/issue-herd/console.json` (the console's own file, never the watcher's state); a newer
-run on the task brings it back, and so does Undo on the detail screen (without restarting the
-agents). An agent that does not exit (herdr could not prompt it, or it did not go within the
-timeout) keeps the task in Alerts and nothing is recorded: a task with an agent still on it is
-not done, whatever was clicked. Workspaces and worktrees stay; `onMerged` is still where
-clean-up is configured.
+(`/exit` for Claude Code, `/quit` for codex, each shutting down the way it wants), then closes
+every run's herdr workspace — the ones whose agent just left and the ones whose agent had
+already exited, every role on the task — so the panes leave the herdr window instead of piling
+up there as exited sessions; then it clears the task's alerts and moves it to output. That takes
+a few seconds when an agent has to shut down, so from the click until the task lands in output
+the button turns a gear and says what it is doing ("Closing 2 agents and 3 workspaces…", "Moving
+to output…") and the card runs a progress strip; a refusal puts the button back with the reason
+in a toast. The decision is recorded in `~/.config/issue-herd/console.json` (the console's own
+file, never the watcher's state); a newer run on the task brings it back, and so does Undo on the
+detail screen (without restarting the agents or reopening the workspaces). An agent that does not
+exit (herdr could not prompt it, or it did not go within the timeout) keeps the task in Alerts and
+nothing is recorded — its workspace is left alone, too, rather than pulled out from under it — and
+a workspace herdr would not close does the same: a task with an agent or a workspace still on it
+is not done, whatever was clicked, and the toast says which. While herdr is not answering at all
+the button is refused outright, for the same reason: with nothing visible, nothing can be closed,
+and a sign-off that closed nothing would be the pile again. Worktrees stay, and so do the run's
+archived `brief.md` and `result.json`: the pane was never the long-term record. `onMerged` is
+still where automatic clean-up is configured; Mark done is a person's sign-off, which is why it
+closes what `onMerged` by default keeps.
+
+**Tidy.** Tasks marked done before Mark done closed workspaces left a pile. When any task marked
+done still has a workspace open for an agent that has exited, the Output section's header shows
+*Tidy N workspaces*: one click, one confirm, and those workspaces are closed (for the factory on
+screen, or all of them from the overview). Agents still up are never touched by it.
 
 **The gate.** With no passcode the console binds to loopback only and asks nothing. With one
 (`set-passcode`, at least four digits because the phone's keypad has no letters; stored as a

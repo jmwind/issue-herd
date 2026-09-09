@@ -36,3 +36,23 @@ test('every brief that a role can run leaves room for how to nudge the other rol
     assert.match(read(name), /\{\{nudgeLines\}\}/, `${name} must carry {{nudgeLines}}`);
   }
 });
+
+// GH-59: a PR that drifts into conflicts while a person gets round to reviewing is one nobody can
+// merge. The implementer owns keeping it mergeable, and the safe way to do that on a pushed branch
+// is a merge of the base — never a rewrite. Keep that in the brief; the watcher's conflict message
+// (src/pr.mjs conflictPrompt) points back at it.
+test('the implementer brief keeps the PR mergeable until it is merged or closed, by merging the base, never rewriting', () => {
+  const brief = read('default.md');
+  assert.match(brief, /Keep the PR mergeable until it is merged or closed/);
+  assert.match(brief, /git merge origin\/<base>/);
+  assert.match(brief, /a merge, never a rebase, never a force-push/);
+  assert.match(brief, /Do not rewrite the\s+result file/);
+  // The watcher does the noticing; the brief must say so or the model polls GitHub for hours.
+  assert.match(brief, /you do not need to poll for it/);
+});
+
+test('the reviewing briefs do not carry the implementer\'s keep-mergeable duty', () => {
+  for (const name of ['review-lead.md', 'review-usability.md', 'review-security.md']) {
+    assert.doesNotMatch(read(name), /Keep the PR mergeable/, `${name} must not tell a reviewer to push merges`);
+  }
+});

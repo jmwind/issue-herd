@@ -162,7 +162,8 @@ The same fields work on every tracker; what they map to on GitHub is in
     "skipIfAssignedToOthers": true,   // leave issues held by other people alone
     "onPickup": { "comment": true, "state": "In Progress", "assignToMe": true },
     "onDone":   { "comment": true, "state": "In Review", "notify": true, "closeWorkspace": false },
-    "onBlocked": { "comment": true, "notify": true },   // agent hit a permission/question dialog
+    "onBlocked": { "comment": true, "notify": true },   // agent hit a permission/question dialog, or
+                                                        // its PR conflicts and its session is gone
     "onIdle":    { "comment": true, "notify": true },   // agent stopped without writing result.json
     "onMerged":  { "comment": false, "notify": true, "exitAgent": false,
                    "closeWorkspace": false, "removeWorktree": false }  // the PR from this run was merged
