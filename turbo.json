@@ -1,0 +1,70 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "src/**",
+        "prompts/**",
+        "tsconfig.json",
+        "package.json",
+        "build.mjs",
+        "config.example.json",
+        "$TURBO_ROOT$/assets/**",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "plugins/**",
+        "demos/**"
+      ],
+      "outputs": [
+        "dist/**",
+        "build/**"
+      ]
+    },
+    "typecheck": {
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "src/**",
+        "tsconfig.json",
+        "package.json",
+        "$TURBO_ROOT$/tsconfig.base.json"
+      ],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": [
+        "build"
+      ],
+      "cache": false
+    },
+    "//#lint": {
+      "inputs": [
+        "apps/*/src/**",
+        "packages/*/src/**",
+        "apps/*/package.json",
+        "packages/*/package.json",
+        "scripts/check-imports.mjs"
+      ],
+      "outputs": []
+    },
+    "dev": {
+      "dependsOn": [
+        "build",
+        "^build"
+      ],
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": [
+        "WEAWR_*",
+        "INIT_CWD",
+        "HERDR_*",
+        "GITHUB_TOKEN",
+        "LINEAR_API_KEY",
+        "XDG_CONFIG_HOME"
+      ]
+    }
+  }
+}

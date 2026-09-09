@@ -17,23 +17,111 @@ would silently believe it is up to date forever.
 The rename itself — every path, variable and file that changed name, and the order to move an
 install over — is in [Migrating from issue-herd](migrating.md).
 
-That runs the tests, bumps the patch version in `package.json`, commits it, tags `vX.Y.Z`, and
-pushes commits and tags. Everyone picks it up with `weawr update`. Use
-`npm run release:minor` for a feature. To hack on the tool without installing:
+That lints, type-checks, builds, runs the tests uncached, installs the packed artifact into a clean
+prefix and exercises it from a fresh repository (`scripts/verify-install.mjs`), then bumps the patch
+version in `package.json`, commits it, tags `vX.Y.Z`, and pushes commits and tags. Everyone picks it
+up with `weawr update`. Use `npm run release:minor` for a feature.
 
-```bash
-git clone git@github.com:jmwind/weawr.git && cd weawr && npm link
-```
+Requires Node 22.13+, the `herdr` CLI with its server running, `claude` on PATH and logged in, and
+`gh` logged in for PRs (with GitHub Issues as the tracker, that login is also the token). The
+installed tool still has no runtime dependencies; the workspace has development ones (TypeScript,
+esbuild, Turborepo), pinned.
 
-Requires Node 22+, the `herdr` CLI with its server running, `claude` on PATH and logged in, and
-`gh` logged in for PRs (with GitHub Issues as the tracker, that login is also the token). No npm
-dependencies.
 
+What a release must prove, and what CI (`.github/workflows/ci.yml`) proves on the Node floor
+(22.13) and on a newer runtime: `pnpm lint` (the import direction), `typecheck`, `build`, `turbo
+run test --force` (uncached — the tests spawn git, a fake herdr, sockets and ports), and both
+install paths of `scripts/verify-install.mjs` (the packed tarball, and `git+file://` which is the
+`npm install -g github:…` flow with `prepare` under npm).
+
+### Recipe revisions
+
+The briefs are versioned. `packages/recipes/prompts/<n>/` is revision *n*, and a revision is never
+edited once it has shipped: a factory pinned to it keeps getting exactly those words. To change a
+brief, copy the latest revision to `prompts/<n+1>/`, edit there, add the revision to
+`packages/recipes/src/manifest.ts` with its `changes` (they are what `weawr recipe upgrade` shows),
+extend `KNOWN_PLACEHOLDERS` if the engine now fills something new, and pin the wording that is
+policy in `packages/recipes/test/prompts.test.mjs` for both the old and the new revision. New
+factories take the latest; existing ones move only on `weawr recipe upgrade`.
+
+### Compatibility
+
+| Change | What holds |
+| --- | --- |
+| Newer weawr, older factory | its store is opened as is (schema version checked; a newer schema is refused, never rewritten); its recipe revision is kept; every attempt keeps its recorded brief and policy |
+| Newer weawr, older `state.json` | migrated once under the owner's lock, with a backup; a corrupt file is refused |
+| Older client, newer host | protocol v1 is additive: a v1 client reads a v1 host; a client asking for another major gets `unsupported_protocol` |
+| Newer client, older host | `GET /api/v1/capabilities` says what the host speaks; the client does not offer what is not there |
+| Result files | `schemaVersion` above what weawr reads is refused, the file kept, the owner told |
+| Custom templates | checked at config load; undeclared ones are protocol 1 |
+
+### Owner recovery and rollback limits
+
+One process owns a factory at a time (the SQLite lock in `.weawr/state/`), released by the OS
+when it dies. A new owner finishes what the last one left: pending external work (comments,
+label removals, workspace closes, agent exits) is retried up to three times, comments reconciled
+against the issue first; in-flight runs are re-attached to their agents. Nothing is resent
+blindly into an agent session. Rolling a factory back to `state.json` is sound only before new
+work has started under the store; afterwards the store is the truth. Rolling the *tool* back is
+`weawr update --to v<old>`; an older tool refuses a store or a result it does not understand
+rather than guessing.
 
 ## Hacking on it
 
+The repository is a pnpm workspace built with Turborepo: `apps/cli` (the executable), `apps/web`
+(the console page), and `packages/{engine,recipes,protocol,client}`. See
+[architecture.md](architecture.md) for who owns what.
+
 ```bash
-git clone git@github.com:jmwind/weawr.git && cd weawr && npm link
+git clone git@github.com:jmwind/weawr.git && cd weawr
+pnpm install            # also builds, through `prepare`
+pnpm dev                # the development loop: see below
+pnpm build              # turbo run build → apps/cli/dist/weawr.mjs, the one file users run
+pnpm test               # every package's tests, against their built output
+pnpm lint               # the import-direction check (scripts/check-imports.mjs)
+node apps/cli/dist/weawr.mjs --help
 ```
 
-`npm test` runs the tool's own unit tests (Node's built-in runner, no dependencies).
+### The development loop
+
+`pnpm dev` is `turbo run dev`: one persistent `dev` task per package, all at once, output
+prefixed by package. The packages compile in watch mode (the client also keeps its browser bundle
+current), and `apps/cli/dev.mjs` runs two processes from the compiled CLI and restarts both when a
+package's output changes:
+
+- `weawr serve --dev` at `http://127.0.0.1:8498/` (`WEAWR_DEV_PORT` to move it): the page is
+  served straight from `apps/web/src`, read on every request, and when a file there changes the
+  host pushes a `reload` event down the console's own event stream, so the browser reloads by
+  itself;
+- `weawr`, the watcher, on the factory in `WEAWR_DEV_FACTORY` — by default the directory you ran
+  `pnpm dev` from when it has a `.weawr/config.json`, else this repository's own factory.
+  `WEAWR_DEV_WATCHER=0` runs the server alone. A restart is safe by design: the watcher's pending
+  work is durable and its agents are never touched.
+
+To try a change end to end, `pnpm demo squad` builds the checkout, sets a demo factory up with
+it (`apps/cli/demos/README.md`) and runs this loop on that factory; `pnpm demo reset` cleans up
+after. It is `weawr demo` plus `WEAWR_DEV_FACTORY=<the demo directory> pnpm dev`. The agents run
+the same weawr as the watcher: a brief names the command that reaches the running program
+(`{{weawr}}` — plain `weawr` when PATH resolves to it, else the explicit invocation), so a
+development build is what `weawr merge` and `weawr result` run even with a release installed.
+
+Nothing in the loop is cached and nothing goes through the bundled artifact, which is also why the
+built artifact never hot-reloads: it serves copies of the page read once at startup, and Turborepo
+caches its build. `pnpm build` before you trust a change in the artifact; `pnpm build --force` if
+a cached output ever looks stale.
+
+`npm install -g --allow-scripts=weawr github:jmwind/weawr` keeps working without pnpm or Turborepo
+on the user's machine (npm 11 runs a git dependency's `prepare` only when allowed by name; older
+npm ignores the flag): npm clones, installs the dev dependencies and runs `prepare`, which is
+`scripts/build.mjs` — every package's own `build` script in dependency order, the same artifact
+`turbo run build` makes. `node scripts/verify-install.mjs --git` exercises exactly that path.
+
+That path has three npm peculiarities, each handled in `scripts/build.mjs` and worth knowing
+before touching it: `prepare` runs before `node_modules/.bin` is linked, so the script resolves
+its tools itself; the install npm runs inside the clone inherits `--global`, so the clone's
+devDependencies are not installed and the script installs its own toolchain; and that inherited
+`--global` makes the same nested install link the temporary clone into the global prefix under
+our name, a link npm later leaves dangling when it deletes the clone (the install came out empty
+on Linux, and sometimes on macOS). The last `prepare` npm runs before packing swaps that link for
+an empty directory, which the real install then fills. CI runs the git path on the Node floor and
+on the newest Node, so a regression in any of the three shows up there.

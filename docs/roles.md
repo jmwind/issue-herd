@@ -220,7 +220,12 @@ reviewers at once.
 
 The trail stays on the issue. The nudging run's finish comment carries the nudge and what happened
 to it; the nudged turn's pickup comment says who asked for it; `weawr status` lists the
-conversation per issue. A nudge is the *ask* — the report goes in `summary` and `notes` as usual,
+conversation per issue. Every comment says who is speaking: a role's own pickup and result are
+signed **weawr** as `review` (and so on), with the facts — role, rule and agent, turn, branch,
+PR, verdict, workspace — in a table and the agent's summary, testing and notes as prose; what the
+watcher itself observes or does (an agent blocked or gone, a nudge budget spent, a merge it
+performed) is signed **Weawr Coordinator**, so nobody mistakes a supervisor's note for a
+reviewer's finding. A nudge is the *ask* — the report goes in `summary` and `notes` as usual,
 and a verdict that needs no action is just a comment.
 
 Three things keep it from running away:
@@ -243,6 +248,34 @@ Three things keep it from running away:
 The briefs that ship all teach it (through `{{nudgeLines}}`, which the watcher renders only for a
 role with somebody to nudge). A brief of your own that drops the placeholder simply does not offer
 the move. Turns started by a nudge are not held by `maxConcurrent`: the session is already there.
+
+## Verdicts as data, and `weawr merge` (recipe revision 2)
+
+The briefs above are recipe revision 1: a reviewer's verdict is the first line of its `summary`,
+and when the issue's text grants it, the implementer merges its own PR after reading those lines.
+Revision 2 makes both of those facts checkable. A reviewer's result carries
+
+```json
+"review": { "verdict": "approved", "prUrl": "https://github.com/org/repo/pull/123", "headSha": "0123abcd…" }
+```
+
+— `approved`, `changes_requested` or `unable_to_review`, for one pull request at one commit. And
+the implementer never merges by hand: when the issue carries the `mergeLabel` (`auto-merge`
+unless configured), it runs `weawr merge <run key>`, which checks, at that moment, that the label
+is on the issue, that every reviewing role's latest verdict approves the PR's *current* head, and
+that the PR is open with no conflicts — then asks GitHub to merge that head (so a push in between
+is refused by GitHub itself, and branch protection still applies), and says on the issue what
+allowed it. A verdict without a commit, including every revision-1 prose verdict, authorises
+nothing; an approval of one head never merges another. `weawr recipe show` says which revision a
+factory runs; `weawr recipe upgrade --dry-run` shows the difference and `weawr recipe upgrade`
+moves new tasks to it.
+
+The implementer does not have to watch for those verdicts. Its session is idle once its result is
+in, and a reviewer's approval is a comment, so the coordinator does the watching: when a reviewing
+role's approval lands and every reviewing role now approves the PR's current head while the issue
+carries the merge label, it gives the implementer a turn whose brief says so and names the command
+(`weawr merge <run key>`), once per head, and says so on the issue as **Weawr Coordinator**. The
+same check runs when a watcher starts, for runs already waiting on their merge.
 
 ## Three roles on GitHub: what this repository runs
 

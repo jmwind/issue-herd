@@ -6,3 +6,8 @@ runs/
 logs/
 .DS_Store
 *.swp
+# build outputs
+dist/
+build/
+.turbo/
+*.tsbuildinfo

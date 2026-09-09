@@ -1,0 +1,21 @@
+{
+  "name": "@weawr/cli",
+  "version": "0.2.8",
+  "private": true,
+  "description": "The weawr executable: every command, and the process/transport entry points. Assembled into one file with the web build and the prompts.",
+  "type": "module",
+  "dependencies": {
+    "@weawr/engine": "*",
+    "@weawr/protocol": "*",
+    "@weawr/recipes": "*"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('build',{recursive:true,force:true,maxRetries:5})\" && tsc -p tsconfig.json && node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --test-force-exit",
+    "dev": "node dev.mjs"
+  },
+  "devDependencies": {
+    "@weawr/client": "*"
+  }
+}

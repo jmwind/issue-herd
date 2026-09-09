@@ -1,0 +1,23 @@
+{
+  "name": "@weawr/protocol",
+  "version": "0.2.8",
+  "private": true,
+  "description": "Serializable contracts between the weawr CLI and its clients: schemas, envelopes, versions.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true,maxRetries:5})\" && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput"
+  }
+}

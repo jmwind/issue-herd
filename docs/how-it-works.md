@@ -181,7 +181,7 @@ one machine only):
 
 | key | default | what it does when the PR is merged |
 | --- | --- | --- |
-| `exitAgent` | `false` | sends the agent `/exit` and waits up to 20s for it to go — Claude Code then writes its own history and stops its own MCP servers, rather than having its pane pulled away |
+| `exitAgent` | `false` | sends the agent `/exit` and waits up to 20s for it to go — Claude Code then writes its own history and stops its own MCP servers, rather than having its pane pulled away. If Claude Code answers with its "background work is running" prompt (a PR watch of its own, say), weawr reads that off the screen and takes the default, exit and stop tasks; no other dialog is ever answered for it |
 | `closeWorkspace` | `false` | `herdr workspace close` — only if the workspace under the run's id is still the run's (see Mark done) |
 | `removeWorktree` | `false` | `git worktree remove` — never forced, so a worktree with uncommitted or untracked files is kept and the log says so |
 | `notify` | `true` | one herdr notification: the PR merged, and which workspace and worktree the run still has |
@@ -209,7 +209,7 @@ otherwise whatever this machine has for GitHub — `GITHUB_TOKEN`, `weawr login 
 GitHub host this machine trusts is refused rather than fetched: `result.json` is written by an agent
 that has read the issue's text, so it does not get to say where your token goes.
 
-## The console: `weawr console`
+## The console: `weawr console` (and `weawr serve`)
 
 The watcher pane tells one factory's story in text. The console shows every factory on the machine
 in a browser, phone first, and is built from one question: *what changes what you do next?*
@@ -217,7 +217,35 @@ in a browser, phone first, and is built from one question: *what changes what yo
 ```bash
 weawr console                 # http://127.0.0.1:8498/
 weawr console set-passcode    # gate it, and serve it on this machine's Tailscale address too
+weawr serve --no-web          # the same host without the page: just the interface, for other clients
 ```
+
+The console is a page on top of the CLI's own interface. `weawr serve` (`console` is its older
+name) hosts every factory on the machine over HTTP and server-sent events at `/api/v1`, forwarding
+each question and each action to that factory's running watcher — the **owner** — over a private
+socket. Nothing in the page decides what a task needs; the owner does, and the page draws it. A
+factory whose watcher is not running is shown from its last recorded state, marked *watcher
+offline* with when it was last seen, and every action on it is refused until the watcher is back:
+the page never starts anything because you looked at it. Killing `weawr serve` stops no watcher;
+starting it again restores the view. When the page's link to weawr is down, the title bar says how
+old what you see is.
+
+Six looks ship. **Factorio** is the default — the floor as it has always been. The other five
+are flat: the machinery gone, the facts and the lights kept. **weawr clean** is the brand's own
+palette (light or dark with the system); **Linear** and **GitHub** borrow those apps' looks
+(Linear dark by default, GitHub light, each following the system); **Tokyo Night** and
+**Solarized Light** are the VS Code themes. Pick one from the factories sheet (the picker in the
+title bar); it is remembered per browser. `weawr console --theme <name>` (or
+`WEAWR_CONSOLE_THEME`) sets what a browser gets before it has chosen, and `?theme=<name>` on the
+URL picks one for that visit. A theme is one CSS file in `apps/web/src/themes/` that sets the
+palette; adding one is a file, a name in the page's list, and a name in `THEMES` in the transport.
+
+Every action is a command with a request id: a tap that loses its answer can be sent again
+without doing the thing twice, and a long action (Mark done shutting several agents down) comes
+back as an operation the page follows to its real outcome. A phone app talks to the same interface
+with a **device token** — `weawr console device add <name>` mints one, shown once — instead of a
+browser session; see [mobile.md](mobile.md). The interface itself is in
+[architecture.md](architecture.md#the-cli-interface-weawr-serve-the-protocol-and-the-client).
 
 Four screens, in Factorio's idiom because a factory is what this is:
 
@@ -332,6 +360,49 @@ back to loopback only. No tailnet? `--host 192.168.1.20` binds one named address
 Wi-Fi one, for a phone on the same network), gated the same way; it is refused without a passcode,
 and `0.0.0.0` is refused always.
 
+## Trying it out: `weawr demo`
+
+The fastest way to see the whole harness run is a factory whose issues, code and pull requests
+exist to be experimented on. [`jmwind/weawr-demo`](https://github.com/jmwind/weawr-demo) is that
+repository, and `weawr demo` sets it up:
+
+```bash
+weawr demo                  # the scenarios that ship, one paragraph each
+weawr demo basic-auto       # clone the demo repository, write the scenario's .weawr/, file its issues
+cd ~/.config/weawr/demos/weawr-demo && weawr      # run the watcher on it (or `weawr console` from anywhere)
+weawr demo reset            # when you are done: close the issues and PRs, delete the branches, clear the state
+```
+
+A scenario is a factory config, the briefs and instructions it needs, and the issues to file, all
+shipped with weawr (`apps/cli/demos/<name>/`). Four ship:
+
+| scenario | what runs |
+|---|---|
+| `basic` | one developer on Sonnet: pick up, implement, open a PR, report. You merge. |
+| `basic-auto` | the same developer, plus a test gate on Sonnet at low effort that runs the tests on the PR's head and approves a green one; both issues carry `auto-merge`, so the coordinator has the developer merge as soon as the gate approves. |
+| `squad` | a developer on Sonnet, a tech lead on codex/astra at low effort, a designer on Sonnet. The developer labels the issue `ready-for-review` when its PR is open, which dispatches both reviewers into worktrees cut from its branch; findings go back and forth as nudges; when both approve, the developer runs `weawr merge` on the issue that carries `auto-merge`. |
+| `bake-off` | two developers, Sonnet and codex, implement the same issue and open draft PRs; a judge on Sonnet that started with them waits for both, gives each up to two rounds of feedback through nudges, then promotes the better PR and closes the other. You merge. |
+
+The first run pushes a small starter app (`tally`, a command-line counter) to the demo
+repository, because the issues need code to work on. The scenario's `.weawr/` stays in the clone
+and out of git (`.git/info/exclude`), so switching scenarios is `weawr demo reset` and then the
+next scenario. `--into DIR` puts the factory somewhere else; `--repo owner/name` points at a demo
+repository of your own; `--dry-run` says what would be filed and files nothing.
+
+`reset` closes only what the ledger says this factory filed (`.weawr/demo.json`): those issues,
+the pull requests and branches that grew from them, and the claim labels. It also puts the app
+back to the starter — a new commit on `main` that restores the starter's files, so a feature a
+demo merged is missing again for the next run and history is kept; `--keep-code` skips that. The
+local state is set aside, not deleted, and the worktrees are removed. `reset --all --yes` closes every open `ai`
+issue, every open PR and every branch but the default one, for a repository that exists for demos
+and nothing else.
+
+From a weawr checkout, `pnpm demo <scenario>` does the same with the code on the branch: it builds,
+sets the demo up, and runs the watcher and the console on it from the development build.
+
+Every scenario's config is loaded and every brief checked in CI, so a scenario that stops loading
+fails a build rather than a demo.
+
 ## Manual testing and screenshots
 
 The agent has no in-app Browser pane here. The brief tells it to verify with unit tests and to
@@ -365,11 +436,37 @@ workspace and open the port in your browser.
 ## Updating
 
 ```bash
-weawr update
+weawr update                # the newest release tag
+weawr update --to v0.2.8    # a specific one; also how you roll back
 ```
 
-Same as rerunning the install; it prints the old and new version. (`npm update -g` does not
-reliably refresh packages installed from a git URL, so use this.)
+It installs from an immutable release tag (never a moving branch), prints the old and new
+version, and prints the rollback command. Watchers that are running keep the code they started
+with — restart each one (Ctrl-C in its pane, `weawr` again) to run the new version. The briefs a
+running watcher hands out never change under it: every recipe revision weawr has shipped stays
+bundled and a revision is never edited once published. (`npm update -g` does not reliably refresh
+packages installed from a git URL, so use this.)
+
+## Upgrading a factory
+
+A factory's state used to be `.weawr/state/state.json`. It is now `.weawr/state/factory.sqlite`:
+one SQLite file holding the runs, the nudge log, every attempt's record (the exact brief it was
+given, under which policy, by which agent), a structured event log, the external work each
+transition still owes, and what a person marked done in the console. The first watcher a newer
+weawr starts in a repository migrates the old file under its lock — backup in
+`state/backup-<time>/`, one transaction, `state.json` renamed to `state.json.migrated` — and
+carries on. `weawr migrate --dry-run` shows what it will do; `weawr migrate` does it by hand. A
+`state.json` that does not parse stops the watcher with the reason; it is never read as an empty
+factory. Stop the old watcher before starting the new one (the lock refuses a second owner either
+way). Rollback — move the `.migrated` file back and delete `factory.sqlite*` — is only sound before
+new work has started; after that the store is the truth, so drain or reconcile first.
+
+The briefs are pinned too. A migrated factory keeps recipe revision 1, the words it was running
+(prose verdicts; the implementer merges when the issue's text grants it). `weawr recipe upgrade
+--dry-run` shows what revision 2 changes — reviewers put a verdict on a specific commit in their
+result, and merging goes through `weawr merge`, authorised by a label on the issue — and
+`weawr recipe upgrade` moves *new* tasks to it. A task that started under revision 1 finishes
+under revision 1. Details: [architecture.md](architecture.md#recipes-results-and-the-merge).
 
 You will not have to remember: the watching commands (`weawr`, `once`, `dry-run`, `match`,
 `status`, `reset`) check GitHub for a newer version and print one reminder line if there is one,

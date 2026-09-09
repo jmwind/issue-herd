@@ -21,7 +21,9 @@ from the issue and your repo's own instructions, and then reports back on the is
 waiting for you → PR open → merged.
 
 No public URL. No third-party orchestrator. No webhook you have to expose. It is a Node script and
-the `herdr` CLI on your laptop, and it has **zero npm dependencies**.
+the `herdr` CLI on your laptop, and it has **zero npm dependencies**. The command line is the
+whole interface: the web console, and any phone app written against it, only ever ask `weawr`
+(see [Architecture](docs/architecture.md)).
 
 ```
 [2026-09-07 14:32:41] picking up GH-31 "Retry the upload on 429" (rule ai)
@@ -64,12 +66,19 @@ One line per thing that happened, and one live line at the bottom rewritten afte
 ## Install
 
 ```bash
-npm install -g github:jmwind/weawr
+npm install -g --allow-scripts=weawr github:jmwind/weawr
 ```
 
-You need **Node 22+**, the `herdr` CLI (0.8.2 or newer) with its server running,
+(`--allow-scripts` is what npm 11 needs to run the build that installing from git involves; older
+npm ignores it.) You need **Node 22.13+**, the `herdr` CLI (0.8.2 or newer) with its server running,
 an agent on your PATH and logged in (`claude`, `codex`, …), and `gh` logged in so agents can open
-pull requests. Update with `weawr update`; the watcher tells you when there is a new version.
+pull requests. Update with `weawr update` (it installs a release tag and tells you how to roll
+back); the watcher tells you when there is a new version. The installed tool has no runtime
+dependencies; its state lives in one SQLite file per repository (`node:sqlite`, built into Node).
+
+Already running an older weawr? The first watcher the new version starts moves that repository's
+`state.json` into the durable store, under its lock, keeping the old file as a backup — see
+[How it works](docs/how-it-works.md#upgrading-a-factory).
 
 ## Set up a repository
 
@@ -225,6 +234,7 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 | `weawr login [linear\|github] [--paste]` | sign in and save the token for this machine |
 | `weawr logout [linear\|github]` | forget the saved token |
 | `weawr smoke` | end-to-end herdr test with a fake issue, no tracker calls |
+| `weawr demo [list\|<scenario>\|reset]` | a factory to try weawr on: file a scenario's issues on the demo repository, run, reset — see [Trying it out](docs/how-it-works.md#trying-it-out-weawr-demo) |
 | `weawr init [--tracker linear\|github]` | scaffold `.weawr/` in the current repo |
 | `weawr update` | reinstall from GitHub; prints the old and new version |
 
