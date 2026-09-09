@@ -77,6 +77,17 @@ reviewed (`git rev-parse HEAD` in the worktree when it holds the implementer's b
 or `unable_to_review` (no PR, could not check it out — say why in `summary`). A verdict without
 `headSha` counts for nothing at merge time.
 
+## Keep the write-up short
+
+Everything you put in the result becomes one comment on the issue, read by people on a phone
+between other things. Budget it:
+
+- `summary`: two sentences at most — what was wrong and what you changed, or the verdict and why.
+- `testing`: one line per check you ran, nothing you did not run.
+- `notes`: a bullet per finding or follow-up, file and line first, then what and why; empty when
+  there is nothing to say (never "no notes").
+- No headings, no restating the issue, no narrating your process, no pleasantries.
+
 ## The result file
 
 Write valid JSON to `{{resultPath}}` — whole, via a temporary file renamed into place:

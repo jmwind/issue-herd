@@ -77,6 +77,12 @@ the owner will read the {{tracker}} issue and the PR later. Work end to end and 
    }
    ```
 
+   Keep it short: everything in this file becomes one comment on the issue, read by people on a
+   phone between other things. `summary` is two sentences at most — what was wrong and what you
+   changed. `testing` is one line per check you ran, nothing you did not run. `notes` is a bullet
+   per follow-up or risk, file and line first; leave it empty when there is nothing to say. No
+   headings, no restating the issue, no narrating your process.
+
    `status` must be one of:
    - `pr_open` — a PR is open and ready for review.
    - `needs_human` — you stopped because a decision or credential is needed; explain in `summary`.
