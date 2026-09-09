@@ -181,7 +181,7 @@ one machine only):
 
 | key | default | what it does when the PR is merged |
 | --- | --- | --- |
-| `exitAgent` | `false` | sends the agent `/exit` and waits up to 20s for it to go — Claude Code then writes its own history and stops its own MCP servers, rather than having its pane pulled away |
+| `exitAgent` | `false` | sends the agent `/exit` and waits up to 20s for it to go — Claude Code then writes its own history and stops its own MCP servers, rather than having its pane pulled away. If Claude Code answers with its "background work is running" prompt (a PR watch of its own, say), weawr reads that off the screen and takes the default, exit and stop tasks; no other dialog is ever answered for it |
 | `closeWorkspace` | `false` | `herdr workspace close` — only if the workspace under the run's id is still the run's (see Mark done) |
 | `removeWorktree` | `false` | `git worktree remove` — never forced, so a worktree with uncommitted or untracked files is kept and the log says so |
 | `notify` | `true` | one herdr notification: the PR merged, and which workspace and worktree the run still has |

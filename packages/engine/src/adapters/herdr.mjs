@@ -155,10 +155,23 @@ export class Herdr {
       return 'is still running';
     }
     const deadline = Date.now() + timeoutMs;
+    let answered = 0;
     while (Date.now() < deadline) {
       await sleep(pollMs);
       const agent = await this.agentGet(name).catch(() => 'unreadable');
       if (agent === null) return 'exited';
+      // Claude Code will not exit while a background task of its own is armed (a PR watch, say):
+      // it asks "Exit and stop tasks / Move to background / Stay", with exit selected. We asked
+      // it to leave; nobody is at the keyboard to say so again. Only that dialog is answered,
+      // and only by what is on the screen, never blind.
+      if (agent?.agent_status === 'blocked' && answered < 2) {
+        const screen = await this.readAgentSource(name, 'visible', 40).catch(() => '');
+        if (EXIT_DIALOG.test(screen)) {
+          answered++;
+          this.log(`agent ${name} asks whether to stop its background tasks on exit; answering yes`);
+          await this.run(['agent', 'send-keys', name, 'Enter']).catch((e) => this.log(`agent ${name}: could not answer its exit dialog: ${e.message}`));
+        }
+      }
     }
     return 'is still running';
   }
@@ -272,6 +285,9 @@ export function isNotFound(err) { return /(^|_)not_found$/.test(err?.code || '')
  * prompt` answers `agent_blocked` and sends nothing. The prompt is not lost, it is not yet
  * deliverable — the caller should keep it and try again once the agent takes input.
  */
+/** Claude Code's "background work is running" prompt on /exit; exit-and-stop is its default. */
+const EXIT_DIALOG = /Background work is running|Exit and stop tasks|Move to background and exit/;
+
 export function isBlocked(err) { return err?.code === 'agent_blocked'; }
 /** The agent accepted nothing: herdr typed, and never saw it start working. */
 export function isStalled(err) { return err?.code === 'agent_prompt_stalled'; }

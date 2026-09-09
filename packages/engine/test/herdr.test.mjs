@@ -65,6 +65,29 @@ test('stopAgent asks the agent to exit the way a person would, and waits for it 
   assert.equal(fs.readFileSync(path.join(dir, 'exited'), 'utf8').trim(), '/exit', 'Claude Code exits on /exit');
 });
 
+test('an agent that answers /exit with "background work is running" is told to exit and stop its tasks', async () => {
+  // Reproduced on Mark done: Claude Code, holding a PR monitor its own hook armed, asked whether to
+  // exit and stop tasks / move to background / stay, and the run sat on that dialog.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-dialog-'));
+  const bin = path.join(dir, 'herdr');
+  fs.writeFileSync(bin, [
+    '#!/bin/sh',
+    `d="${dir}"`,
+    'if [ "$1 $2" = "agent get" ]; then',
+    '  if [ -f "$d/exited" ]; then printf \'%s\' \'{"error":{"code":"agent_not_found","message":"gone"}}\' >&2; exit 1; fi',
+    '  if [ -f "$d/dialog" ]; then printf \'%s\' \'{"result":{"agent":{"agent_status":"blocked"}}}\'; exit 0; fi',
+    '  printf \'%s\' \'{"result":{"agent":{"agent_status":"idle"}}}\'; exit 0',
+    'fi',
+    'if [ "$1 $2" = "agent prompt" ]; then echo "$4" > "$d/dialog"; printf \'%s\' \'{"result":{}}\'; exit 0; fi',
+    'if [ "$1 $2" = "agent read" ]; then printf \'%s\' \' Background work is running\n   The following will stop when you exit:\n   monitor · PR #30\n   ❯ 1. Exit and stop tasks\n     2. Move to background and exit\n     3. Stay\'; exit 0; fi',
+    'if [ "$1 $2" = "agent send-keys" ]; then echo "$4" > "$d/keys"; rm -f "$d/dialog"; touch "$d/exited"; printf \'%s\' \'{"result":{}}\'; exit 0; fi',
+    "printf '%s' '{\"result\":{}}'",
+  ].join('\n'), { mode: 0o755 });
+  const h = new Herdr({ bin });
+  assert.equal(await h.stopAgent('gh-30', { pollMs: 10, timeoutMs: 3000 }), 'exited');
+  assert.equal(fs.readFileSync(path.join(dir, 'keys'), 'utf8').trim(), 'Enter', 'the default, "Exit and stop tasks", is taken');
+});
+
 test('an agent that ignores /exit is reported, not waited on forever', async () => {
   // The workspace close that follows is the fallback, so this must return rather than hang.
   const { bin } = fakeExitingHerdr({ exits: false });
