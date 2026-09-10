@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <b>Give your agents a tean and a game plan.</b>
+  <b>Give your agents a team and a game plan.</b>
 </p>
 
 ---
@@ -21,7 +21,7 @@ the `herdr` CLI on your laptop. That's it.
 
 ## Why you'd want it
 
-- **It is your repo's factory, not a service.** The tracker, the rules and the agent's briefing all
+- **The team lives in your repo, not in a service.** The tracker, the rules and the agent's briefing all
   live in `.weawr/` inside the repository, committed and reviewed like code. Your token stays
   on your machine. Nothing about your codebase leaves your laptop that you did not already send to
   your agent.
@@ -60,7 +60,7 @@ dependencies; its state lives in one SQLite file per repository (`node:sqlite`, 
 
 Already running an older weawr? The first watcher the new version starts moves that repository's
 `state.json` into the durable store, under its lock, keeping the old file as a backup — see
-[How it works](docs/how-it-works.md#upgrading-a-factory).
+[How it works](docs/how-it-works.md#upgrading-a-team).
 
 ## Set up a repository
 
@@ -77,7 +77,7 @@ Then edit the two files `init` wrote, and commit them:
 - **`.weawr/config.json`** — the rules. What to pick up, how many at a time, which agent.
 - **`.weawr/instructions.md`** — how to work in *this* repo. The checks to run before a PR,
   the things never to do, your branch and PR conventions, when to stop and ask a human. Every
-  agent gets it appended to its brief. This file is most of the difference between a factory that
+  agent gets it appended to its brief. This file is most of the difference between a team that
   produces work and one that produces cleanup.
 
 Create the label your rules trigger on (`ai`, say). The claim label is created for you.
@@ -91,9 +91,9 @@ herdr pane run <pane-id> "weawr"
 
 One watcher per repository. Leave the pane alone — herdr keeps it alive when you detach.
 
-## Example factories
+## Example teams
 
-Four configurations, from a one-line factory to a two-shift line. Copy one into
+Four configurations, from a one-line team to a two-shift line. Copy one into
 `.weawr/config.json` — it is strict JSON, no comments — and every rule inherits `defaults`.
 Every key is explained in the [configuration reference](docs/configuration.md).
 
@@ -211,12 +211,12 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 | `weawr dry-run` | print what would be picked up, change nothing |
 | `weawr match "<expr>"` | evaluate an ad hoc expression against open issues, change nothing |
 | `weawr status` | tracked runs, their outcome, and each live agent's state |
-| `weawr console` | **the factory floor**: every factory on this machine, in a browser, phone first — what needs you, what is assembling, today's output |
+| `weawr console` | **the team room**: every team on this machine, in a browser, phone first — what needs you, what is assembling, today's output |
 | `weawr reset <KEY>` | forget a run so the issue can be picked up again |
 | `weawr login [linear\|github] [--paste]` | sign in and save the token for this machine |
 | `weawr logout [linear\|github]` | forget the saved token |
 | `weawr smoke` | end-to-end herdr test with a fake issue, no tracker calls |
-| `weawr demo [list\|<scenario>\|reset]` | a factory to try weawr on: file a scenario's issues on the demo repository, run, reset — see [Trying it out](docs/how-it-works.md#trying-it-out-weawr-demo) |
+| `weawr demo [list\|<scenario>\|reset]` | a team to try weawr on: file a scenario's issues on the demo repository, run, reset — see [Trying it out](docs/how-it-works.md#trying-it-out-weawr-demo) |
 | `weawr init [--tracker linear\|github]` | scaffold `.weawr/` in the current repo |
 | `weawr update` | reinstall from GitHub; prints the old and new version |
 

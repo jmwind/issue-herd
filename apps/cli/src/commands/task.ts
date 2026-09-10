@@ -1,4 +1,4 @@
-// Task-level commands an agent or a person runs against the factory's owner:
+// Task-level commands an agent or a person runs against the team's owner:
 //   weawr merge <run-key> [--request-id ID]     the deterministic merge (recipe revision 2+)
 //   weawr result <run-key> --file F | --json J  hand in a result through weawr, checked and written whole
 //   weawr task reconfigure <run-key>            move an active run onto the current policy
@@ -16,7 +16,7 @@ export async function merge(ctx: Context, args: string[]): Promise<void> {
   const cfg = ctx.config();
   const requestId = flag(args, '--request-id') || `merge-${key}-${crypto.randomBytes(4).toString('hex')}`;
   const { result } = await dispatchCommand(ctx, { type: 'run.merge', key, requestId, requestedBy: process.env.HERDR_AGENT_NAME ? `agent ${process.env.HERDR_AGENT_NAME}` : 'cli' }, async () => {
-    // No owner running: merging still needs the factory's lock, its tracker and its GitHub token.
+    // No owner running: merging still needs the team's lock, its tracker and its GitHub token.
     const ownership = takeOwnership(ctx, cfg);
     const app = createApplication(makeEngine(ctx, { cfg, tracker: makeTracker(ctx, cfg), ownership }));
     return { dispatch: async (cmd) => { try { return await app.dispatch(cmd); } finally { ownership.release(); } } };

@@ -1,4 +1,4 @@
-// The factory engine: what used to be the `Weawr` class inside the CLI, with every dependency
+// The team engine: what used to be the `Weawr` class inside the CLI, with every dependency
 // handed in — repository paths, config sources, the state store, the clock, git, herdr, the
 // tracker, the logger — so two engines for two repositories can share one process, and a test
 // can drive one without standing in its repository.
@@ -34,10 +34,10 @@ const { nudgedByLabel, nudgesIn, nudgesLeft, nudgesSent, planNudge } = _nudge as
 const { GitHubTracker } = _github as Record<string, any>;
 import { briefVars, renderBrief } from './brief.js';
 import { configStamp, expandConfigPath, loadConfig } from './config.js';
-import type { ConfigSources, FactoryConfig } from './config.js';
+import type { ConfigSources, TeamConfig } from './config.js';
 import { agentNameFor } from './identity.js';
 import type { Identities } from './identity.js';
-import type { FactoryPaths } from './paths.js';
+import type { TeamPaths } from './paths.js';
 import { writeRegistration } from './registration.js';
 import type { Registration } from './registration.js';
 import { JsonStateStore, readJson } from './state.js';
@@ -46,15 +46,15 @@ import type { PendingAction } from './store/sqlite.js';
 import { attemptId, roleRunId, taskId, trackerScope } from './identity.js';
 import { LATEST_REVISION, RECIPE_ID, contentHash, diffTemplates, revision as recipeRevisionInfo } from '@weawr/recipes';
 import { describeIssues, validateResult, verdictOf } from '@weawr/protocol';
-import type { FactorySnapshot } from '@weawr/protocol';
+import type { TeamSnapshot } from '@weawr/protocol';
 import { Enricher } from './enrich.js';
-import { factoryView, indexSnapshot, timelineOf } from './projection.js';
+import { teamView, indexSnapshot, timelineOf } from './projection.js';
 import { trackerScope as scopeOf } from './identity.js';
 import * as _gitSize from './adapters/git-size.mjs';
 const { complexity, runSize } = _gitSize as Record<string, any>;
 import * as _ghTracker from './adapters/trackers/github.mjs';
 const { repoFromGit } = _ghTracker as Record<string, any>;
-import type { FactoryState, StateStore } from './state.js';
+import type { TeamState, StateStore } from './state.js';
 import type { Ownership } from './ownership.js';
 
 /** Run git in `cwd`. Returns trimmed stdout, or null if git failed — callers must tolerate null. */
@@ -76,11 +76,11 @@ export interface EngineHooks {
 export interface RegistrationTarget { dir: string; socketPath?: string | null; ownership?: Ownership | null }
 
 export interface EngineOptions {
-  cfg: FactoryConfig;
+  cfg: TeamConfig;
   tracker: any;
   herdr: any;
   dry?: boolean;
-  paths: FactoryPaths;
+  paths: TeamPaths;
   /** Where the bundled prompt templates live. */
   promptsRoot: string;
   store?: StateStore;
@@ -115,19 +115,19 @@ function hms(d: Date) { return d.toTimeString().slice(0, 8); }
 export function watchLabel(name: string) { return `${name}Watch`; }
 export function trackerBanner(tracker?: any) { const what = tracker.describe?.(); return `${tracker.constructor.label}${what ? ` ${what}` : ''}`; }
 
-export class FactoryEngine {
-  cfg: FactoryConfig;
+export class TeamEngine {
+  cfg: TeamConfig;
   tracker: any;
   herdr: any;
   dry: boolean;
-  state: FactoryState;
+  state: TeamState;
   supervising = new Set<string>();
   /** Run keys promised a nudged turn that has not started yet — see planNudges. */
   reserved = new Set<string>();
   resupervise?: Set<string>;
   warned?: Set<string>;
   pr: { host: string; token: string | null } | null = null;
-  readonly paths: FactoryPaths;
+  readonly paths: TeamPaths;
   readonly sources: ConfigSources;
   readonly store: StateStore;
   readonly ids: Identities;
@@ -142,14 +142,14 @@ export class FactoryEngine {
   registration: RegistrationTarget | null;
   /** Set by stop(): the loop finishes its poll, checkpoints, and returns. Agents are left exactly as they are. */
   stopping = false;
-  /** The recipe revision this factory renders new work with. Pinned in the store; changed only by upgradeRecipe(). */
+  /** The recipe revision this team renders new work with. Pinned in the store; changed only by upgradeRecipe(). */
   recipeRevision: number;
   /** Observations for the snapshot: herdr's index (cached briefly), sizes, enrichment, the settle memory. */
   private herdrCache: { at: number; index: any; snapshot: any } | null = null;
   private sizes = new Map<string, { at: number; value: any }>();
   private seen: Record<string, any> = {};
   private enricher: Enricher | null = null;
-  private snapshotCache: { at: number; value: FactorySnapshot } | null = null;
+  private snapshotCache: { at: number; value: TeamSnapshot } | null = null;
   /** How long a snapshot is served from memory before it is recomputed. */
   static readonly SNAPSHOT_TTL_MS = 1500;
   static readonly HERDR_TTL_MS = 2000;
@@ -175,7 +175,7 @@ export class FactoryEngine {
     this.logger = log ?? ((line?: any) => console.log(line));
     this.registration = registration;
     this.state = this.store.load();
-    // A factory keeps the recipe it was set up with until told otherwise. A brand-new store takes
+    // A team keeps the recipe it was set up with until told otherwise. A brand-new store takes
     // the latest bundled one and remembers it; a migrated one was pinned by the migration.
     let pinned = isDurable(this.store) ? Number(this.store.meta('recipe_revision')) || 0 : 0;
     if (!pinned) { pinned = LATEST_REVISION; if (isDurable(this.store) && !this.store.readOnly) this.store.setMeta('recipe_revision', String(pinned)); }
@@ -273,7 +273,7 @@ export class FactoryEngine {
     const prUrl = parsePrUrl(run.prUrl) ? run.prUrl : parsePrUrl(run.result?.prUrl) ? run.result.prUrl : null;
     if (!prUrl) return refuse(`${key} has no pull request to merge`);
     if (!this.tracker) return refuse('no tracker: the merge label cannot be checked');
-    if (!this.cfg.mergeLabel) return refuse('no mergeLabel is configured for this factory, so nothing can authorise an unattended merge');
+    if (!this.cfg.mergeLabel) return refuse('no mergeLabel is configured for this team, so nothing can authorise an unattended merge');
     // 1. authorisation: the label, on the issue, now
     let fresh: any = null;
     try { fresh = await this.tracker.issueByKey(issueKey); } catch (e: any) { return refuse(`could not read ${issueKey} to check the merge label: ${e.message}`); }
@@ -287,7 +287,7 @@ export class FactoryEngine {
     const head: string | null = pr.headSha || null;
     // 3. every reviewing role's verdict, for this head
     const reviewers = [...new Set(this.cfg.rules.filter((r: any) => r.enabled !== false && r.role && r.role !== run.role).map((r: any) => r.role as string))];
-    if (!reviewers.length) checks.push({ check: 'verdicts', ok: false, detail: 'this factory runs no reviewing role, so nothing can approve the head' });
+    if (!reviewers.length) checks.push({ check: 'verdicts', ok: false, detail: 'this team runs no reviewing role, so nothing can approve the head' });
     for (const role of reviewers) {
       const rr = this.state.runs[runKeyFor(issueKey, role)];
       const v = verdictOf(rr?.result || null);
@@ -343,13 +343,13 @@ export class FactoryEngine {
     const changes = [...target.changes];
     if (!dryRun && to !== from) {
       this.recipeRevision = to; this.sources.recipeRevision = to;
-      this.commit(() => { if (isDurable(this.store)) this.store.setMeta('recipe_revision', String(to)); this.emit('factory.recipe_upgraded', null, { from, to }); });
+      this.commit(() => { if (isDurable(this.store)) this.store.setMeta('recipe_revision', String(to)); this.emit('team.recipe_upgraded', null, { from, to }); });
       this.log(`recipe: revision ${from} → ${to}; runs already started keep revision ${from}`);
     }
     return { from, to, applied: !dryRun && to !== from, templates, changes };
   }
 
-  /** An event: its own line, on screen (through the injected logger) and in the factory's log file. */
+  /** An event: its own line, on screen (through the injected logger) and in the team's log file. */
   log(...a: unknown[]): void {
     const line = `[${ts(this.clock())}] ${a.join(' ')}`;
     this.logger(line);
@@ -366,7 +366,7 @@ export class FactoryEngine {
     return isDurable(this.store) ? this.store.transaction(fn) : fn();
   }
 
-  /** A structured event about a run (or the factory). What projections and histories are built from. */
+  /** A structured event about a run (or the team). What projections and histories are built from. */
   emit(kind: string, runKey: string | null = null, data: Record<string, unknown> = {}): void {
     if (!isDurable(this.store)) return;
     const run = runKey ? this.state.runs[runKey] : null;
@@ -386,7 +386,7 @@ export class FactoryEngine {
   /** Do the pending actions with these ids now (or, with no durable store, the same work directly). */
   async performOwed(owed: Array<{ id: number | null; kind: string; data: Record<string, unknown>; runKey: string | null }>): Promise<void> {
     for (const o of owed) {
-      if (o.id === null) { try { await this.performAction(o.kind, o.data, o.runKey); } catch (e: any) { this.log(`${o.runKey || 'factory'}: ${o.kind} failed: ${e.message}`); } continue; }
+      if (o.id === null) { try { await this.performAction(o.kind, o.data, o.runKey); } catch (e: any) { this.log(`${o.runKey || 'team'}: ${o.kind} failed: ${e.message}`); } continue; }
       await this.performPending({ id: o.id, kind: o.kind, data: o.data, runKey: o.runKey, attempts: 0, lastError: null, createdAt: '', doneAt: null, outcome: null });
     }
   }
@@ -399,7 +399,7 @@ export class FactoryEngine {
       return true;
     } catch (e: any) {
       if (isDurable(this.store)) this.store.settlePending(a.id, { done: false, error: e.message }, this.clock());
-      this.log(`${a.runKey || 'factory'}: ${a.kind} failed (${e.message}); ${a.attempts + 1 < FactoryEngine.MAX_PENDING_ATTEMPTS ? 'will try again' : 'giving up after ' + (a.attempts + 1) + ' tries'}`);
+      this.log(`${a.runKey || 'team'}: ${a.kind} failed (${e.message}); ${a.attempts + 1 < TeamEngine.MAX_PENDING_ATTEMPTS ? 'will try again' : 'giving up after ' + (a.attempts + 1) + ' tries'}`);
       return false;
     }
   }
@@ -447,7 +447,7 @@ export class FactoryEngine {
   async drainPending(): Promise<void> {
     if (!isDurable(this.store)) return;
     for (const a of this.store.pending()) {
-      if (a.attempts >= FactoryEngine.MAX_PENDING_ATTEMPTS) continue;
+      if (a.attempts >= TeamEngine.MAX_PENDING_ATTEMPTS) continue;
       if (a.kind === 'tracker.comment' && a.attempts > 0 && this.tracker && a.data.issueKey) {
         try {
           const fresh = await this.tracker.issueByKey(a.data.issueKey);
@@ -564,7 +564,7 @@ export class FactoryEngine {
       // settleBranch once the worktree exists. Nothing downstream may report a name we only guessed.
       wantBranch: desiredBranch({ template: rule.branch, issue, slug, worktree: rule.worktree, role: rule.role }),
       branch: null,
-      worktree: rule.worktree, agentName: previous?.agentName || agentNameFor(key, this.ids.factoryId), notified: {},
+      worktree: rule.worktree, agentName: previous?.agentName || agentNameFor(key, this.ids.teamId), notified: {},
       // The nudges this turn answers, if it is one another role asked for. And the pull request the
       // previous turn opened: a turn spent answering a reviewer ends with the same PR, and the
       // watch on it must not be lost to a result that forgot to repeat the URL.
@@ -1134,7 +1134,7 @@ export class FactoryEngine {
   async askForMergeIfReady(issueKey: string) {
     for (const [implKey, run] of Object.entries<any>(this.state.runs)) {
       if ((run.issueKey || issueKeyOf(implKey)) !== issueKey || run.status !== 'awaiting_merge') continue;
-      let c: Awaited<ReturnType<FactoryEngine['mergeChecks']>>;
+      let c: Awaited<ReturnType<TeamEngine['mergeChecks']>>;
       try { c = await this.mergeChecks(implKey); } catch (e: any) { this.log(`${implKey}: could not check whether it is ready to merge: ${e.message}`); continue; }
       if (!c.ok || !c.head) { this.log(`${implKey}: not ready to merge yet (${c.reason})`); continue; }
       // Once per head, remembered on the issue's nudge trail: a later turn replaces the run object.
@@ -1509,7 +1509,7 @@ export class FactoryEngine {
   }
 
   /**
-   * Tell the console this factory is alive: one small entry per repository in a per-user file,
+   * Tell the console this team is alive: one small entry per repository in a per-user file,
    * stamped every poll. `weawr console` lists the entries and marks one stale when its last
    * poll is older than a few of its intervals. Best effort; never fails a poll.
    */
@@ -1517,7 +1517,7 @@ export class FactoryEngine {
     if (!this.registration) return;
     const now = this.clock().toISOString();
     this.lastRegistration = {
-      factoryId: this.ids.factoryId, repo: this.paths.repo, name: this.cfg.name, tracker: this.cfg.Tracker.id, version: this.version,
+      teamId: this.ids.teamId, repo: this.paths.repo, name: this.cfg.name, tracker: this.cfg.Tracker.id, version: this.version,
       hostId: this.ids.hostId, pid: process.pid, pollSeconds: this.cfg.pollSeconds, workspaceId: process.env.HERDR_WORKSPACE_ID || null,
       logPath: this.paths.logPath, socketPath: this.registration.socketPath ?? null, statePath: this.paths.statePath,
       lastPoll: now, lastSuccessfulPoll: this.lastRegistration?.lastSuccessfulPoll ?? null, lastPollError: this.lastRegistration?.lastPollError ?? null,
@@ -1616,7 +1616,7 @@ export class FactoryEngine {
   /** herdr's whole snapshot as an index, asked at most every couple of seconds. null index when herdr is away. */
   async herdrIndex(): Promise<{ index: any; observedAt: string | null }> {
     const now = this.clock().getTime();
-    if (this.herdrCache && now - this.herdrCache.at < FactoryEngine.HERDR_TTL_MS) return { index: this.herdrCache.index, observedAt: this.herdrCache.snapshot ? new Date(this.herdrCache.at).toISOString() : null };
+    if (this.herdrCache && now - this.herdrCache.at < TeamEngine.HERDR_TTL_MS) return { index: this.herdrCache.index, observedAt: this.herdrCache.snapshot ? new Date(this.herdrCache.at).toISOString() : null };
     let snapshot: any = null;
     try { snapshot = await this.herdr.run(['api', 'snapshot'], { timeoutMs: 10_000 }); } catch { snapshot = null; }
     const index = indexSnapshot(snapshot);
@@ -1647,14 +1647,14 @@ export class FactoryEngine {
   }
 
   /**
-   * The canonical snapshot of this factory: what every client renders. Computed from the store's
+   * The canonical snapshot of this team: what every client renders. Computed from the store's
    * runs and events, herdr's index, the sizes and the enrichment; memoised briefly. `owner` says
-   * this process is online; a reader building a snapshot for an offline factory uses
+   * this process is online; a reader building a snapshot for an offline team uses
    * projectOffline() instead.
    */
-  async snapshot(): Promise<FactorySnapshot> {
+  async snapshot(): Promise<TeamSnapshot> {
     const nowMs = this.clock().getTime();
-    if (this.snapshotCache && nowMs - this.snapshotCache.at < FactoryEngine.SNAPSHOT_TTL_MS) return this.snapshotCache.value;
+    if (this.snapshotCache && nowMs - this.snapshotCache.at < TeamEngine.SNAPSHOT_TTL_MS) return this.snapshotCache.value;
     const { index, observedAt: herdrAt } = await this.herdrIndex();
     const runs: Record<string, any> = {};
     for (const [key, run] of Object.entries<any>(this.state.runs)) runs[key] = liveResult(run);
@@ -1664,15 +1664,15 @@ export class FactoryEngine {
     const cleared: Record<string, number> = {};
     if (isDurable(this.store)) for (const a of this.store.acknowledgements()) cleared[a.issueKey] = Date.parse(a.at) || 0;
     const enricher = this.enrichment();
-    const view = factoryView({
-      id: slug(this.cfg.name), factoryId: this.ids.factoryId, repo: this.paths.repo, config: this.cfg, state: { runs }, events, index, sizes,
+    const view = teamView({
+      id: slug(this.cfg.name), teamId: this.ids.teamId, repo: this.paths.repo, config: this.cfg, state: { runs }, events, index, sizes,
       registry: this.lastRegistration, stale: false, enrich: enricher.view(), cleared, seen: this.seen, now: nowMs,
       recipeRevision: this.recipeRevision, trackerScope: scopeOf(this.cfg.trackerSpec),
     });
     enricher.refresh(view.issues, nowMs);
     if (!view.watcher.workspaceId && process.env.HERDR_WORKSPACE_ID) view.watcher.workspaceId = process.env.HERDR_WORKSPACE_ID;
     view.watcher.pid = process.pid; view.watcher.version = this.version;
-    const snapshot: FactorySnapshot = {
+    const snapshot: TeamSnapshot = {
       ...view,
       protocolVersion: 1,
       generatedAt: new Date(nowMs).toISOString(),
@@ -1680,8 +1680,8 @@ export class FactoryEngine {
       owner: { status: 'online', pid: process.pid, version: this.version, hostname: os.hostname(), heartbeatAt: new Date(nowMs).toISOString(), observedAt: new Date(nowMs).toISOString() },
       freshness: { herdrAt, trackerAt: enricher.lastAskedAt ? new Date(enricher.lastAskedAt).toISOString() : (this.lastRegistration?.lastSuccessfulPoll ?? null), trackerError: enricher.lastError ?? this.lastRegistration?.lastPollError ?? null },
       live: { tracker: !!this.tracker, github: !!enricher.sources.ghToken, why: this.tracker ? null : 'no tracker in this process' },
-      capabilities: ['task.done', 'task.undo', 'task.stop', 'task.tail', 'task.reset', 'run.exit', 'run.tail', 'factory.tidy', 'run.merge', 'recipe.upgrade'],
-    } as FactorySnapshot;
+      capabilities: ['task.done', 'task.undo', 'task.stop', 'task.tail', 'task.reset', 'run.exit', 'run.tail', 'team.tidy', 'run.merge', 'recipe.upgrade'],
+    } as TeamSnapshot;
     this.snapshotCache = { at: nowMs, value: snapshot };
     return snapshot;
   }
@@ -1703,7 +1703,7 @@ export class FactoryEngine {
       snapshot ??= await this.snapshot().catch(() => null);
       const memory = last?.memory ?? {};
       try {
-        const out = await t.run({ factory: { id: this.ids.factoryId, name: this.cfg.name, repo: this.paths.repo }, snapshot, log: (line: string) => this.log(`${key}: ${line}`), notify: (title: string, body: string) => this.herdr.notify(title, body, { sound: 'none' }), now: new Date(now), memory });
+        const out = await t.run({ team: { id: this.ids.teamId, name: this.cfg.name, repo: this.paths.repo }, snapshot, log: (line: string) => this.log(`${key}: ${line}`), notify: (title: string, body: string) => this.herdr.notify(title, body, { sound: 'none' }), now: new Date(now), memory });
         this.taskRuns.set(key, { at: now, memory: out && typeof out === 'object' ? { ...memory, ...(out as object) } : memory });
         this.emit('plugin.task_ran', null, { task: key });
         ran.push(key);
@@ -1717,8 +1717,8 @@ export class FactoryEngine {
 
   /** The stable ids for a run, recorded on it at pickup. */
   idsFor(issue: any, rule: any, key: string, run: any) {
-    const task = taskId(this.ids.factoryId, trackerScope(this.cfg.trackerSpec), issue.identifier);
-    return { hostId: this.ids.hostId, factoryId: this.ids.factoryId, taskId: task, roleRunId: roleRunId(task, rule.role || null), attemptId: attemptId(roleRunId(task, rule.role || null), run.pass || 1, run.startedAt) };
+    const task = taskId(this.ids.teamId, trackerScope(this.cfg.trackerSpec), issue.identifier);
+    return { hostId: this.ids.hostId, teamId: this.ids.teamId, taskId: task, roleRunId: roleRunId(task, rule.role || null), attemptId: attemptId(roleRunId(task, rule.role || null), run.pass || 1, run.startedAt) };
   }
 
   /**
@@ -1794,4 +1794,4 @@ function liveResult(run: any): any {
   return { ...run, result: live, prUrl: run.prUrl || (live as any).prUrl || null, resultIsLive: true };
 }
 
-function slug(name: string): string { return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'factory'; }
+function slug(name: string): string { return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'team'; }

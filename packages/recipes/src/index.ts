@@ -1,6 +1,6 @@
-// @weawr/recipes — what a factory tells its agents, as versioned templates.
+// @weawr/recipes — what a team tells its agents, as versioned templates.
 //
-// A recipe is the effective prompt setup of a factory: role templates, the shared result/nudge
+// A recipe is the effective prompt setup of a team: role templates, the shared result/nudge
 // protocol they teach, and the policy that went with them. This package renders and inspects
 // templates; it never touches a filesystem, so the same code serves the CLI and a fixture.
 import { createHash } from './hash.js';

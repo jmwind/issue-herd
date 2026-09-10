@@ -1,15 +1,15 @@
-// Which factories run on this machine, and how to reach them.
+// Which teams run on this machine, and how to reach them.
 //
-// Each owner writes one small file of its own — <userDir>/factories/<factoryId>.json, replaced
+// Each owner writes one small file of its own — <userDir>/teams/<teamId>.json, replaced
 // atomically — so two watchers never read-modify-write one shared list. The files are discovery:
-// they say where a factory is and where its owner answers. The lock (ownership.ts) says whether
+// they say where a team is and where its owner answers. The lock (ownership.ts) says whether
 // the owner is alive; a registration's own heartbeat is a hint for a UI that has no lock access.
 import fs from 'node:fs';
 import path from 'node:path';
 import { readJson, writeJsonAtomic } from './state.js';
 
 export interface Registration {
-  factoryId: string;
+  teamId: string;
   repo: string;
   name: string;
   tracker: string | null;
@@ -28,16 +28,16 @@ export interface Registration {
 }
 
 export function registrationsDir(userDir: string): string {
-  return process.env.WEAWR_REGISTRY_DIR || path.join(userDir, 'factories');
+  return process.env.WEAWR_REGISTRY_DIR || path.join(userDir, 'teams');
 }
 
-/** Write (replace) this factory's registration. Never throws: a watcher must not die because it could not announce itself. */
+/** Write (replace) this team's registration. Never throws: a watcher must not die because it could not announce itself. */
 export function writeRegistration(dir: string, reg: Registration): void {
-  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); writeJsonAtomic(path.join(dir, `${reg.factoryId}.json`), reg); } catch { /* best effort */ }
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); writeJsonAtomic(path.join(dir, `${reg.teamId}.json`), reg); } catch { /* best effort */ }
 }
 
-export function removeRegistration(dir: string, factoryId: string): boolean {
-  const file = path.join(dir, `${factoryId}.json`);
+export function removeRegistration(dir: string, teamId: string): boolean {
+  const file = path.join(dir, `${teamId}.json`);
   if (!fs.existsSync(file)) return false;
   fs.rmSync(file, { force: true });
   return true;
@@ -50,7 +50,7 @@ export function listRegistrations(dir: string): Registration[] {
   const out: Registration[] = [];
   for (const f of names) {
     const r = readJson<Registration | null>(path.join(dir, f), null);
-    if (r && typeof r === 'object' && typeof r.repo === 'string' && typeof r.factoryId === 'string') out.push(r);
+    if (r && typeof r === 'object' && typeof r.repo === 'string' && typeof r.teamId === 'string') out.push(r);
   }
   return out;
 }
@@ -64,14 +64,14 @@ export function isStale(entry: { lastPoll?: string; pollSeconds?: number } | nul
 
 /**
  * The legacy shared registry (~/.config/weawr/factories.json, one object keyed by repository
- * path), read so a console on a new version still lists factories an old watcher stamps. The
- * migration command removes it once every factory has an owner writing its own file.
+ * path), read so a console on a new version still lists teams an old watcher stamps. The
+ * migration command removes it once every team has an owner writing its own file.
  */
 export function readLegacyRegistry(file: string): Registration[] {
   const all = readJson<Record<string, any>>(file, {});
   if (!all || typeof all !== 'object' || Array.isArray(all)) return [];
   return Object.entries(all).map(([repo, e]) => ({
-    factoryId: `legacy:${repo}`, repo, name: e?.name || path.basename(repo), tracker: e?.tracker ?? null, version: e?.version ?? null,
+    teamId: `legacy:${repo}`, repo, name: e?.name || path.basename(repo), tracker: e?.tracker ?? null, version: e?.version ?? null,
     hostId: 'legacy', pid: Number(e?.pid) || 0, pollSeconds: Number(e?.pollSeconds) || 30, workspaceId: e?.workspaceId ?? null,
     logPath: e?.logPath ?? null, socketPath: null, statePath: null, lastPoll: e?.lastPoll || '', lastSuccessfulPoll: null, lastPollError: null,
   }));

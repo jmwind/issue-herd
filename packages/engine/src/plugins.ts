@@ -35,8 +35,8 @@ export interface RolePreset {
 }
 
 export interface TaskContext {
-  factory: { id: string; name: string; repo: string };
-  /** The factory's canonical snapshot at the moment the task runs. */
+  team: { id: string; name: string; repo: string };
+  /** The team's canonical snapshot at the moment the task runs. */
   snapshot: any;
   log: (line: string) => void;
   notify: (title: string, body: string) => Promise<void>;

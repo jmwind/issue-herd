@@ -2,9 +2,9 @@
 //
 // Issues come from `.weawr/issues.json` in the repository instead of a tracker — a list of
 // { id, title, description?, labels?, state? } — and everything weawr writes back (the claim
-// label, comments, the state) is written into that same file. Useful for an offline factory, a
+// label, comments, the state) is written into that same file. Useful for an offline team, a
 // demo, or a source of work that is not an issue tracker at all: anything that can write a JSON
-// file can feed a factory. `"tracker": "file"` in config.json, and `"plugins": ["examples/file-intake"]`.
+// file can feed a team. `"tracker": "file"` in config.json, and `"plugins": ["examples/file-intake"]`.
 //
 // The contract is the one every tracker implements (packages/engine/src/adapters/tracker.mjs);
 // this file has no import from weawr at all.

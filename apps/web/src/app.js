@@ -1,7 +1,7 @@
-// Factory Floor, the page. One JSON document in (over SSE), a render per change, hash routes:
-//   #/                     every factory on this machine, one plant each, belts between them
-//   #/f/<factory>          one factory's floor: alerts, assembling, output
-//   #/i/<factory>/<issue>  one issue
+// Team Room, the page. One JSON document in (over SSE), a render per change, hash routes:
+//   #/                     every team on this machine, one plant each, belts between them
+//   #/f/<team>          one team's floor: alerts, assembling, output
+//   #/i/<team>/<issue>  one issue
 // No framework, no build step. Everything shown comes from weawr serve through @weawr/client
 // (window.WeawrClient): one host snapshot over SSE, commands with request ids, operations.
 (function () {
@@ -11,7 +11,7 @@
   var INSERTER = '<div class="inserter"><svg viewBox="0 0 32 30"><rect x="10" y="22" width="12" height="6" fill="#4A4A4A" stroke="#0A0A0A"/><g class="arm"><rect x="14" y="4" width="4" height="22" fill="#E39827" stroke="#0A0A0A"/><rect x="10" y="1" width="12" height="5" fill="#5C5C5C" stroke="#0A0A0A"/></g></svg></div>';
   var view = null, sheet = false, showAll = false, tails = {}, expanded = {}, receivedAt = 0;
   var client = new WeawrClient({ baseUrl: '' });
-  // Themes: the Factorio floor (the default) or the clean weawr look. Chosen in the factories
+  // Themes: the Factorio floor (the default) or the clean weawr look. Chosen in the teams
   // sheet or with ?theme=, remembered per browser, served by the host as /themes/<name>.css.
   var THEMES = { factorio: 'Factorio', clean: 'weawr clean', linear: 'Linear', github: 'GitHub', 'tokyo-night': 'Tokyo Night', 'solarized-light': 'Solarized Light' };
   function themeOf() { try { var q = /[?&]theme=([a-z-]+)/.exec(location.search); if (q && THEMES[q[1]]) return q[1]; var saved = localStorage.getItem('weawr-theme'); if (saved && THEMES[saved]) return saved; } catch (e) {} var d = document.body.dataset.theme; return THEMES[d] ? d : 'factorio'; }
@@ -47,13 +47,13 @@
     '<g class="g1"><path d="' + gearPath(50, 47, 17, 10, 4) + '"/></g>' +
     '<ellipse class="glass" cx="42" cy="34" rx="12" ry="7"/>' +
     '<rect class="lampbox" x="16" y="16" width="14" height="9"/><circle class="lamp" cx="23" cy="20.5" r="2.8"/></svg>';
-  // Where the page is, from the hash: the index of every factory (the default), one factory's floor, or one issue.
+  // Where the page is, from the hash: the index of every team (the default), one team's floor, or one issue.
   function route() {
     var m = /^#\/i\/([^/]+)\/(.+)$/.exec(location.hash); if (m) return { kind: 'issue', id: decodeURIComponent(m[1]), key: decodeURIComponent(m[2]) };
-    m = /^#\/f\/([^/]+)$/.exec(location.hash); if (m) return { kind: 'factory', id: decodeURIComponent(m[1]) };
+    m = /^#\/f\/([^/]+)$/.exec(location.hash); if (m) return { kind: 'team', id: decodeURIComponent(m[1]) };
     return { kind: 'index' };
   }
-  var chosen = null; // the factory the current route is about, or null for the index
+  var chosen = null; // the team the current route is about, or null for the index
 
   // ------------------------------------------------------------ helpers
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -61,7 +61,7 @@
   function dur(ms) { ms = Math.max(0, ms); var s = Math.round(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24); if (d) return d + 'd ' + (h % 24) + 'h'; if (h) return h + 'h ' + (m % 60) + 'm'; if (m) return m + 'm'; return s + 's'; }
   function clock(iso) { if (!iso) return ''; var d = new Date(iso); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
   function prNum(url) { return url ? '#' + url.split('/').pop() : ''; }
-  function factories() { return view ? view.factories : []; }
+  function teams() { return view ? view.teams : []; }
   function taskAlerts(f) { var keys = []; f.alerts.forEach(function (a) { if (keys.indexOf(a.issueKey) < 0) keys.push(a.issueKey); }); return keys.length; }
   function hasAlert(f, iss) { return f.alerts.some(function (a) { return a.issueKey === iss.key; }); }
   // One line of facts per task: size and grade, the issue's state, the PR's state.
@@ -76,13 +76,13 @@
   // A run's result as a word: the raw status for the run that owns the PR, the model's reading for a reviewer (a report, not a decision).
   function verdict(r) { return r.result && r.ownsPr ? r.result.status.replace('_', ' ') : r.phrase; }
   var SHORT = { blocked: 'blocked on a dialog', question: 'stopped to ask', merge: 'PR waits for your merge', needs_human: 'needs your decision', holding: 'still holding its workspace', stopped: 'stopped without a result', failed: 'failed', gone: 'agent gone', finished: 'finished, waiting for your sign-off' };
-  function current() { if (!view || !chosen) return null; return factories().filter(function (f) { return f.id === chosen; })[0] || null; }
-  function shown() { var f = current(); return f ? [f] : factories(); }
+  function current() { if (!view || !chosen) return null; return teams().filter(function (f) { return f.id === chosen; })[0] || null; }
+  function shown() { var f = current(); return f ? [f] : teams(); }
   function pct(a, b) { return a + b > 0 ? Math.round(a / (a + b) * 100) : null; }
-  function factoryOf(issueKey, id) { return factories().filter(function (f) { return f.id === id; })[0]; }
-  // The route names a factory by its display id; commands name it by its stable factoryId.
-  function factoryIdOf(id) { var f = factories().filter(function (x) { return x.id === id; })[0]; return f ? f.factoryId : id; }
-  // A factory whose owner is not running shows its last recorded state, and says so.
+  function teamOf(issueKey, id) { return teams().filter(function (f) { return f.id === id; })[0]; }
+  // The route names a team by its display id; commands name it by its stable teamId.
+  function teamIdOf(id) { var f = teams().filter(function (x) { return x.id === id; })[0]; return f ? f.teamId : id; }
+  // A team whose owner is not running shows its last recorded state, and says so.
   function ownerLine(f) {
     if (!f.owner || f.owner.status === 'online') return '';
     var when = f.owner.observedAt ? ' · last seen ' + dur(Date.now() - Date.parse(f.owner.observedAt)) + ' ago' : '';
@@ -90,7 +90,7 @@
   }
 
   // ------------------------------------------------------------ pieces
-  // `below` hangs off the bar: the factory picker drops from it, directly under the picker button.
+  // `below` hangs off the bar: the team picker drops from it, directly under the picker button.
   function titlebar(inner, below) {
     var ok = view && view.herdr.connected && linkState.connected;
     var why = !linkState.connected ? 'the link to weawr is down' + (linkState.retryInMs ? ', retrying' : '') + ' — shown as of ' + dur(drift()) + ' ago' : ok ? 'herdr ' + esc(view.herdr.version || '') : 'herdr is not answering';
@@ -171,16 +171,16 @@
     }).join('') + '</div>';
   }
   function section(title, count, body, extra) { return '<section><div class="sub">' + title + ' <span class="n' + (extra && extra.hot ? ' hot' : '') + '">' + count + '</span>' + (extra && extra.more || '') + '</div>' + body + '</section>'; }
-  // What this factory is, at a glance: where it reads issues from, the rules that pick them up
+  // What this team is, at a glance: where it reads issues from, the rules that pick them up
   // (which issues, which role, which agent) and how its watcher is doing. Top of the overview.
-  function factoryCard(f) {
+  function teamCard(f) {
     var alive = !f.watcher.stale;
     var rules = f.rules.map(function (r, i) {
       return '<div><b style="color:' + roleColor(r.role || r.name, i) + '">' + esc(r.role || r.name) + '</b><span><em>' + esc(r.agent + (r.model ? ' ' + r.model : '')) + '</em>' + (r.effort ? ' · ' + esc(r.effort) : '') + (r.basedOn ? ' · after ' + esc(r.basedOn) : '') + (r.passes > 1 ? ' · ' + r.passes + ' passes' : '') + '<code>' + esc(r.match || 'any issue') + '</code></span></div>';
-    }).join('') || '<div class="empty">No rules: this factory picks nothing up.</div>';
+    }).join('') || '<div class="empty">No rules: this team picks nothing up.</div>';
     var meta = esc(f.tracker) + ' · ' + esc(f.repo.replace(/^.*\//, '')) + (f.maxConcurrent ? ' · cap ' + f.maxConcurrent : '') + (f.pollSeconds ? ' · every ' + f.pollSeconds + 's' : '') +
       ' · ' + (f.watcher.lastPoll ? (alive ? 'polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago' : 'watcher not seen for ' + dur(Date.now() - Date.parse(f.watcher.lastPoll))) : (f.watcher.paneOnly ? 'watcher pane open' : 'watcher never seen'));
-    return section('<i class="led ' + (alive ? 'green' : 'red') + ' still"></i>' + esc(f.name), f.rules.length + ' rule' + (f.rules.length === 1 ? '' : 's'), '<div class="inset pane factory"><div class="fmeta' + (alive ? '' : ' stale') + '">' + meta + '</div><div class="team">' + rules + '</div></div>',
+    return section('<i class="led ' + (alive ? 'green' : 'red') + ' still"></i>' + esc(f.name), f.rules.length + ' rule' + (f.rules.length === 1 ? '' : 's'), '<div class="inset pane team"><div class="fmeta' + (alive ? '' : ' stale') + '">' + meta + '</div><div class="rules">' + rules + '</div></div>',
       { more: '<span class="more" style="color:var(--muted)">' + esc(f.roles.join(' → ')) + '</span>' });
   }
   function legend() {
@@ -191,7 +191,7 @@
   function picker(label) { return '<button class="picker" id="pick" aria-expanded="' + (sheet ? 'true' : 'false') + '"><span class="n">' + esc(label) + '</span><span class="chev">' + (sheet ? '▲' : '▼') + '</span></button>'; }
   function overview() {
     var f = current();
-    if (!f) return titlebar(picker(factories().length ? 'All factories' : 'No factories'), sheet ? pickerSheet() : '') + '<div class="body"><div class="empty">No factory called <b>' + esc(chosen) + '</b> here. <a href="#/">All factories</a></div></div>' + (sheet ? '<div class="dimmer" id="dim"></div>' : '');
+    if (!f) return titlebar(picker(teams().length ? 'All teams' : 'No teams'), sheet ? pickerSheet() : '') + '<div class="body"><div class="empty">No team called <b>' + esc(chosen) + '</b> here. <a href="#/">All teams</a></div></div>' + (sheet ? '<div class="dimmer" id="dim"></div>' : '');
     var fs = [f], many = false;
     var head = titlebar(picker(f.name), sheet ? pickerSheet() : '');
     var alerts = [], inflight = [], merged = [], done = [];
@@ -202,9 +202,9 @@
       x.issues.forEach(function (i) { if (i.bucket === 'inflight') inflight.push([x, i]); else if (!byTask[i.key]) (i.bucket === 'merged' ? merged : done).push([x, i]); });
     });
     var body = '';
-    if (!factories().length) body += '<div class="empty">No factory has reported yet. Start a watcher with <b>weawr</b> in a repository, and it appears here on its first poll.</div>';
-    else body += fs.map(factoryCard).join('') + legend();
-    body += section('<i class="led ' + (alerts.length ? 'red' : '') + ' still"></i>Alerts', alerts.length, alerts.length ? '<div class="inset pane">' + alerts.map(function (p) { return taskCard(p[0], p[1], p[2], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing needs you. The factory is running by itself.</div></div>', { hot: alerts.length });
+    if (!teams().length) body += '<div class="empty">No team has reported yet. Start a watcher with <b>weawr</b> in a repository, and it appears here on its first poll.</div>';
+    else body += fs.map(teamCard).join('') + legend();
+    body += section('<i class="led ' + (alerts.length ? 'red' : '') + ' still"></i>Alerts', alerts.length, alerts.length ? '<div class="inset pane">' + alerts.map(function (p) { return taskCard(p[0], p[1], p[2], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">Nothing needs you. The team is running by itself.</div></div>', { hot: alerts.length });
     body += section('Assembling', inflight.length, inflight.length ? '<div class="inset pane">' + inflight.map(function (p) { return row(p[0], p[1], many); }).join('') + '</div>' : '<div class="inset pane"><div class="empty">No issue in flight.</div></div>');
     var out = merged.concat(done);
     var today = out.filter(function (p) { return p[1].finishedAt && Date.now() - Date.parse(p[1].finishedAt) < 86400e3; });
@@ -219,8 +219,8 @@
     return head + belt() + '<div class="body">' + body + '</div>' + (sheet ? '<div class="dimmer" id="dim"></div>' : '');
   }
 
-  // ---- the index: every factory on the machine as one plant, belts running between them.
-  // What is on a plant is what changes what you do next, plus the numbers a factory owner
+  // ---- the index: every team on the machine as one plant, belts running between them.
+  // What is on a plant is what changes what you do next, plus the numbers a team owner
   // looks at: who works there, what came out today, this week, this month, and how much of
   // its time it ran on its own against how much it spent waiting on a person.
   function plant(f) {
@@ -253,34 +253,34 @@
     return '<div class="link' + (working ? ' on' : '') + '" aria-hidden="true"><div class="vbelt">' + items + '</div></div>';
   }
   function index() {
-    var fs = factories();
-    var head = titlebar(picker(fs.length ? 'All factories' : 'No factories'), sheet ? pickerSheet() : '');
+    var fs = teams();
+    var head = titlebar(picker(fs.length ? 'All teams' : 'No teams'), sheet ? pickerSheet() : '');
     var body = '';
-    if (!fs.length) body = '<div class="empty">No factory has reported yet. Start a watcher with <b>weawr</b> in a repository, and it appears here on its first poll.</div>';
+    if (!fs.length) body = '<div class="empty">No team has reported yet. Start a watcher with <b>weawr</b> in a repository, and it appears here on its first poll.</div>';
     else body = '<div class="plants">' + fs.map(function (f, i) { return (i ? link(fs[i - 1], f) : '') + plant(f); }).join('') + '</div>';
     var wait = fs.reduce(function (s, x) { return s + x.humanWaitMs; }, 0), running = fs.reduce(function (s, x) { return s + x.counts.running; }, 0);
-    body += '<div class="foot"><span>' + fs.length + ' factor' + (fs.length === 1 ? 'y' : 'ies') + ' on ' + esc(document.body.dataset.hostname) + ' · ' + running + ' running · you were waited on for <b>' + dur(wait) + '</b> in total</span></div>';
+    body += '<div class="foot"><span>' + fs.length + ' team' + (fs.length === 1 ? '' : 's') + ' on ' + esc(document.body.dataset.hostname) + ' · ' + running + ' running · you were waited on for <b>' + dur(wait) + '</b> in total</span></div>';
     return head + belt() + '<div class="body">' + body + '</div>' + (sheet ? '<div class="dimmer" id="dim"></div>' : '');
   }
 
   function pickerSheet() {
-    var opts = factories().map(function (f) {
+    var opts = teams().map(function (f) {
       var alive = !f.watcher.stale;
       return '<button class="opt' + (f.id === chosen ? ' on' : '') + (alive ? '' : ' stale') + '" data-choose="' + esc(f.id) + '"><i class="led ' + (alive ? 'green' : 'red') + ' still"></i><span class="n">' + esc(f.name) + '</span>' +
         '<span class="c"><span class="pill">' + f.counts.inflight + ' assembling</span>' + (taskAlerts(f) ? '<span class="pill hot">' + taskAlerts(f) + ' alert' + (taskAlerts(f) > 1 ? 's' : '') + '</span>' : '') + '</span>' +
         '<span class="m">' + esc(f.tracker) + ' · ' + esc(f.repo.replace(/^.*\//, '')) + ' · ' + (f.watcher.lastPoll ? (alive ? 'polled ' + dur(Date.now() - Date.parse(f.watcher.lastPoll)) + ' ago' : 'watcher not seen for ' + dur(Date.now() - Date.parse(f.watcher.lastPoll))) : (f.watcher.paneOnly ? 'watcher pane ' + esc(f.watcher.workspaceId || '') + ' open' : 'watcher never seen')) + '</span></button>';
     }).join('');
-    opts = '<button class="opt' + (!chosen ? ' on' : '') + '" data-choose="all"><i class="led green still"></i><span class="n">All factories</span><span class="c"><span class="pill">' + factories().reduce(function (s, f) { return s + f.counts.inflight; }, 0) + ' assembling</span></span><span class="m">every factory on ' + esc(document.body.dataset.hostname) + '</span></button>' + opts;
-    // The chosen factory's rules live at the top of the overview now; the picker is for choosing.
+    opts = '<button class="opt' + (!chosen ? ' on' : '') + '" data-choose="all"><i class="led green still"></i><span class="n">All teams</span><span class="c"><span class="pill">' + teams().reduce(function (s, f) { return s + f.counts.inflight; }, 0) + ' assembling</span></span><span class="m">every team on ' + esc(document.body.dataset.hostname) + '</span></button>' + opts;
+    // The chosen team's rules live at the top of the overview now; the picker is for choosing.
     var f = current(), about = '';
     if (f) about = '<div class="pane"><div class="acts"><span class="pill">' + (f.watcher.version ? 'weawr ' + esc(f.watcher.version) : 'version unknown') + '</span>' + (f.watcher.workspaceId ? '<span class="pill">workspace ' + esc(f.watcher.workspaceId) + '</span>' : '') + '</div></div>';
     var theme = '<div class="pane"><div class="acts"><span class="m">Theme</span>' + Object.keys(THEMES).map(function (k) { return '<button class="btn' + (document.body.dataset.theme === k ? ' confirm' : '') + '" data-theme-pick="' + k + '">' + esc(THEMES[k]) + '</button>'; }).join('') + '</div></div>';
     var lock = theme + (document.body.dataset.gated === 'true' ? '<div class="pane"><button class="btn" id="lockbtn">Lock the console</button></div>' : '');
-    return '<div class="sheet" role="dialog" aria-label="Factories"><div class="titlebar"><h1>Factories on ' + esc(document.body.dataset.hostname) + '</h1><span class="drag"></span><button class="tbtn red" id="closesheet" aria-label="close">✕</button></div><div class="pane">' + opts + '</div>' + about + lock + '</div>';
+    return '<div class="sheet" role="dialog" aria-label="Teams"><div class="titlebar"><h1>Teams on ' + esc(document.body.dataset.hostname) + '</h1><span class="drag"></span><button class="tbtn red" id="closesheet" aria-label="close">✕</button></div><div class="pane">' + opts + '</div>' + about + lock + '</div>';
   }
 
   function detail(fid, key) {
-    var f = factoryOf(key, fid), iss = f && f.issues.filter(function (i) { return i.key === key; })[0];
+    var f = teamOf(key, fid), iss = f && f.issues.filter(function (i) { return i.key === key; })[0];
     if (!iss) return titlebar('<h1>' + esc(key) + '</h1>') + '<div class="body"><div class="empty">No such run here. <a href="#/">Back</a></div></div>';
     var head = '<div class="titlebar">' + MARK + '<h1>' + esc(iss.key) + '</h1><span class="drag"></span><a class="tbtn red" href="#/f/' + esc(f.id) + '" aria-label="back">✕</a></div>';
     var elapsed = iss.finishedAt ? iss.elapsedMs : iss.elapsedMs + drift();
@@ -321,7 +321,7 @@
     if (!view) return;
     var r = route();
     chosen = r.kind === 'index' ? null : r.id;
-    root.innerHTML = r.kind === 'issue' ? detail(r.id, r.key) : r.kind === 'factory' ? overview() : index();
+    root.innerHTML = r.kind === 'issue' ? detail(r.id, r.key) : r.kind === 'team' ? overview() : index();
   }
   // A Mark done or Undo is over when the console's state shows it: the task out of Alerts and
   // in output (or back, for Undo), or gone from the view. A state that never catches up (the
@@ -331,7 +331,7 @@
   function settle() {
     var changed = false, now = Date.now();
     Object.keys(busy).forEach(function (key) {
-      var b = busy[key], p = key.split('|'), f = factoryOf(p[1], p[0]), iss = f && f.issues.filter(function (i) { return i.key === p[1]; })[0];
+      var b = busy[key], p = key.split('|'), f = teamOf(p[1], p[0]), iss = f && f.issues.filter(function (i) { return i.key === p[1]; })[0];
       var landed = !f || !iss ? !!b.settled : b.undo ? !iss.cleared : iss.cleared && iss.bucket !== 'inflight' && !hasAlert(f, iss);
       if ((b.settled && landed) || (b.settled && now - b.settled > SETTLE_MS)) { delete busy[key]; changed = true; }
     });
@@ -349,18 +349,18 @@
     else if (t.id === 'tidy') {
       if (!confirm(t.textContent + '? These are herdr workspaces of exited agents on tasks you already marked done. Their worktrees and archived results stay.')) return;
       t.disabled = true;
-      client.tidy(chosen ? factoryIdOf(chosen) : null)
+      client.tidy(chosen ? teamIdOf(chosen) : null)
         .then(function (r) { var j = r.result || {}; j.ok = true;
           if (r.operation && r.operation.status === 'failed') { render(); return toast('Could not: ' + (r.operation.error || 'unknown')); }
           var closed = (j.outcomes || []).filter(function (o) { return o.workspace === 'closed' || o.workspace === 'was already closed'; }).length;
           var stuck = (j.outcomes || []).filter(function (o) { return /^is still open/.test(o.workspace); });
           toast(closed + ' workspace' + (closed === 1 ? '' : 's') + ' closed' + (stuck.length ? ' · ' + stuck.map(function (o) { return o.workspaceId + ' ' + o.workspace; }).join(' · ') : ''));
-        }).catch(function (e) { render(); toast(e.code === 'owner_offline' ? 'That factory\'s watcher is not running; nothing was changed.' : 'Could not: ' + e.message); });
+        }).catch(function (e) { render(); toast(e.code === 'owner_offline' ? 'That team\'s watcher is not running; nothing was changed.' : 'Could not: ' + e.message); });
     }
     else if (t.dataset.themePick) { applyTheme(t.dataset.themePick); render(); }
     else if (t.id === 'lockbtn') { fetch('/lock', { method: 'POST' }).then(function () { location.replace('/'); }); }
     else if (t.dataset.choose) { sheet = false; var to = t.dataset.choose === 'all' ? '#/' : '#/f/' + encodeURIComponent(t.dataset.choose); if (location.hash === to || (to === '#/' && !location.hash)) render(); else location.hash = to; }
-    else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; client.tail(factoryIdOf(p[0]), p[1]).then(function (j) { tails[t.dataset.tail] = j.blocks || '(empty)'; render(); }).catch(function (e) { tails[t.dataset.tail] = '(' + e.message + ')'; render(); }); }
+    else if (t.dataset.tail) { var p = t.dataset.tail.split('|'); t.disabled = true; client.tail(teamIdOf(p[0]), p[1]).then(function (j) { tails[t.dataset.tail] = j.blocks || '(empty)'; render(); }).catch(function (e) { tails[t.dataset.tail] = '(' + e.message + ')'; render(); }); }
     else if (t.dataset.done || t.dataset.undone) {
       var d = (t.dataset.done || t.dataset.undone).split('|'), undo = !!t.dataset.undone, agents = t.dataset.agents, workspaces = Number(t.dataset.workspaces) || 0;
       var closing = agents ? 'Every agent still up on it (' + agents + ') is sent its exit command and shuts down the way it wants, and its herdr workspaces are closed; worktrees stay. ' : workspaces ? 'Its herdr workspaces (' + workspaces + ') are closed; worktrees stay. ' : '';
@@ -368,7 +368,7 @@
       var key = d[0] + '|' + d[1];
       busy[key] = { undo: undo, agents: undo || !agents ? 0 : agents.split(', ').length, workspaces: undo ? 0 : workspaces };
       render();
-      var fid = factoryIdOf(d[0]);
+      var fid = teamIdOf(d[0]);
       (undo ? client.taskUndo(fid, d[1]) : client.taskDone(fid, d[1]))
         .then(function (r) {
           // A long action comes back accepted; its real outcome is the operation's, polled to the end.
@@ -384,7 +384,7 @@
           if (busy[key]) { busy[key].settled = Date.now(); busy[key].agents = 0; busy[key].workspaces = 0; }
           render(); settle();
           setTimeout(settle, SETTLE_MS + 50);
-        }).catch(function (e) { delete busy[key]; render(); toast(e.code === 'owner_offline' ? 'That factory\'s watcher is not running; nothing was changed.' : e.code === 'transport' ? 'The console did not answer; the action may still have happened — watch the task.' : 'Could not: ' + e.message); });
+        }).catch(function (e) { delete busy[key]; render(); toast(e.code === 'owner_offline' ? 'That team\'s watcher is not running; nothing was changed.' : e.code === 'transport' ? 'The console did not answer; the action may still have happened — watch the task.' : 'Could not: ' + e.message); });
     }
   });
   document.getElementById('app').addEventListener('click', function (e) { if (e.target.id === 'dim') { sheet = false; render(); } });

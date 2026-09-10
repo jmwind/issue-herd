@@ -4,14 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export interface NudgeEntry { from: string | null; to: string; at: string; outcome: string; message: string; /** The PR head a coordinator's merge ask was for, so it is asked once per head. */ head?: string }
-export interface FactoryState {
+export interface TeamState {
   runs: Record<string, any>;
   nudges: Record<string, NudgeEntry[]>;
 }
 
 export interface StateStore {
-  load(): FactoryState;
-  save(state: FactoryState): void;
+  load(): TeamState;
+  save(state: TeamState): void;
 }
 
 export function readJson<T>(p: string, fallback: T): T { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } }
@@ -26,9 +26,9 @@ export function writeJsonAtomic(p: string, v: unknown): void {
 
 export class JsonStateStore implements StateStore {
   constructor(private readonly file: string) {}
-  load(): FactoryState {
-    const s = readJson<Partial<FactoryState>>(this.file, { runs: {} });
+  load(): TeamState {
+    const s = readJson<Partial<TeamState>>(this.file, { runs: {} });
     return { runs: s.runs ?? {}, nudges: s.nudges ?? {} };
   }
-  save(state: FactoryState): void { writeJsonAtomic(this.file, state); }
+  save(state: TeamState): void { writeJsonAtomic(this.file, state); }
 }

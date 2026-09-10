@@ -1,5 +1,5 @@
 // The CLI's HTTP/SSE transport: /api/v1 mapped onto the same application commands the terminal
-// uses, one event stream with per-factory cursors, the bundled web console as static files, and
+// uses, one event stream with per-team cursors, the bundled web console as static files, and
 // the gate in front of everything. Browser callers are authenticated by the session cookie and a
 // same-origin check; native callers by a device token. No route computes a lifecycle fact: every
 // answer is an owner's (or the store's last word, marked so).
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { PROTOCOL_VERSION, commandSchemas, describeIssues, validate } from '@weawr/protocol';
 import type { Envelope, HostSnapshot, OperationView } from '@weawr/protocol';
 import type { Command, CommandResult } from '@weawr/engine';
-import type { FactoryHub } from './hub.js';
+import type { TeamHub } from './hub.js';
 import * as _gate from './gate.mjs';
 const { deviceFor } = _gate as Record<string, any>;
 
@@ -60,7 +60,7 @@ function sameOrigin(req: http.IncomingMessage): boolean {
 
 export interface HandlerOptions {
   gate: any;
-  hub: FactoryHub;
+  hub: TeamHub;
   hostname?: string;
   log?: (m: string) => void;
   webDir?: string | null;
@@ -140,32 +140,32 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
   const legacyClients = new Set<http.ServerResponse>();
   hub.subscribe((msg) => {
     if (msg.type === 'snapshot') broadcastSnapshot(msg.snapshot);
-    else if (msg.type === 'event') { const data = `id: ${msg.event.factoryId}:${msg.event.seq}\nevent: event\ndata: ${JSON.stringify(msg.event)}\n\n`; for (const c of clients) c.res.write(data); }
-    else if (msg.type === 'resnapshot') { const data = `event: resnapshot\ndata: ${JSON.stringify({ factoryId: msg.factoryId, reason: msg.reason })}\n\n`; for (const c of clients) c.res.write(data); }
+    else if (msg.type === 'event') { const data = `id: ${msg.event.teamId}:${msg.event.seq}\nevent: event\ndata: ${JSON.stringify(msg.event)}\n\n`; for (const c of clients) c.res.write(data); }
+    else if (msg.type === 'resnapshot') { const data = `event: resnapshot\ndata: ${JSON.stringify({ teamId: msg.teamId, reason: msg.reason })}\n\n`; for (const c of clients) c.res.write(data); }
   });
 
-  /** The v1 command routes, each one application command with the factory named in the body. */
-  async function runCommand(name: string, body: any, p: Principal): Promise<CommandResult & { factoryId?: string }> {
+  /** The v1 command routes, each one application command with the team named in the body. */
+  async function runCommand(name: string, body: any, p: Principal): Promise<CommandResult & { teamId?: string }> {
     const schema = (commandSchemas as any)[name];
     if (!schema) return { ok: false, error: { code: 'unknown_command', message: `no command ${name}; known: ${Object.keys(commandSchemas).join(', ')}` } };
     const v = validate(schema, body);
     if (!v.ok) return { ok: false, error: { code: 'bad_request', message: describeIssues(v.issues), details: v.issues } };
     const b: any = v.value;
-    // Request ids are scoped to the factory and to the caller, so two devices cannot collide.
+    // Request ids are scoped to the team and to the caller, so two devices cannot collide.
     const scopedId = `${p?.kind === 'device' ? `device:${p.name}` : 'browser'}:${b.requestId}`;
     const by = p?.kind === 'device' ? `device ${p.name}` : 'console';
     const targets: Array<[string, Command]> = [];
     switch (name) {
-      case 'task.done': targets.push([b.factory, { type: 'task.done', issueKey: b.task, requestId: scopedId, by }]); break;
-      case 'task.undo': targets.push([b.factory, { type: 'task.undo', issueKey: b.task, requestId: scopedId }]); break;
-      case 'task.stop': targets.push([b.factory, { type: 'task.stop', issueKey: b.task, requestId: scopedId }]); break;
-      case 'task.reset': targets.push([b.factory, { type: 'run.reset', key: b.task, requestId: scopedId }]); break;
-      case 'task.tail': targets.push([b.factory, { type: 'task.tail', issueKey: b.task, lines: b.lines }]); break;
-      case 'run.exit': targets.push([b.factory, { type: 'run.exit', runKey: b.run, requestId: scopedId }]); break;
-      case 'run.tail': targets.push([b.factory, { type: 'agent.tail', runKey: b.run, lines: b.lines }]); break;
-      case 'factory.tidy': {
-        const ids = b.factory ? [b.factory] : [...hub.entries.values()].filter((e) => e.online).map((e) => e.factoryId);
-        for (const id of ids) targets.push([id, { type: 'factory.tidy', requestId: scopedId }]);
+      case 'task.done': targets.push([b.team, { type: 'task.done', issueKey: b.task, requestId: scopedId, by }]); break;
+      case 'task.undo': targets.push([b.team, { type: 'task.undo', issueKey: b.task, requestId: scopedId }]); break;
+      case 'task.stop': targets.push([b.team, { type: 'task.stop', issueKey: b.task, requestId: scopedId }]); break;
+      case 'task.reset': targets.push([b.team, { type: 'run.reset', key: b.task, requestId: scopedId }]); break;
+      case 'task.tail': targets.push([b.team, { type: 'task.tail', issueKey: b.task, lines: b.lines }]); break;
+      case 'run.exit': targets.push([b.team, { type: 'run.exit', runKey: b.run, requestId: scopedId }]); break;
+      case 'run.tail': targets.push([b.team, { type: 'agent.tail', runKey: b.run, lines: b.lines }]); break;
+      case 'team.tidy': {
+        const ids = b.team ? [b.team] : [...hub.entries.values()].filter((e) => e.online).map((e) => e.teamId);
+        for (const id of ids) targets.push([id, { type: 'team.tidy', requestId: scopedId }]);
         break;
       }
     }
@@ -176,19 +176,19 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
       if (!r.ok) return r;
       const res: any = r.result;
       const op: OperationView | null = res?.operationId ? await operationView(fid, res.operationId) : null;
-      return { ok: true, result: { operation: op, result: res }, factoryId: fid };
+      return { ok: true, result: { operation: op, result: res }, teamId: fid };
     }
-    // tidy across every factory: partial success is reported as such
+    // tidy across every team: partial success is reported as such
     const outcomes: any[] = []; const failures: string[] = [];
-    for (const [fid, cmd] of targets) { const r = await hub.dispatch(fid, cmd); if (r.ok) outcomes.push(...((r.result as any).outcomes || []).map((o: any) => ({ factory: fid, ...o }))); else failures.push(`${fid}: ${r.error.message}`); }
-    return { ok: true, result: { operation: { id: `tidy-${Date.now()}`, kind: 'factory.tidy', status: failures.length ? (outcomes.length ? 'partial' : 'failed') : 'completed', requestId: b.requestId, factoryId: null, input: b, result: { outcomes }, error: failures.join('; ') || null, createdAt: now(), updatedAt: now(), retry: { safe: true, how: 'send factory.tidy again; closed workspaces stay closed' } }, result: { outcomes, failures } } };
+    for (const [fid, cmd] of targets) { const r = await hub.dispatch(fid, cmd); if (r.ok) outcomes.push(...((r.result as any).outcomes || []).map((o: any) => ({ team: fid, ...o }))); else failures.push(`${fid}: ${r.error.message}`); }
+    return { ok: true, result: { operation: { id: `tidy-${Date.now()}`, kind: 'team.tidy', status: failures.length ? (outcomes.length ? 'partial' : 'failed') : 'completed', requestId: b.requestId, teamId: null, input: b, result: { outcomes }, error: failures.join('; ') || null, createdAt: now(), updatedAt: now(), retry: { safe: true, how: 'send team.tidy again; closed workspaces stay closed' } }, result: { outcomes, failures } } };
   }
 
-  async function operationView(factoryId: string, id: string): Promise<OperationView | null> {
-    const r = await hub.dispatch(factoryId, { type: 'operation.show', id });
+  async function operationView(teamId: string, id: string): Promise<OperationView | null> {
+    const r = await hub.dispatch(teamId, { type: 'operation.show', id });
     if (!r.ok) return null;
     const o: any = r.result;
-    return { id: o.id, kind: o.kind, status: o.status, requestId: o.requestId, factoryId, input: o.input, result: o.result, error: o.error, createdAt: o.createdAt, updatedAt: o.updatedAt, retry: o.status === 'failed' ? { safe: true, how: `send ${o.kind} again with a new request id` } : null };
+    return { id: o.id, kind: o.kind, status: o.status, requestId: o.requestId, teamId, input: o.input, result: o.result, error: o.error, createdAt: o.createdAt, updatedAt: o.updatedAt, retry: o.status === 'failed' ? { safe: true, how: `send ${o.kind} again with a new request id` } : null };
   }
 
   async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -225,18 +225,18 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
 
       // ---- /api/v1
       if (req.method === 'GET' && url.pathname === '/api/v1/snapshot') return ok(res, hub.current);
-      if (req.method === 'GET' && url.pathname === '/api/v1/factories') return ok(res, { factories: hub.current.factories.map((f) => ({ factoryId: f.factoryId, id: f.id, name: f.name, repo: f.repo, tracker: f.tracker, owner: f.owner, capabilities: f.capabilities ?? [] })) });
-      if (req.method === 'GET' && (m = /^\/api\/v1\/factories\/([^/]+)\/snapshot$/.exec(url.pathname))) { const e = hub.factory(decodeURIComponent(m[1])); return e?.snapshot ? ok(res, e.snapshot) : fail(res, 404, { code: 'not_found', message: `no factory ${m[1]}` }); }
-      if (req.method === 'GET' && (m = /^\/api\/v1\/factories\/([^/]+)\/tasks\/([^/]+)$/.exec(url.pathname))) {
-        const e = hub.factory(decodeURIComponent(m[1])); const task = e?.snapshot?.issues.find((i) => i.key === decodeURIComponent(m![2]));
+      if (req.method === 'GET' && url.pathname === '/api/v1/teams') return ok(res, { teams: hub.current.teams.map((f) => ({ teamId: f.teamId, id: f.id, name: f.name, repo: f.repo, tracker: f.tracker, owner: f.owner, capabilities: f.capabilities ?? [] })) });
+      if (req.method === 'GET' && (m = /^\/api\/v1\/teams\/([^/]+)\/snapshot$/.exec(url.pathname))) { const e = hub.team(decodeURIComponent(m[1])); return e?.snapshot ? ok(res, e.snapshot) : fail(res, 404, { code: 'not_found', message: `no team ${m[1]}` }); }
+      if (req.method === 'GET' && (m = /^\/api\/v1\/teams\/([^/]+)\/tasks\/([^/]+)$/.exec(url.pathname))) {
+        const e = hub.team(decodeURIComponent(m[1])); const task = e?.snapshot?.issues.find((i) => i.key === decodeURIComponent(m![2]));
         if (!e || !task) return fail(res, 404, { code: 'no_such_task', message: `no task ${m[2]} in ${m[1]}` });
-        const at = await hub.dispatch(e.factoryId, { type: 'attempt.list', key: task.runs[0]?.key || task.key });
+        const at = await hub.dispatch(e.teamId, { type: 'attempt.list', key: task.runs[0]?.key || task.key });
         return ok(res, { ...task, attempts: at.ok ? (at.result as any).attempts : [] });
       }
-      if (req.method === 'GET' && (m = /^\/api\/v1\/factories\/([^/]+)\/tasks\/([^/]+)\/tail$/.exec(url.pathname))) { const e = hub.factory(decodeURIComponent(m[1])); if (!e) return fail(res, 404, { code: 'not_found', message: `no factory ${m[1]}` }); return relay(res, await hub.dispatch(e.factoryId, { type: 'task.tail', issueKey: decodeURIComponent(m[2]), lines: Number(url.searchParams.get('lines')) || 100 })); }
-      if (req.method === 'GET' && (m = /^\/api\/v1\/factories\/([^/]+)\/runs\/([^/]+)\/tail$/.exec(url.pathname))) { const e = hub.factory(decodeURIComponent(m[1])); if (!e) return fail(res, 404, { code: 'not_found', message: `no factory ${m[1]}` }); return relay(res, await hub.dispatch(e.factoryId, { type: 'agent.tail', runKey: decodeURIComponent(m[2]), lines: Number(url.searchParams.get('lines')) || 100 })); }
-      if (req.method === 'GET' && (m = /^\/api\/v1\/factories\/([^/]+)\/operations\/([^/]+)$/.exec(url.pathname))) { const e = hub.factory(decodeURIComponent(m[1])); if (!e) return fail(res, 404, { code: 'not_found', message: `no factory ${m[1]}` }); const op = await operationView(e.factoryId, decodeURIComponent(m[2])); return op ? ok(res, op) : fail(res, 404, { code: 'no_such_operation', message: `no operation ${m[2]}` }); }
-      if (req.method === 'GET' && (m = /^\/api\/v1\/factories\/([^/]+)\/events$/.exec(url.pathname))) { const e = hub.factory(decodeURIComponent(m[1])); if (!e) return fail(res, 404, { code: 'not_found', message: `no factory ${m[1]}` }); return ok(res, await hub.eventsAfter(e.factoryId, Number(url.searchParams.get('after')) || 0, Number(url.searchParams.get('limit')) || 200)); }
+      if (req.method === 'GET' && (m = /^\/api\/v1\/teams\/([^/]+)\/tasks\/([^/]+)\/tail$/.exec(url.pathname))) { const e = hub.team(decodeURIComponent(m[1])); if (!e) return fail(res, 404, { code: 'not_found', message: `no team ${m[1]}` }); return relay(res, await hub.dispatch(e.teamId, { type: 'task.tail', issueKey: decodeURIComponent(m[2]), lines: Number(url.searchParams.get('lines')) || 100 })); }
+      if (req.method === 'GET' && (m = /^\/api\/v1\/teams\/([^/]+)\/runs\/([^/]+)\/tail$/.exec(url.pathname))) { const e = hub.team(decodeURIComponent(m[1])); if (!e) return fail(res, 404, { code: 'not_found', message: `no team ${m[1]}` }); return relay(res, await hub.dispatch(e.teamId, { type: 'agent.tail', runKey: decodeURIComponent(m[2]), lines: Number(url.searchParams.get('lines')) || 100 })); }
+      if (req.method === 'GET' && (m = /^\/api\/v1\/teams\/([^/]+)\/operations\/([^/]+)$/.exec(url.pathname))) { const e = hub.team(decodeURIComponent(m[1])); if (!e) return fail(res, 404, { code: 'not_found', message: `no team ${m[1]}` }); const op = await operationView(e.teamId, decodeURIComponent(m[2])); return op ? ok(res, op) : fail(res, 404, { code: 'no_such_operation', message: `no operation ${m[2]}` }); }
+      if (req.method === 'GET' && (m = /^\/api\/v1\/teams\/([^/]+)\/events$/.exec(url.pathname))) { const e = hub.team(decodeURIComponent(m[1])); if (!e) return fail(res, 404, { code: 'not_found', message: `no team ${m[1]}` }); return ok(res, await hub.eventsAfter(e.teamId, Number(url.searchParams.get('after')) || 0, Number(url.searchParams.get('limit')) || 200)); }
       if (req.method === 'GET' && url.pathname === '/api/v1/events') {
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
         res.write(`retry: 3000\nevent: snapshot\ndata: ${JSON.stringify(hub.current)}\n\n`);
@@ -244,7 +244,7 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
         const cursors = String(url.searchParams.get('cursors') || '').split(',').filter(Boolean).map((c) => { const i = c.lastIndexOf(':'); return [decodeURIComponent(c.slice(0, i)), Number(c.slice(i + 1))] as const; });
         for (const [fid, seq] of cursors) {
           const r = await hub.eventsAfter(fid, seq, 500);
-          if (r.expired) res.write(`event: resnapshot\ndata: ${JSON.stringify({ factoryId: fid, reason: 'the cursor is older than the events the owner keeps' })}\n\n`);
+          if (r.expired) res.write(`event: resnapshot\ndata: ${JSON.stringify({ teamId: fid, reason: 'the cursor is older than the events the owner keeps' })}\n\n`);
           for (const ev of r.events) res.write(`id: ${fid}:${ev.seq}\nevent: event\ndata: ${JSON.stringify(ev)}\n\n`);
         }
         const c = { res, principal: p }; clients.add(c);
@@ -272,21 +272,21 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
         return;
       }
       if (req.method === 'GET' && url.pathname === '/api/tail') {
-        const e = hub.factory(url.searchParams.get('factory') || '');
-        if (!e) return send(res, 404, { error: 'no such factory' });
-        if (url.searchParams.get('issue')) { const r = await hub.dispatch(e.factoryId, { type: 'task.tail', issueKey: url.searchParams.get('issue')! }); return send(res, r.ok ? 200 : 500, r.ok ? { blocks: (r.result as any).blocks } : { error: r.error.message }); }
-        const r = await hub.dispatch(e.factoryId, { type: 'agent.tail', runKey: url.searchParams.get('run') || '' });
+        const e = hub.team(url.searchParams.get('team') || '');
+        if (!e) return send(res, 404, { error: 'no such team' });
+        if (url.searchParams.get('issue')) { const r = await hub.dispatch(e.teamId, { type: 'task.tail', issueKey: url.searchParams.get('issue')! }); return send(res, r.ok ? 200 : 500, r.ok ? { blocks: (r.result as any).blocks } : { error: r.error.message }); }
+        const r = await hub.dispatch(e.teamId, { type: 'agent.tail', runKey: url.searchParams.get('run') || '' });
         return send(res, 200, { text: r.ok ? (r.result as any).text ?? '(no scrollback)' : `(no scrollback: ${r.error.message})` });
       }
       if (req.method === 'POST' && ['/api/done', '/api/undone', '/api/tidy', '/api/exit'].includes(url.pathname)) {
         if (!mayMutate(req, p)) return send(res, 403, { error: 'cross-origin' });
         let body: any; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return send(res, 400, { error: 'bad json' }); }
-        const e = hub.factory(body.factory || '');
+        const e = hub.team(body.team || '');
         const requestId = `compat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        if (url.pathname === '/api/tidy') { const r = await runCommand('factory.tidy', { ...(e ? { factory: e.factoryId } : {}), requestId }, p); return send(res, 200, r.ok ? { ok: true, outcomes: (r.result as any).result.outcomes } : { ok: false, error: r.error.message }); }
-        if (!e) return send(res, 404, { error: 'no such factory' });
-        if (url.pathname === '/api/exit') { const r = await runCommand('run.exit', { factory: e.factoryId, run: body.run, requestId }, p); return send(res, 200, r.ok ? { ok: true, outcome: (r.result as any).result.outcome } : { ok: false, error: r.error.message }); }
-        const r = await runCommand(url.pathname === '/api/done' ? 'task.done' : 'task.undo', { factory: e.factoryId, task: body.issue, requestId }, p);
+        if (url.pathname === '/api/tidy') { const r = await runCommand('team.tidy', { ...(e ? { team: e.teamId } : {}), requestId }, p); return send(res, 200, r.ok ? { ok: true, outcomes: (r.result as any).result.outcomes } : { ok: false, error: r.error.message }); }
+        if (!e) return send(res, 404, { error: 'no such team' });
+        if (url.pathname === '/api/exit') { const r = await runCommand('run.exit', { team: e.teamId, run: body.run, requestId }, p); return send(res, 200, r.ok ? { ok: true, outcome: (r.result as any).result.outcome } : { ok: false, error: r.error.message }); }
+        const r = await runCommand(url.pathname === '/api/done' ? 'task.done' : 'task.undo', { team: e.teamId, task: body.issue, requestId }, p);
         if (!r.ok) return send(res, 200, { ok: true, done: false, outcomes: [], error: r.error.message });
         const out: any = (r.result as any).result;
         return send(res, 200, { ok: true, done: !!out.done, outcomes: out.outcomes || [], error: out.error || null });
@@ -303,7 +303,7 @@ export function createHandler({ gate, hub, hostname = os.hostname(), log = () =>
 
 /** The pre-v1 console's document, from the host snapshot: what a page not yet moved expects. */
 export function legacyView(snapshot: HostSnapshot) {
-  return { hostname: snapshot.hostname, version: snapshot.version, herdr: snapshot.herdr, generatedAt: snapshot.generatedAt, factories: snapshot.factories.map((f) => ({ ...f, watcher: { ...f.watcher, stale: f.owner.status !== 'online' && f.watcher.stale } })) };
+  return { hostname: snapshot.hostname, version: snapshot.version, herdr: snapshot.herdr, generatedAt: snapshot.generatedAt, teams: snapshot.teams.map((f) => ({ ...f, watcher: { ...f.watcher, stale: f.owner.status !== 'online' && f.watcher.stale } })) };
 }
 
 /**

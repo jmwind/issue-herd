@@ -84,7 +84,7 @@ export function baseTip({ git, at, base }) {
  * Worktrees are cut from the tip whatever this checkout says, so this is not what keeps a run's
  * code current — it is what keeps *the checkout* current: `worktree: "none"` runs work in it
  * directly, `worktree: "herdr"` cuts from its HEAD, the config the watcher reloads is read out of
- * it, and it is the directory its owner opens. Left alone in a factory where every merge lands on
+ * it, and it is the directory its owner opens. Left alone in a team where every merge lands on
  * the remote, it silently falls months behind.
  *
  * Nothing here can lose work. It moves only a clean checkout, only when it is standing on `base`,

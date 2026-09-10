@@ -5,9 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  FactoryEngine, JsonStateStore, acquireOwnership, createApplication, currentOwner, describeHolder, factoryId, factoryPaths, findRepoRoot, hostId, loadConfig, loadEnvFiles, loadPlugins, migrateLegacyState, openOwnerStore, pluginSpecs, readFactoryState, registrationsDir, storeStatus, userDir,
+  TeamEngine, JsonStateStore, acquireOwnership, createApplication, currentOwner, describeHolder, teamId, teamPaths, findRepoRoot, hostId, loadConfig, loadEnvFiles, loadPlugins, migrateLegacyState, openOwnerStore, pluginSpecs, readTeamState, registrationsDir, storeStatus, userDir,
 } from '@weawr/engine';
-import type { Application, CommandResult, ConfigSources, FactoryConfig, FactoryPaths, Identities, Ownership, PluginRegistry, StateStore } from '@weawr/engine';
+import type { Application, CommandResult, ConfigSources, TeamConfig, TeamPaths, Identities, Ownership, PluginRegistry, StateStore } from '@weawr/engine';
 import { consoleNotesPath } from './commands/migrate.js';
 import { Herdr } from '@weawr/engine/adapters/herdr.mjs';
 import { resolveCredential, saveCredential, noCredentialError } from '@weawr/engine/adapters/auth.mjs';
@@ -56,13 +56,13 @@ export interface Context {
   /** The shipped demo scenarios and the starter app they work on. */
   demosRoot: string;
   webDir: string;
-  paths: FactoryPaths;
+  paths: TeamPaths;
   sources: ConfigSources;
   userDir: string;
   ids: Identities;
   herdr: any;
   /** Load (or reload) the repository's config. Throws when there is none or it is invalid. Plugins must be loaded first (see plugins()). */
-  config(): FactoryConfig;
+  config(): TeamConfig;
   /** The plugins the config names, loaded once per process. */
   plugins(): Promise<PluginRegistry>;
   hasConfig(): boolean;
@@ -73,7 +73,7 @@ export interface Context {
 /**
  * The command that reaches this program from a shell. Agents are told to run `weawr merge` and
  * `weawr result`; a machine with a development build, or two installs, must have them run the
- * weawr that runs their factory, so unless PATH resolves `weawr` to this very file the brief
+ * weawr that runs their team, so unless PATH resolves `weawr` to this very file the brief
  * carries the explicit command.
  */
 export function cliCommand(argv1: string | undefined = process.argv[1], env: NodeJS.ProcessEnv = process.env): string {
@@ -91,7 +91,7 @@ export function cliCommand(argv1: string | undefined = process.argv[1], env: Nod
 const quote = (p: string) => (/[\s"']/.test(p) ? JSON.stringify(p) : p);
 
 export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: string }): Context {
-  const paths = factoryPaths(findRepoRoot(cwd));
+  const paths = teamPaths(findRepoRoot(cwd));
   // Next to the artifact; from the source tree when this is the compiler's output (see assetDir).
   const promptsRoot = assetDir('prompts', path.join('..', '..', 'packages', 'recipes', 'prompts'));
   const pluginsRoot = assetDir('plugins', 'plugins');
@@ -99,8 +99,8 @@ export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: strin
   const sources: ConfigSources = { paths, promptsRoot };
   const uDir = userDir();
   const host = hostId(uDir);
-  const ids = { hostId: host, factoryId: factoryId(host, paths.repo) };
-  let cfg: FactoryConfig | null = null;
+  const ids = { hostId: host, teamId: teamId(host, paths.repo) };
+  let cfg: TeamConfig | null = null;
   let reg: Promise<PluginRegistry> | null = null;
   return {
     ui, version: VERSION, cli: cliCommand(), pkgDir: PKG_DIR, promptsRoot, pluginsRoot, demosRoot, webDir: process.env.WEAWR_WEB_DIR || path.join(PKG_DIR, 'web'), paths, sources, userDir: uDir, ids,
@@ -116,7 +116,7 @@ export function createContext({ ui, cwd = process.cwd() }: { ui: Ui; cwd?: strin
 }
 
 /** The tracker config.json names, authenticated from the environment, the saved credential, or the tracker's own fallback. */
-export function makeTracker(ctx: Context, cfg: FactoryConfig): any {
+export function makeTracker(ctx: Context, cfg: TeamConfig): any {
   const { Tracker } = cfg;
   const options = { ...cfg.trackerSpec, cwd: ctx.paths.repo };
   const found = resolveCredential(Tracker, { options });
@@ -129,12 +129,12 @@ export function makeTracker(ctx: Context, cfg: FactoryConfig): any {
   return tracker;
 }
 
-export interface EngineBuild { cfg: FactoryConfig; tracker: any; dry?: boolean; ownership?: Ownership | null; register?: boolean }
+export interface EngineBuild { cfg: TeamConfig; tracker: any; dry?: boolean; ownership?: Ownership | null; register?: boolean }
 
 /**
  * The store an engine uses. An owner gets the durable store — after migrating a legacy state.json
  * under its lock, once — and a reader gets a read-only view of whatever is there. A legacy file
- * that does not parse stops an owner with the reason, never as an empty factory.
+ * that does not parse stops an owner with the reason, never as an empty team.
  */
 export function storeFor(ctx: Context, ownership: Ownership | null): StateStore {
   const st = storeStatus(ctx.paths);
@@ -145,15 +145,15 @@ export function storeFor(ctx: Context, ownership: Ownership | null): StateStore 
     }
     return openOwnerStore(ctx.paths);
   }
-  const view = readFactoryState(ctx.paths);
-  if (view.corrupt) throw new Error(`${ctx.paths.statePath} is not valid JSON (${view.corrupt}); refusing to read it as an empty factory`);
+  const view = readTeamState(ctx.paths);
+  if (view.corrupt) throw new Error(`${ctx.paths.statePath} is not valid JSON (${view.corrupt}); refusing to read it as an empty team`);
   if (view.store) return view.store;
   return new JsonStateStore(ctx.paths.statePath);
 }
 
-/** An engine for this repository, logging through the terminal, registered on this machine when it owns the factory. */
-export function makeEngine(ctx: Context, { cfg, tracker, dry = false, ownership = null, register = false }: EngineBuild): FactoryEngine {
-  return new FactoryEngine({
+/** An engine for this repository, logging through the terminal, registered on this machine when it owns the team. */
+export function makeEngine(ctx: Context, { cfg, tracker, dry = false, ownership = null, register = false }: EngineBuild): TeamEngine {
+  return new TeamEngine({
     cfg, tracker, herdr: ctx.herdr, dry, paths: ctx.paths, promptsRoot: ctx.promptsRoot, ids: ctx.ids, version: ctx.version, cli: ctx.cli,
     store: storeFor(ctx, ownership),
     log: (line) => ctx.ui.print(line), live: (text) => ctx.ui.live(text),
@@ -162,11 +162,11 @@ export function makeEngine(ctx: Context, { cfg, tracker, dry = false, ownership 
 }
 
 /**
- * Become the factory's owner for the rest of this process, or explain who already is. Every command
+ * Become the team's owner for the rest of this process, or explain who already is. Every command
  * that schedules, mutates or reconciles goes through here.
  */
-export function takeOwnership(ctx: Context, cfg: FactoryConfig): Ownership {
-  const r = acquireOwnership({ lockPath: ctx.paths.lockPath, ownerPath: ctx.paths.ownerPath, card: { factoryId: ctx.ids.factoryId, hostId: ctx.ids.hostId, startedAt: new Date().toISOString(), version: ctx.version, socketPath: ctx.paths.socketPath } });
+export function takeOwnership(ctx: Context, cfg: TeamConfig): Ownership {
+  const r = acquireOwnership({ lockPath: ctx.paths.lockPath, ownerPath: ctx.paths.ownerPath, card: { teamId: ctx.ids.teamId, hostId: ctx.ids.hostId, startedAt: new Date().toISOString(), version: ctx.version, socketPath: ctx.paths.socketPath } });
   if (!r.ok) throw new Error(`${cfg.name} is already being watched: ${describeHolder(r.holder)}. Stop that watcher first, or work on it through it (weawr status, weawr reset <KEY>).`);
   const release = () => { try { r.ownership.release(); } catch { /* best effort */ } };
   process.once('exit', release);

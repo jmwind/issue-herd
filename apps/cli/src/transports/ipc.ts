@@ -15,7 +15,7 @@ export interface IpcServer {
   removeIfOwn(): void;
 }
 
-/** Host `app` on `socketPath`. Call only while holding the factory's ownership: a stale socket file is removed. */
+/** Host `app` on `socketPath`. Call only while holding the team's ownership: a stale socket file is removed. */
 export function serveIpc(app: Application, socketPath: string, log: (m: string) => void = () => {}): Promise<IpcServer> {
   return new Promise((resolve, reject) => {
     try { fs.rmSync(socketPath, { force: true }); } catch { /* not there */ }
@@ -57,7 +57,7 @@ export function serveIpc(app: Application, socketPath: string, log: (m: string) 
 /** One command to the owner at `socketPath`. Resolves to its CommandResult; a transport failure is { ok: false, error: { code: 'owner_offline' } }. */
 export function callOwner(socketPath: string, command: Command, { timeoutMs = 15_000 } = {}): Promise<CommandResult> {
   return new Promise((resolve) => {
-    const offline = (why: string) => resolve({ ok: false, error: { code: OWNER_OFFLINE, message: `the factory's owner is not answering on ${socketPath}: ${why}` } });
+    const offline = (why: string) => resolve({ ok: false, error: { code: OWNER_OFFLINE, message: `the team's owner is not answering on ${socketPath}: ${why}` } });
     let sock: net.Socket;
     try { sock = net.connect(socketPath); } catch (e: any) { return offline(e.message); }
     const timer = setTimeout(() => { sock.destroy(); offline('timed out'); }, timeoutMs);

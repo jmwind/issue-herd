@@ -1,16 +1,16 @@
-// Durable factory state in SQLite (node:sqlite, no dependency).
+// Durable team state in SQLite (node:sqlite, no dependency).
 //
 // What state.json held — runs by key, nudges by issue — is here as rows, and next to it what a
 // JSON file could never hold safely: structured events with a durable cursor, immutable attempt
 // records, tracked operations (deduplicated by request id), pending external work committed in
 // the same transaction as the state change that owes it, and the console's acknowledgements.
 //
-// One writer: the factory's owner. Readers (a console, `weawr status` with no owner) open it
+// One writer: the team's owner. Readers (a console, `weawr status` with no owner) open it
 // read-only. WAL mode lets them read while the owner writes.
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { FactoryState, NudgeEntry, StateStore } from '../state.js';
+import type { TeamState, NudgeEntry, StateStore } from '../state.js';
 
 export const SCHEMA_VERSION = 1;
 
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS acknowledgements (issue_key TEXT PRIMARY KEY, at TEXT
 
 export class UnsupportedSchemaError extends Error {
   constructor(public readonly found: number, public readonly supported: number) {
-    super(`this factory's state is schema version ${found}; this weawr understands up to ${supported}. Upgrade weawr; the data was left untouched.`);
+    super(`this team's state is schema version ${found}; this weawr understands up to ${supported}. Upgrade weawr; the data was left untouched.`);
   }
 }
 
@@ -92,7 +92,7 @@ export class SqliteStore implements StateStore {
 
   // ---------------------------------------------------------------- StateStore
 
-  load(): FactoryState {
+  load(): TeamState {
     const runs: Record<string, any> = {};
     for (const r of this.db.prepare('SELECT key, json FROM runs ORDER BY key').all() as Array<{ key: string; json: string }>) runs[r.key] = JSON.parse(r.json);
     const nudges: Record<string, NudgeEntry[]> = {};
@@ -104,7 +104,7 @@ export class SqliteStore implements StateStore {
    * Persist the whole state: every run upserted, runs that are gone deleted, the nudge log
    * replaced. One transaction, so a reader sees the old state or the new one.
    */
-  save(state: FactoryState, now = new Date()): void {
+  save(state: TeamState, now = new Date()): void {
     this.transaction(() => {
       const keep = new Set(Object.keys(state.runs));
       const existing = (this.db.prepare('SELECT key FROM runs').all() as Array<{ key: string }>).map((r) => r.key);
@@ -204,5 +204,5 @@ export class SqliteStore implements StateStore {
 function opOf(r: any): OperationRecord { return { id: r.id, scope: r.scope, requestId: r.request_id, kind: r.kind, status: r.status, input: JSON.parse(r.input), result: r.result ? JSON.parse(r.result) : null, error: r.error, createdAt: r.created_at, updatedAt: r.updated_at }; }
 function pendingOf(r: any): PendingAction { return { id: Number(r.id), runKey: r.run_key, kind: r.kind, data: JSON.parse(r.json), attempts: Number(r.attempts), lastError: r.last_error, createdAt: r.created_at, doneAt: r.done_at, outcome: r.outcome }; }
 
-/** Where a factory's durable state lives: next to the JSON file it replaces. */
-export function storePath(stateDir: string): string { return path.join(stateDir, 'factory.sqlite'); }
+/** Where a team's durable state lives: next to the JSON file it replaces. */
+export function storePath(stateDir: string): string { return path.join(stateDir, 'team.sqlite'); }

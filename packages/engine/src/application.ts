@@ -1,9 +1,9 @@
-// The application interface: every command a UI or a terminal can ask of a factory, as data, with
+// The application interface: every command a UI or a terminal can ask of a team, as data, with
 // one dispatcher behind it. Human commands and machine transports both come through here, so there
 // is one implementation of each lifecycle action and the terminal's text is a rendering of its
 // result. Grows with the versioned CLI interface; this is the seam.
 import crypto from 'node:crypto';
-import type { FactoryEngine } from './factory.js';
+import type { TeamEngine } from './team.js';
 import { isDurable } from './store/index.js';
 import type { OperationRecord } from './store/sqlite.js';
 import { exitRun, markDone, stopTask, tailTask, tidy, undoDone } from './actions.js';
@@ -11,7 +11,7 @@ import * as _claim from './claim.mjs';
 const { issueKeyOf } = _claim as Record<string, any>;
 
 export type Command =
-  | { type: 'factory.status' }
+  | { type: 'team.status' }
   | { type: 'runs.list' }
   | { type: 'run.reset'; key: string; requestId?: string }
   | { type: 'agent.tail'; runKey: string; lines?: number }
@@ -22,14 +22,14 @@ export type Command =
   | { type: 'recipe.show' }
   | { type: 'recipe.upgrade'; to?: number; dryRun?: boolean }
   | { type: 'attempt.list'; key: string }
-  | { type: 'factory.snapshot' }
+  | { type: 'team.snapshot' }
   | { type: 'capabilities' }
   | { type: 'task.done'; issueKey: string; requestId?: string; by?: string }
   | { type: 'task.undo'; issueKey: string; requestId?: string }
   | { type: 'task.stop'; issueKey: string; requestId?: string }
   | { type: 'task.tail'; issueKey: string; lines?: number }
   | { type: 'run.exit'; runKey: string; requestId?: string }
-  | { type: 'factory.tidy'; requestId?: string }
+  | { type: 'team.tidy'; requestId?: string }
   | { type: 'events.after'; cursor: number; limit?: number }
   | { type: 'ping' };
 
@@ -52,7 +52,7 @@ export function resetTargets(runs: Record<string, unknown>, key: string): string
  * The application over a live engine — the owner's own view. Every mutation here happens under the
  * owner's lock because the engine only exists inside one.
  */
-export function createApplication(engine: FactoryEngine): Application {
+export function createApplication(engine: TeamEngine): Application {
   const locks = new Map<string, Promise<unknown>>();
   /** Conflicting commands about one task run one at a time, in the order they arrived. */
   const serialized = async <T>(scope: string, fn: () => Promise<T>): Promise<T> => {
@@ -76,23 +76,23 @@ export function createApplication(engine: FactoryEngine): Application {
     catch (e: any) { store.updateOperation(op.id, { status: 'failed', error: e.message }, engine.clock()); throw e; }
   };
   const handlers: { [K in Command['type']]: (cmd: Extract<Command, { type: K }>) => Promise<unknown> } = {
-    async ping() { return { pong: true, factoryId: engine.ids.factoryId, version: engine.version }; },
-    async 'factory.status'() {
+    async ping() { return { pong: true, teamId: engine.ids.teamId, version: engine.version }; },
+    async 'team.status'() {
       const running: Record<string, string> = {};
       for (const [key, run] of Object.entries(engine.state.runs)) {
         if (run.status !== 'running') continue;
         const a = await engine.herdr.agentGet(run.agentName).catch(() => null);
         running[key] = a?.agent_status || 'gone';
       }
-      return { factoryId: engine.ids.factoryId, name: engine.cfg.name, repo: engine.paths.repo, runs: engine.state.runs, nudges: engine.state.nudges, maxNudges: engine.cfg.maxNudges, agentStatus: running };
+      return { teamId: engine.ids.teamId, name: engine.cfg.name, repo: engine.paths.repo, runs: engine.state.runs, nudges: engine.state.nudges, maxNudges: engine.cfg.maxNudges, agentStatus: running };
     },
     async 'runs.list'() { return { runs: engine.state.runs }; },
     async 'run.reset'({ key, requestId }) {
       // Naming the issue forgets every role's run on it (GH-7 clears GH-7, GH-7@impl, GH-7@review);
       // naming one run key forgets only that one. The nudges are the issue's, not one role's:
       // forgetting the issue hands the budget back too.
-      // Request ids are scoped to the factory (and, over a transport, to the caller): one id names one action here.
-      return serialized(issueKeyOf(key), () => operation(`factory:${engine.ids.factoryId}`, requestId, 'run.reset', { key }, async () => {
+      // Request ids are scoped to the team (and, over a transport, to the caller): one id names one action here.
+      return serialized(issueKeyOf(key), () => operation(`team:${engine.ids.teamId}`, requestId, 'run.reset', { key }, async () => {
         const gone = resetTargets(engine.state.runs, key);
         engine.commit(() => {
           for (const k of gone) delete engine.state.runs[k];
@@ -105,11 +105,11 @@ export function createApplication(engine: FactoryEngine): Application {
       })).then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
     },
     async 'run.merge'({ key, requestId, requestedBy = 'cli' }) {
-      return serialized(issueKeyOf(key), () => operation(`factory:${engine.ids.factoryId}`, requestId, 'run.merge', { key }, () => engine.mergeRun(key, { requestedBy })))
+      return serialized(issueKeyOf(key), () => operation(`team:${engine.ids.teamId}`, requestId, 'run.merge', { key }, () => engine.mergeRun(key, { requestedBy })))
         .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
     },
     async 'run.submitResult'({ key, result, requestId }) {
-      return serialized(issueKeyOf(key), () => operation(`factory:${engine.ids.factoryId}`, requestId, 'run.submitResult', { key, result }, async () => engine.submitResult(key, result)))
+      return serialized(issueKeyOf(key), () => operation(`team:${engine.ids.teamId}`, requestId, 'run.submitResult', { key, result }, async () => engine.submitResult(key, result)))
         .then(({ result: r, operation: op, replayed }) => ({ ...(r as object), operationId: op?.id ?? null, replayed }));
     },
     async 'run.reconfigure'({ key }) { return serialized(issueKeyOf(key), async () => engine.reconfigure(key)); },
@@ -119,31 +119,31 @@ export function createApplication(engine: FactoryEngine): Application {
     },
     async 'recipe.upgrade'({ to, dryRun = false }) { return engine.upgradeRecipe(to, { dryRun }); },
     async 'attempt.list'({ key }) { return { attempts: isDurable(engine.store) ? engine.store.attempts(key) : [] }; },
-    async 'factory.snapshot'() { return engine.snapshot(); },
+    async 'team.snapshot'() { return engine.snapshot(); },
     async capabilities() { return { protocolVersions: [1], version: engine.version, commands: Object.keys(handlers), features: { durableStore: isDurable(engine.store), merge: !!engine.cfg.mergeLabel, recipeRevision: engine.recipeRevision } }; },
     async 'task.done'({ issueKey, requestId, by = 'console' }) {
-      return serialized(issueKey, () => operation(`factory:${engine.ids.factoryId}`, requestId, 'task.done', { issueKey }, () => markDone(engine, issueKey, { by })))
+      return serialized(issueKey, () => operation(`team:${engine.ids.teamId}`, requestId, 'task.done', { issueKey }, () => markDone(engine, issueKey, { by })))
         .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
     },
     async 'task.undo'({ issueKey, requestId }) {
-      return serialized(issueKey, () => operation(`factory:${engine.ids.factoryId}`, requestId, 'task.undo', { issueKey }, async () => undoDone(engine, issueKey)))
+      return serialized(issueKey, () => operation(`team:${engine.ids.teamId}`, requestId, 'task.undo', { issueKey }, async () => undoDone(engine, issueKey)))
         .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
     },
     async 'task.stop'({ issueKey, requestId }) {
-      return serialized(issueKey, () => operation(`factory:${engine.ids.factoryId}`, requestId, 'task.stop', { issueKey }, () => stopTask(engine, issueKey)))
+      return serialized(issueKey, () => operation(`team:${engine.ids.teamId}`, requestId, 'task.stop', { issueKey }, () => stopTask(engine, issueKey)))
         .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
     },
     async 'task.tail'({ issueKey, lines }) { return { blocks: await tailTask(engine, issueKey, lines) }; },
     async 'run.exit'({ runKey, requestId }) {
-      return serialized(issueKeyOf(runKey), () => operation(`factory:${engine.ids.factoryId}`, requestId, 'run.exit', { runKey }, () => exitRun(engine, runKey)))
+      return serialized(issueKeyOf(runKey), () => operation(`team:${engine.ids.teamId}`, requestId, 'run.exit', { runKey }, () => exitRun(engine, runKey)))
         .then(({ result, operation: op, replayed }) => ({ ...(result as object), operationId: op?.id ?? null, replayed }));
     },
-    async 'factory.tidy'({ requestId }) {
-      return operation(`factory:${engine.ids.factoryId}`, requestId, 'factory.tidy', {}, () => tidy(engine))
+    async 'team.tidy'({ requestId }) {
+      return operation(`team:${engine.ids.teamId}`, requestId, 'team.tidy', {}, () => tidy(engine))
         .then(({ result, operation: op, replayed }) => ({ outcomes: result, operationId: op?.id ?? null, replayed }));
     },
     async 'operation.show'({ id }) {
-      if (!isDurable(engine.store)) throw new ApplicationError('not_tracked', 'this factory has no durable store, so operations are not tracked');
+      if (!isDurable(engine.store)) throw new ApplicationError('not_tracked', 'this team has no durable store, so operations are not tracked');
       const op = engine.store.operation(id);
       if (!op) throw new ApplicationError('no_such_operation', `no operation ${id}`);
       return op;

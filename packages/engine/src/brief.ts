@@ -1,5 +1,5 @@
 // The brief: the one document an agent is told to read. Rendered from the rule's template with the
-// issue, the run and the factory's roles; recipes does the substitution, this decides the words.
+// issue, the run and the team's roles; recipes does the substitution, this decides the words.
 import { renderTemplate } from '@weawr/recipes';
 import { passLimit } from './claim.mjs';
 import { nudgeInstructions, nudgeQuote, nudgedByLabel } from './nudge.mjs';
@@ -65,7 +65,7 @@ export function briefVars({ issue, rule, run, tracker, nudging = null, now = new
     // Where the agent actually is. Named, because "the repository" alone sent agents to the main
     // checkout — another branch, and a permission prompt away.
     worktree: run.workDir || rule.repo,
-    // The weawr an agent is told to run is the one running this factory — not whatever a PATH
+    // The weawr an agent is told to run is the one running this team — not whatever a PATH
     // lookup finds, which may be another install with another store, or none.
     weawr: cli || 'weawr',
     branch: run.branch || '(current branch)',

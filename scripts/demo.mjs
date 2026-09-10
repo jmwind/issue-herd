@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // `pnpm demo <scenario>`: the demo, on this checkout. Builds the workspace (cached), sets the
-// demo factory up with the CLI just built, then runs `pnpm dev` on it: the watcher and the
+// demo team up with the CLI just built, then runs `pnpm dev` on it: the watcher and the
 // console, from the development build, restarting on every edit.
 //
 //   pnpm demo                 list the scenarios
@@ -30,4 +30,4 @@ if (!sub || sub === 'list' || sub === 'reset' || args.includes('--dry-run')) {
 }
 if (sh(process.execPath, [cli, 'demo', ...args, ...(args.includes('--into') ? [] : ['--into', into])], devEnv) !== 0) process.exit(1);
 console.log(`\n[demo] starting the watcher and the console on ${into} from this checkout (Ctrl-C stops both; \`pnpm demo reset\` cleans up)\n`);
-process.exit(sh('pnpm', ['exec', 'turbo', 'run', 'dev'], { WEAWR_DEV_FACTORY: into }));
+process.exit(sh('pnpm', ['exec', 'turbo', 'run', 'dev'], { WEAWR_DEV_TEAM: into }));

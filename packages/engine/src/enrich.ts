@@ -1,4 +1,4 @@
-// What the tracker and GitHub say about a factory's tasks — is the issue closed, is the PR merged,
+// What the tracker and GitHub say about a team's tasks — is the issue closed, is the PR merged,
 // is there a PR for this branch — refreshed on a budget and remembered. Facts from those systems
 // stay theirs; this only asks and records when it asked. Ported from the console into the owner,
 // which already holds the tracker and the GitHub token.

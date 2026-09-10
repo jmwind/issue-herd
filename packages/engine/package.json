@@ -2,7 +2,7 @@
   "name": "@weawr/engine",
   "version": "0.2.8",
   "private": true,
-  "description": "The factory: lifecycle, commands, observations and canonical projections, with its tracker/herdr/git/persistence adapters.",
+  "description": "The team: lifecycle, commands, observations and canonical projections, with its tracker/herdr/git/persistence adapters.",
   "type": "module",
   "exports": {
     ".": {

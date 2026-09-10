@@ -1,7 +1,7 @@
 // The gate in front of the console.
 //
 // The console is meant to be read from a phone over Tailscale, and it has a button that stops an
-// agent, so nothing about any factory is served before a passcode. Tailscale is the network
+// agent, so nothing about any team is served before a passcode. Tailscale is the network
 // boundary; the passcode is the person boundary. The passcode is stored as a salted scrypt hash in
 // credentials.json (never in a repository); a correct entry issues an opaque session token carried
 // in an HttpOnly cookie; comparisons are constant-time; too many wrong entries from one address

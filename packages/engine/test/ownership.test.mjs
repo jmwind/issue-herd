@@ -1,4 +1,4 @@
-// Exclusive ownership: one owner per factory per machine, the lock released by the OS when the
+// Exclusive ownership: one owner per team per machine, the lock released by the OS when the
 // owner dies, and a calling card that says who holds it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { acquireOwnership, currentOwner, describeHolder, readCard } from '../dist/ownership.js';
 
 const OWN = fileURLToPath(new URL('../dist/ownership.js', import.meta.url));
-const card = (factoryId, over = {}) => ({ factoryId, hostId: 'h1', startedAt: '2026-09-08T00:00:00Z', version: '0.2.8', socketPath: null, ...over });
+const card = (teamId, over = {}) => ({ teamId, hostId: 'h1', startedAt: '2026-09-08T00:00:00Z', version: '0.2.8', socketPath: null, ...over });
 
 function tmp() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-own-')); return { lockPath: path.join(d, 'owner.lock'), ownerPath: path.join(d, 'owner.json'), dir: d }; }
 
@@ -35,7 +35,7 @@ test('a lock held by another process is busy until that process dies — even wh
   const { lockPath, ownerPath } = tmp();
   const child = spawn(process.execPath, ['--input-type=module', '-e', `
     import { acquireOwnership } from ${JSON.stringify(OWN)};
-    const r = acquireOwnership({ lockPath: ${JSON.stringify(lockPath)}, ownerPath: ${JSON.stringify(ownerPath)}, card: { factoryId: 'f1', hostId: 'h1', startedAt: 'x', version: 'v', socketPath: '/tmp/s' } });
+    const r = acquireOwnership({ lockPath: ${JSON.stringify(lockPath)}, ownerPath: ${JSON.stringify(ownerPath)}, card: { teamId: 'f1', hostId: 'h1', startedAt: 'x', version: 'v', socketPath: '/tmp/s' } });
     process.stdout.write(r.ok ? 'held\\n' : 'busy\\n');
     setInterval(() => {}, 1000);
   `], { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -61,7 +61,7 @@ test('a lock stays held when its owner drops every reference and the garbage col
   const { lockPath, ownerPath } = tmp();
   const child = spawn(process.execPath, ['--expose-gc', '--input-type=module', '-e', `
     import { acquireOwnership } from ${JSON.stringify(OWN)};
-    process.stdout.write(acquireOwnership({ lockPath: ${JSON.stringify(lockPath)}, ownerPath: ${JSON.stringify(ownerPath)}, card: { factoryId: 'f1', hostId: 'h1', startedAt: 'x', version: 'v', socketPath: null } }).ok ? 'held\\n' : 'busy\\n');
+    process.stdout.write(acquireOwnership({ lockPath: ${JSON.stringify(lockPath)}, ownerPath: ${JSON.stringify(ownerPath)}, card: { teamId: 'f1', hostId: 'h1', startedAt: 'x', version: 'v', socketPath: null } }).ok ? 'held\\n' : 'busy\\n');
     setTimeout(() => { globalThis.gc(); globalThis.gc(); process.stdout.write('collected\\n'); }, 100);
     setInterval(() => {}, 1000);
   `], { stdio: ['ignore', 'pipe', 'inherit'] });

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { SqliteStore, UnsupportedSchemaError, SCHEMA_VERSION } from '../dist/store/sqlite.js';
 
-const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-store-')), 'factory.sqlite');
+const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-store-')), 'team.sqlite');
 
 test('save/load round-trips runs and nudges, deletes what is gone, and a reader sees whole states only', () => {
   const file = tmp();
@@ -79,7 +79,7 @@ test('operations: a repeated request id returns the original; the same id for di
   const again = s.beginOperation({ id: 'op2', scope: 'task:GH-7', requestId: 'r1', kind: 'task.done', input: { key: 'GH-7' } });
   assert.equal(again.fresh, false); assert.equal(again.op.id, 'op1'); assert.deepEqual(again.op.result, { closed: 2 });
   assert.throws(() => s.beginOperation({ id: 'op3', scope: 'task:GH-7', requestId: 'r1', kind: 'task.done', input: { key: 'GH-8' } }), /already used for a different/);
-  // another scope (another factory, another caller) may reuse the id
+  // another scope (another team, another caller) may reuse the id
   assert.equal(s.beginOperation({ id: 'op4', scope: 'task:GH-9', requestId: 'r1', kind: 'task.done', input: { key: 'GH-9' } }).fresh, true);
   assert.equal(s.operation('nope'), null);
   s.close();

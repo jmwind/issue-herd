@@ -1,4 +1,4 @@
-// `weawr recipe show` and `weawr recipe upgrade [--to N] [--dry-run]`: which briefs this factory
+// `weawr recipe show` and `weawr recipe upgrade [--to N] [--dry-run]`: which briefs this team
 // gives its agents, and a reviewable move to a newer bundled revision. New work only — a task that
 // started under revision 1 finishes under revision 1.
 import { createApplication, dispatchCommand, makeEngine, takeOwnership } from '../context.js';

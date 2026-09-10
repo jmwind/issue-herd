@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // weawr — the executable. Dependency assembly and command routing only: what each command does
-// lives in ./commands, the factory itself in @weawr/engine.
+// lives in ./commands, the team itself in @weawr/engine.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

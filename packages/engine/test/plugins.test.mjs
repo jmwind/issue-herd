@@ -10,8 +10,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadPlugins, parseEvery, resolvePlugin, PLUGIN_API } from '../dist/plugins.js';
 import { loadConfig, pluginSpecs } from '../dist/config.js';
-import { factoryPaths } from '../dist/paths.js';
-import { FactoryEngine } from '../dist/factory.js';
+import { teamPaths } from '../dist/paths.js';
+import { TeamEngine } from '../dist/team.js';
 
 const PROMPTS = fileURLToPath(new URL('../../recipes/prompts', import.meta.url));
 const EXAMPLES = fileURLToPath(new URL('../../../apps/cli/plugins', import.meta.url));
@@ -31,7 +31,7 @@ const sources = (dir) => ({ examplesRoot: EXAMPLES, userRoot: path.join(dir, 'us
 test('a path is honoured only from config.local.json; a name is a shipped example or an installed package; nothing else loads', async () => {
   const dir = repo({ tracker: 'linear', plugins: ['./plugins/mine.mjs', 'examples/nope', 'not-installed'], rules: [{ name: 'r', match: 'any:true' }] }, { plugins: ['./plugins/mine.mjs', 'examples/waiting-nudge'] },
     { '.weawr/plugins/mine.mjs': "export default { name: 'mine', version: '0.1.0', tasks: [{ name: 't', every: '1h', run() {} }] };" });
-  const specs = pluginSpecs(factoryPaths(dir));
+  const specs = pluginSpecs(teamPaths(dir));
   assert.deepEqual(specs.map((s) => [s.spec, s.source]), [['./plugins/mine.mjs', 'config'], ['examples/nope', 'config'], ['not-installed', 'config'], ['./plugins/mine.mjs', 'local'], ['examples/waiting-nudge', 'local']]);
   assert.match(resolvePlugin(specs[0], sources(dir)).error, /only honoured from \.weawr\/config\.local\.json/);
   assert.match(resolvePlugin(specs[1], sources(dir)).error, /no shipped example plugin called "nope" \(have: docs-review, file-intake, waiting-nudge\)/);
@@ -61,7 +61,7 @@ test('a path is honoured only from config.local.json; a name is a shipped exampl
 test('intake from a plugin: the file tracker feeds a pickup, and the claim goes back into the file', async () => {
   const dir = repo({ tracker: 'file', plugins: ['examples/file-intake'], roles: ['impl'], defaults: { worktree: 'none', onPickup: { comment: true, assignToMe: true, state: 'in progress' }, onDone: { comment: false, notify: false }, onBlocked: { comment: false, notify: false }, onIdle: { comment: false, notify: false } }, rules: [{ name: 'impl', role: 'impl', match: 'label:ai' }] }, null,
     { '.weawr/issues.json': JSON.stringify([{ id: 1, title: 'Add a thing', labels: ['ai'] }, { id: 2, title: 'Not for us', labels: [] }]) });
-  const paths = factoryPaths(dir);
+  const paths = teamPaths(dir);
   const reg = await loadPlugins(pluginSpecs(paths), sources(dir));
   assert.deepEqual(reg.problems, []);
   // without the plugin the config is an error that says why
@@ -72,7 +72,7 @@ test('intake from a plugin: the file tracker feeds a pickup, and the claim goes 
   tracker.check();
   const started = new Set();
   const herdr = { async agentGet(n) { return started.has(n) ? { name: n, agent_status: 'idle', cwd: dir, workspace_id: 'w' } : null; }, async prompt() {}, async startAgent({ name }) { started.add(name); return {}; }, async createWorkspace() { return { workspaceId: 'w', tabId: 't', paneId: 'p' }; }, waitAgent(n, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : until.includes('idle') ? Promise.resolve('timeout') : new Promise(() => {}); }, async readAgent() { return ''; }, async notify() {} };
-  const e = new FactoryEngine({ cfg, tracker, herdr, paths, promptsRoot: PROMPTS, ids: { hostId: 'h', factoryId: 'f' }, log: () => {} });
+  const e = new TeamEngine({ cfg, tracker, herdr, paths, promptsRoot: PROMPTS, ids: { hostId: 'h', teamId: 'f' }, log: () => {} });
   const r = await e.pollOnce();
   assert.deepEqual(r.picked, ['F-1@impl']); assert.equal(r.scanned, 2);
   const file = JSON.parse(fs.readFileSync(path.join(dir, '.weawr', 'issues.json'), 'utf8'));
@@ -86,7 +86,7 @@ test('intake from a plugin: the file tracker feeds a pickup, and the claim goes 
 test('a role preset from a plugin becomes a rule with the plugin\'s brief and defaults, recorded on the attempt', async () => {
   const dir = repo({ tracker: 'linear', plugins: ['examples/docs-review'], roles: ['impl', 'docs'], defaults: { worktree: 'none', onPickup: { comment: false }, onDone: { comment: false, notify: false }, onBlocked: { comment: false, notify: false }, onIdle: { comment: false, notify: false } },
     rules: [{ name: 'impl', role: 'impl', match: 'any:true' }, { name: 'docs-check', use: 'docs', match: 'any:true', effort: 'high', basedOn: null }] });
-  const paths = factoryPaths(dir);
+  const paths = teamPaths(dir);
   const reg = await loadPlugins(pluginSpecs(paths), sources(dir));
   const cfg = loadConfig({ paths, promptsRoot: PROMPTS, plugins: reg });
   const rule = cfg.rules[1];
@@ -101,7 +101,7 @@ test('a role preset from a plugin becomes a rule with the plugin\'s brief and de
   const herdr = { async agentGet(n) { return started.has(n) ? { name: n, agent_status: 'idle', cwd: dir, workspace_id: 'w' } : null; }, async prompt() {}, async startAgent({ name }) { started.add(name); return {}; }, async createWorkspace() { return { workspaceId: 'w', tabId: 't', paneId: 'p' }; }, waitAgent(n, { until = [] } = {}) { return until.includes('working') ? Promise.resolve('working') : until.includes('idle') ? Promise.resolve('timeout') : new Promise(() => {}); }, async readAgent() { return ''; }, async notify() {} };
   const { SqliteStore, storePath } = await import('../dist/store/sqlite.js');
   const store = SqliteStore.open(storePath(paths.stateDir));
-  const e = new FactoryEngine({ cfg, tracker: null, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'f' }, log: () => {} });
+  const e = new TeamEngine({ cfg, tracker: null, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', teamId: 'f' }, log: () => {} });
   const issue = { id: 'i1', identifier: 'GH-1', ref: 'GH-1', title: 'T', description: '', url: 'u', labels: [], comments: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', project: null, team: null, assignee: null, assignees: [], state: { name: 'open' } };
   await e.pickUp(issue, rule);
   const brief = fs.readFileSync(e.state.runs['GH-1@docs'].briefPath, 'utf8');
@@ -114,7 +114,7 @@ test('a role preset from a plugin becomes a rule with the plugin\'s brief and de
 test('a scheduled task runs when due, with the snapshot, and keeps what it returned', async () => {
   const dir = repo({ tracker: 'linear', roles: ['impl'], defaults: { worktree: 'none' }, rules: [{ name: 'impl', role: 'impl', match: 'any:true' }] }, { plugins: ['examples/waiting-nudge', './plugins/count.mjs'] },
     { '.weawr/plugins/count.mjs': "export default { name: 'count', tasks: [{ name: 'runs', every: '10m', run({ snapshot, memory }) { return { n: (memory.n || 0) + 1, tasks: snapshot.issues.length }; } }, { name: 'boom', every: '1s', run() { throw new Error('kaput'); } }] };" });
-  const paths = factoryPaths(dir);
+  const paths = teamPaths(dir);
   const reg = await loadPlugins(pluginSpecs(paths), sources(dir));
   const cfg = loadConfig({ paths, promptsRoot: PROMPTS, plugins: reg });
   const notes = []; const logs = [];
@@ -123,7 +123,7 @@ test('a scheduled task runs when due, with the snapshot, and keeps what it retur
   const runs = { 'GH-1@impl': { rule: 'impl', role: 'impl', pass: 1, status: 'awaiting_merge', issueKey: 'GH-1', title: 'Waiting one', startedAt: '2026-09-09T07:00:00Z', finishedAt: '2026-09-09T07:30:00Z', agentName: 'gh-1-impl', notified: {}, worktree: 'none', prUrl: 'https://github.com/o/r/pull/1', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/1' } } };
   const { SqliteStore, storePath } = await import('../dist/store/sqlite.js');
   const store = SqliteStore.open(storePath(paths.stateDir)); store.save({ runs, nudges: {} });
-  const e = new FactoryEngine({ cfg, tracker: null, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'f' }, log: (l) => logs.push(l), clock: () => new Date(now) });
+  const e = new TeamEngine({ cfg, tracker: null, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', teamId: 'f' }, log: (l) => logs.push(l), clock: () => new Date(now) });
   assert.deepEqual(await e.runDueTasks(), ['waiting-nudge/long-waits', 'count/runs'], 'the failing task is not counted as run');
   assert.equal(notes.length, 1); assert.match(notes[0][1], /Waiting one.*for 150 minutes/);
   assert.ok(logs.some((l) => /count\/boom failed: kaput/.test(l)), 'a failing task is a log line');

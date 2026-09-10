@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { factoryPaths, readFactoryState } from '@weawr/engine';
+import { teamPaths, readTeamState } from '@weawr/engine';
 
 const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
 
@@ -171,7 +171,7 @@ test('a role reaches the herdr sidebar, the agent name and the run key', (t) => 
   // the sidebar label is "<issue key> <role> <title>"
   assert.match(herdr.calls(), new RegExp(`workspace create .*--label ${key.replace('@review', '')} review weawr smoke test`));
   // the agent is named for the run key, so the two roles on an issue are two agents
-  // …with the factory's short hash on the end, so two repositories can both run SMOKE-1@review
+  // …with the team's short hash on the end, so two repositories can both run SMOKE-1@review
   assert.match(herdr.calls(), new RegExp(`agent start ${key.replace('@', '-').toLowerCase()}-[a-z0-9]{6} --kind claude`));
   // and the rule's model reaches the agent's own command line
   assert.match(herdr.calls(), /--model opus/);
@@ -209,7 +209,7 @@ test('a reviewer on another provider is started in that provider\'s own dialect'
 });
 
 /**
- * The same, as a clone with a real `origin` behind it — which is where a factory's merges land, and
+ * The same, as a clone with a real `origin` behind it — which is where a team's merges land, and
  * the reason a checkout nobody pulls falls behind the code its runs are supposed to start from.
  */
 function clonedRepo(t) {
@@ -226,7 +226,7 @@ function clonedRepo(t) {
 
 test('the checkout a run works in is pulled up to the base branch first', (t) => {
   // `smoke` runs in "none" mode: the run works in this checkout, on the branch it is standing on.
-  // Every merge in the factory lands on origin, and nothing here ever hears about it — so by the
+  // Every merge in the team lands on origin, and nothing here ever hears about it — so by the
   // third pull request the agent is reading code that was replaced days ago.
   const { at, origin } = clonedRepo(t);
   fs.writeFileSync(path.join(origin, 'merged.txt'), 'a pull request that landed\n');
@@ -259,8 +259,8 @@ function seedImplRun(dir, key) {
   };
   const statePath = path.join(dir, '.weawr', 'state', 'state.json');
   fs.writeFileSync(statePath, JSON.stringify({ runs: { [`${key}@impl`]: run } }));
-  // After the smoke run the factory has a durable store; read whatever is there.
-  return { runDir, state: () => { const v = readFactoryState(factoryPaths(dir)); v.store?.close(); return v.state; } };
+  // After the smoke run the team has a durable store; read whatever is there.
+  return { runDir, state: () => { const v = readTeamState(teamPaths(dir)); v.store?.close(); return v.state; } };
 }
 
 /** The reviewer-and-implementer pair this repository runs, in "none" worktree mode so no commits are needed. */

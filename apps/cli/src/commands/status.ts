@@ -6,7 +6,7 @@ import type { Context } from '../context.js';
 
 export async function status(ctx: Context): Promise<void> {
   const cfg = ctx.config();
-  const { via, result } = await dispatchCommand(ctx, { type: 'factory.status' }, async () => createApplication(makeEngine(ctx, { cfg, tracker: null })));
+  const { via, result } = await dispatchCommand(ctx, { type: 'team.status' }, async () => createApplication(makeEngine(ctx, { cfg, tracker: null })));
   if (!result.ok) throw new Error(result.error.message);
   const s = result.result as any;
   const rows = Object.entries<any>(s.runs);
@@ -30,7 +30,7 @@ export async function reset(ctx: Context, key: string | undefined): Promise<void
   if (!key) throw new Error('usage: weawr reset <KEY>');
   const cfg = ctx.config();
   const { result } = await dispatchCommand(ctx, { type: 'run.reset', key }, async () => {
-    // Nobody owns the factory: take it for the duration of this write, so a watcher starting at
+    // Nobody owns the team: take it for the duration of this write, so a watcher starting at
     // the same moment cannot read the state from under us.
     const ownership = takeOwnership(ctx, cfg);
     const app = createApplication(makeEngine(ctx, { cfg, tracker: null, ownership }));

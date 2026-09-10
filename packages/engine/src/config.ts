@@ -1,6 +1,6 @@
-// The factory's configuration: .weawr/config.json with .weawr/config.local.json layered over it,
+// The team's configuration: .weawr/config.json with .weawr/config.local.json layered over it,
 // every rule expanded with the defaults, checked, and its match expression compiled. Everything
-// path-shaped is resolved from a FactoryPaths, never from the process's own directory.
+// path-shaped is resolved from a TeamPaths, never from the process's own directory.
 import fs from 'node:fs';
 import path from 'node:path';
 import { compile } from './expr.mjs';
@@ -9,7 +9,7 @@ import { applyRoles, checkBasedOn, checkRoleBranches, normalizePasses, normalize
 import { DEFAULT_MAX_NUDGES, normalizeMaxNudges } from './nudge.mjs';
 import { trackerClass, trackerSpec } from './adapters/trackers/index.mjs';
 import { LATEST_REVISION, validateTemplate } from '@weawr/recipes';
-import type { FactoryPaths } from './paths.js';
+import type { TeamPaths } from './paths.js';
 import { EMPTY_REGISTRY } from './plugins.js';
 import type { PluginRegistry, PluginSpec } from './plugins.js';
 
@@ -44,7 +44,7 @@ export interface Rule {
   [k: string]: any;
 }
 
-export interface FactoryConfig {
+export interface TeamConfig {
   name: string;
   tracker: any;
   trackerSpec: { type: string; [k: string]: any };
@@ -120,17 +120,17 @@ const WORKTREE_MODES = new Set(['self', 'herdr', 'none']);
 export const EVENTS = ['onPickup', 'onDone', 'onBlocked', 'onIdle', 'onMerged'] as const;
 
 export interface ConfigSources {
-  paths: FactoryPaths;
+  paths: TeamPaths;
   /** Where the bundled prompts live (the CLI's own prompts/ directory, with one subdirectory per recipe revision). */
   promptsRoot: string;
-  /** The recipe revision this factory is pinned to; the latest bundled one when not given. */
+  /** The recipe revision this team is pinned to; the latest bundled one when not given. */
   recipeRevision?: number;
   /** What the plugins named in the config provide (see plugins.ts). Loaded by the caller: config loading stays synchronous. */
   plugins?: PluginRegistry;
 }
 
 /** The plugin specs a config names: committed ones and per-machine ones, each knowing where it came from. */
-export function pluginSpecs(paths: FactoryPaths): PluginSpec[] {
+export function pluginSpecs(paths: TeamPaths): PluginSpec[] {
   const read = (p: string) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
   const out: PluginSpec[] = [];
   for (const s of read(paths.configPath)?.plugins || []) if (typeof s === 'string') out.push({ spec: s, source: 'config' });
@@ -153,7 +153,7 @@ export function expandConfigPath(sources: ConfigSources, p: string, revision: nu
   }
   if (fs.existsSync(inRepo)) return inRepo;
   // Bundled prompts are addressed as "prompts/<file>", the layout they have always had; on disk
-  // every recipe revision is kept, and the factory's pinned one is the one that answers.
+  // every recipe revision is kept, and the team's pinned one is the one that answers.
   const rel = p.replace(/^prompts[\\/]/, '');
   const inPkg = path.resolve(sources.promptsRoot, String(revision), rel);
   if (inPkg.startsWith(sources.promptsRoot + path.sep) && fs.existsSync(inPkg)) return inPkg;
@@ -176,7 +176,7 @@ function readInstructions(sources: ConfigSources, file: string | null): string {
   return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim() : '';
 }
 
-export function loadConfig(sources: ConfigSources): FactoryConfig {
+export function loadConfig(sources: ConfigSources): TeamConfig {
   const { paths } = sources;
   if (!fs.existsSync(paths.configPath)) throw new Error(`no config at ${paths.configPath}`);
   const readConfigFile = (p: string) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e: any) { throw new Error(`${path.relative(paths.repo, p)} is not valid JSON: ${e.message}`); } };
@@ -240,7 +240,7 @@ export function loadConfig(sources: ConfigSources): FactoryConfig {
   if (!['squash', 'merge', 'rebase'].includes(cfg.mergeMethod)) throw new Error(`"mergeMethod" must be "squash", "merge" or "rebase", not ${JSON.stringify(cfg.mergeMethod)}`);
   checkBasedOn(checkRoleBranches(applyRoles(cfg.rules, cfg.roles)));
   cfg.stamp = configStamp(sources, cfg);
-  return cfg as FactoryConfig;
+  return cfg as TeamConfig;
 }
 
 /**

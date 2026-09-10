@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { FactoryEngine, SqliteStore, createApplication, factoryPaths, loadConfig, storePath } from '@weawr/engine';
+import { TeamEngine, SqliteStore, createApplication, teamPaths, loadConfig, storePath } from '@weawr/engine';
 import { LATEST_REVISION } from '@weawr/recipes';
 
 const PROMPTS = fileURLToPath(new URL('../../../packages/recipes/prompts', import.meta.url));
@@ -41,11 +41,11 @@ function fakeHerdr(repo, { gone = [] } = {}) {
     async closeWorkspace() {},
   };
 }
-function engine(dir, { store = SqliteStore.open(storePath(factoryPaths(dir).stateDir)), herdr = fakeHerdr(dir, { gone: ['gh-7-impl-fac000', 'gh-7-review-fac000'] }), tracker = null, runs = null, version = '9.9.9' } = {}) {
-  const paths = factoryPaths(dir);
+function engine(dir, { store = SqliteStore.open(storePath(teamPaths(dir).stateDir)), herdr = fakeHerdr(dir, { gone: ['gh-7-impl-fac000', 'gh-7-review-fac000'] }), tracker = null, runs = null, version = '9.9.9' } = {}) {
+  const paths = teamPaths(dir);
   if (runs) store.save({ runs, nudges: {} });
   const cfg = loadConfig({ paths, promptsRoot: PROMPTS });
-  const e = new FactoryEngine({ cfg, tracker, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'fac0001' }, log: () => {}, version });
+  const e = new TeamEngine({ cfg, tracker, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', teamId: 'fac0001' }, log: () => {}, version });
   return { e, store, herdr, rule: (n) => e.cfg.rules.find((r) => r.name === n) };
 }
 const brief = (run) => fs.readFileSync(path.join(run.dir, 'brief.md'), 'utf8');
@@ -53,19 +53,19 @@ const brief = (run) => fs.readFileSync(path.join(run.dir, 'brief.md'), 'utf8');
 test('a custom template with a typo, a missing result path, or a future protocol is refused at config load', () => {
   for (const [body, re] of [['Hi {{titel}} write {{resultPath}}', /\{\{titel\}\} is not a placeholder/], ['no result path here {{title}}', /\{\{resultPath\}\} is missing/], ['<!-- weawr-template: protocol=7 -->\n{{resultPath}}', /protocol 7.*upgrade weawr/]]) {
     const dir = repo(CONFIG(), { '.weawr/prompts/default.md': body });
-    assert.throws(() => loadConfig({ paths: factoryPaths(dir), promptsRoot: PROMPTS }), re);
+    assert.throws(() => loadConfig({ paths: teamPaths(dir), promptsRoot: PROMPTS }), re);
   }
   const ok = repo(CONFIG(), { '.weawr/prompts/default.md': 'Legacy custom brief: {{title}} → {{resultPath}} {{nudgeLines}}' });
-  const cfg = loadConfig({ paths: factoryPaths(ok), promptsRoot: PROMPTS });
+  const cfg = loadConfig({ paths: teamPaths(ok), promptsRoot: PROMPTS });
   assert.equal(cfg.rules[0].templateOrigin, 'repository'); assert.equal(cfg.rules[0].templateProtocol, 1);
   assert.equal(cfg.rules[1].templateOrigin, 'bundled');
 });
 
-test('a new factory takes the latest recipe; a migrated one is pinned to 1; an upgrade moves new tasks only', async () => {
+test('a new team takes the latest recipe; a migrated one is pinned to 1; an upgrade moves new tasks only', async () => {
   const dir = repo(CONFIG());
   const { e, store, rule } = engine(dir);
   assert.equal(e.recipeRevision, LATEST_REVISION);
-  // pin it back to 1, as a migrated legacy factory is
+  // pin it back to 1, as a migrated legacy team is
   store.setMeta('recipe_revision', '1');
   const { e: one, herdr, rule: r1 } = engine(dir, { store, herdr: fakeHerdr(dir, { gone: ['gh-7-impl-fac000'] }) });
   assert.equal(one.recipeRevision, 1);
@@ -166,9 +166,9 @@ test('when the last reviewer approves the current head and the label is on, the 
     'GH-7@impl': { rule: 'impl', role: 'impl', pass: 1, status: 'awaiting_merge', issueId: 'i7', issueKey: 'GH-7', title: 't', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T01:00:00Z', agentName: 'gh-7-impl', workspaceId: 'w1', prUrl, result: { status: 'pr_open', prUrl }, notified: {}, worktree: 'none', workDir: dir, dir: path.join(dir, '.weawr', 'state', 'runs', 'GH-7@impl'), resultPath: path.join(dir, '.weawr', 'state', 'runs', 'GH-7@impl', 'result.json'), briefPath: path.join(dir, '.weawr', 'state', 'runs', 'GH-7@impl', 'brief.md') },
     'GH-7@review': { rule: 'review', role: 'review', pass: 1, status: 'done', issueId: 'i7', issueKey: 'GH-7', title: 't', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T02:00:00Z', agentName: 'gh-7-review', workspaceId: 'w2', result: { status: 'nothing_to_do', review: { verdict: 'approved', prUrl, headSha: 'abcdef1' } }, notified: {}, worktree: 'none', workDir: dir },
   };
-  const paths = factoryPaths(dir);
+  const paths = teamPaths(dir);
   const store = SqliteStore.open(storePath(paths.stateDir)); store.save({ runs, nudges: {} });
-  const e = new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: PROMPTS }), tracker, herdr: fakeHerdr(dir), paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'fac0001' }, log: () => {}, fetchImpl });
+  const e = new TeamEngine({ cfg: loadConfig({ paths, promptsRoot: PROMPTS }), tracker, herdr: fakeHerdr(dir), paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', teamId: 'fac0001' }, log: () => {}, fetchImpl });
   e.pr = { host: 'github.com', token: 'tok' };
   await e.askForMergeIfReady('GH-7');
   const asks = calls.filter((c) => c[0] === 'comment' && /Weawr Coordinator/.test(c[1]) && /asking `impl` to run `weawr merge GH-7@impl`/.test(c[1]));
@@ -203,9 +203,9 @@ test('merge: the label now, every reviewer\'s structured approval of the current
     'GH-7@impl': { rule: 'impl', role: 'impl', pass: 1, status: 'awaiting_merge', issueId: 'i7', issueKey: 'GH-7', title: 't', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T01:00:00Z', agentName: 'gh-7-impl', notified: {}, worktree: 'none', workDir: dir, prUrl, result: { status: 'pr_open', prUrl } },
     'GH-7@review': { rule: 'review', role: 'review', pass: 1, status: 'done', issueId: 'i7', issueKey: 'GH-7', title: 't', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T02:00:00Z', agentName: 'gh-7-review', notified: {}, worktree: 'none', result: { status: 'nothing_to_do', summary: 'OK TO MERGE TO MAIN — fine' } },
   };
-  const paths = factoryPaths(dir);
+  const paths = teamPaths(dir);
   const store = SqliteStore.open(storePath(paths.stateDir)); store.save({ runs, nudges: {} });
-  const e = new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: PROMPTS }), tracker, herdr: fakeHerdr(dir), paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'fac0001' }, log: () => {}, fetchImpl });
+  const e = new TeamEngine({ cfg: loadConfig({ paths, promptsRoot: PROMPTS }), tracker, herdr: fakeHerdr(dir), paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', teamId: 'fac0001' }, log: () => {}, fetchImpl });
   e.pr = { host: 'github.com', token: 'tok' };
   const app = createApplication(e);
   const attempt = () => app.dispatch({ type: 'run.merge', key: 'GH-7@impl' }).then((r) => { assert.equal(r.ok, true, JSON.stringify(r)); return r.result; });

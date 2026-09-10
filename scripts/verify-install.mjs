@@ -67,7 +67,7 @@ try {
     con.on('exit', (c) => reject(new Error(`console exited ${c}:\n${logs}`)));
   });
   try {
-    for (const [p, re] of [['', /<title>[^<]+<\/title>/], ['app.js', /Factory Floor, the page/], ['app.css', /./], ['favicon.svg', /<svg/], ['health', /"ok":true/]]) {
+    for (const [p, re] of [['', /<title>[^<]+<\/title>/], ['app.js', /Team Room, the page/], ['app.css', /./], ['favicon.svg', /<svg/], ['health', /"ok":true/]]) {
       const res = await fetch(url + p);
       const body = await res.text();
       if (res.status !== 200 || !re.test(body)) fail(`GET /${p} → ${res.status}, body did not match ${re}`);

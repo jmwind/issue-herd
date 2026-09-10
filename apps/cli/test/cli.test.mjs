@@ -9,11 +9,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { factoryPaths, readFactoryState } from '@weawr/engine';
+import { teamPaths, readTeamState } from '@weawr/engine';
 
-/** The runs a factory holds, wherever it keeps them now (the durable store after any owner has run, else state.json). */
-function runsIn(dir) { const v = readFactoryState(factoryPaths(dir)); const runs = v.state.runs; v.store?.close(); return runs; }
-function nudgesIn(dir) { const v = readFactoryState(factoryPaths(dir)); const n = v.state.nudges; v.store?.close(); return n; }
+/** The runs a team holds, wherever it keeps them now (the durable store after any owner has run, else state.json). */
+function runsIn(dir) { const v = readTeamState(teamPaths(dir)); const runs = v.state.runs; v.store?.close(); return runs; }
+function nudgesIn(dir) { const v = readTeamState(teamPaths(dir)); const n = v.state.nudges; v.store?.close(); return n; }
 
 const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
 
@@ -267,7 +267,7 @@ test('the compiler\'s output finds its assets in the source tree, so the command
   assert.equal(assetDir('prompts', 'src-prompts', { WEAWR_PROMPTS_ROOT: '/elsewhere' }, distPkg), '/elsewhere', 'the environment names another place outright');
   assert.equal(assetDir('prompts', 'nowhere', {}, buildPkg), path.join(buildPkg, 'prompts'), 'neither: the place beside, so the error names where it looked');
 
-  // The real thing: apps/cli/build/main.js, with none of dev.mjs's environment, on a factory whose
+  // The real thing: apps/cli/build/main.js, with none of dev.mjs's environment, on a team whose
   // rule uses the bundled default prompt — what `weawr merge` is when an agent runs it under `pnpm dev`.
   const repoDir = repo(t, { '.weawr/config.json': config() });
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^WEAWR_.*_ROOT$/.test(k)));
