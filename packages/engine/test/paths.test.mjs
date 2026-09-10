@@ -9,8 +9,8 @@ import { findRepoRoot } from '../dist/paths.js';
 const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
 test('a linked worktree resolves to its main working tree; the main tree and a plain directory resolve to themselves', (t) => {
-  // Agents run `weawr merge` from the worktree weawr made for them. The factory — .weawr/, the
-  // state — is in the main tree, and an empty look-alike in the worktree would be no factory.
+  // Agents run `weawr merge` from the worktree weawr made for them. The team — .weawr/, the
+  // state — is in the main tree, and an empty look-alike in the worktree would be no team.
   const main = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'weawr-paths-')));
   t.after(() => fs.rmSync(main, { recursive: true, force: true }));
   git(main, ['init', '-q', '-b', 'main']);

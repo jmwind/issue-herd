@@ -1,14 +1,14 @@
-// Which store a factory has, and how to open it for the purpose at hand.
+// Which store a team has, and how to open it for the purpose at hand.
 import fs from 'node:fs';
 import { JsonStateStore, readJson } from '../state.js';
-import type { FactoryState, StateStore } from '../state.js';
+import type { TeamState, StateStore } from '../state.js';
 import { SqliteStore, storePath } from './sqlite.js';
-import type { FactoryPaths } from '../paths.js';
+import type { TeamPaths } from '../paths.js';
 
 export type StoreKind = 'sqlite' | 'legacy-json' | 'none';
 
-/** What is on disk for this factory, without opening anything for writing. */
-export function storeStatus(paths: FactoryPaths): { kind: StoreKind; needsMigration: boolean; sqlitePath: string } {
+/** What is on disk for this team, without opening anything for writing. */
+export function storeStatus(paths: TeamPaths): { kind: StoreKind; needsMigration: boolean; sqlitePath: string } {
   const sqlitePath = storePath(paths.stateDir);
   if (fs.existsSync(sqlitePath)) return { kind: 'sqlite', needsMigration: false, sqlitePath };
   if (fs.existsSync(paths.statePath)) return { kind: 'legacy-json', needsMigration: true, sqlitePath };
@@ -19,7 +19,7 @@ export function storeStatus(paths: FactoryPaths): { kind: StoreKind; needsMigrat
  * The owner's store. Call after taking ownership and after migrating a legacy state.json (see
  * store/migrate.ts); a legacy file that is still there is a refusal here, never a silent fallback.
  */
-export function openOwnerStore(paths: FactoryPaths): SqliteStore {
+export function openOwnerStore(paths: TeamPaths): SqliteStore {
   const st = storeStatus(paths);
   if (st.needsMigration) throw new Error(`${paths.statePath} has not been migrated to the durable store; run \`weawr migrate\` (or start the watcher, which migrates under its lock)`);
   return SqliteStore.open(st.sqlitePath);
@@ -27,10 +27,10 @@ export function openOwnerStore(paths: FactoryPaths): SqliteStore {
 
 /**
  * The state as a reader sees it: the durable store read-only when there is one, else the legacy
- * JSON file (a factory nobody has upgraded yet), else empty. `corrupt` says the legacy file exists
+ * JSON file (a team nobody has upgraded yet), else empty. `corrupt` says the legacy file exists
  * but does not parse, which a reader must show rather than hide.
  */
-export function readFactoryState(paths: FactoryPaths): { state: FactoryState; kind: StoreKind; corrupt: string | null; store: SqliteStore | null } {
+export function readTeamState(paths: TeamPaths): { state: TeamState; kind: StoreKind; corrupt: string | null; store: SqliteStore | null } {
   const st = storeStatus(paths);
   if (st.kind === 'sqlite') {
     const store = SqliteStore.openReadOnly(st.sqlitePath);

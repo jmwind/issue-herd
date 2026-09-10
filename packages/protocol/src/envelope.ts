@@ -20,7 +20,7 @@ export const operationSchema = s.object({
   kind: s.string(),
   status: s.enum(OPERATION_STATUSES),
   requestId: s.maybe(s.string()),
-  factoryId: s.maybe(s.string()),
+  teamId: s.maybe(s.string()),
   input: s.maybe(s.any()),
   result: s.maybe(s.any()),
   error: s.maybe(s.string()),
@@ -32,7 +32,7 @@ export const operationSchema = s.object({
 export type OperationView = Infer<typeof operationSchema>;
 
 export const eventSchema = s.object({
-  factoryId: s.string(),
+  teamId: s.string(),
   seq: s.number(),
   at: s.string(),
   kind: s.string(),
@@ -42,8 +42,8 @@ export const eventSchema = s.object({
 });
 export type EventView = Infer<typeof eventSchema>;
 
-/** A per-factory resume point for the event stream. */
-export const cursorSchema = s.object({ factoryId: s.string(), seq: s.number({ integer: true, min: 0 }) });
+/** A per-team resume point for the event stream. */
+export const cursorSchema = s.object({ teamId: s.string(), seq: s.number({ integer: true, min: 0 }) });
 export type Cursor = Infer<typeof cursorSchema>;
 
 export const capabilitiesSchema = s.object({
@@ -62,13 +62,13 @@ const requestId = s.string({ min: 1, max: 200 });
 const key = s.string({ min: 1, max: 200 });
 
 export const commandSchemas = {
-  'task.done': s.object({ factory: key, task: key, requestId, expectedRevision: s.maybe(s.number()) }, { extra: 'refuse' }),
-  'task.undo': s.object({ factory: key, task: key, requestId }, { extra: 'refuse' }),
-  'task.stop': s.object({ factory: key, task: key, requestId }, { extra: 'refuse' }),
-  'task.tail': s.object({ factory: key, task: key, lines: s.maybe(s.number({ integer: true, min: 1, max: 2000 })) }, { extra: 'refuse' }),
-  'task.reset': s.object({ factory: key, task: key, requestId }, { extra: 'refuse' }),
-  'run.exit': s.object({ factory: key, run: key, requestId }, { extra: 'refuse' }),
-  'run.tail': s.object({ factory: key, run: key, lines: s.maybe(s.number({ integer: true, min: 1, max: 2000 })) }, { extra: 'refuse' }),
-  'factory.tidy': s.object({ factory: s.maybe(key), requestId }, { extra: 'refuse' }),
+  'task.done': s.object({ team: key, task: key, requestId, expectedRevision: s.maybe(s.number()) }, { extra: 'refuse' }),
+  'task.undo': s.object({ team: key, task: key, requestId }, { extra: 'refuse' }),
+  'task.stop': s.object({ team: key, task: key, requestId }, { extra: 'refuse' }),
+  'task.tail': s.object({ team: key, task: key, lines: s.maybe(s.number({ integer: true, min: 1, max: 2000 })) }, { extra: 'refuse' }),
+  'task.reset': s.object({ team: key, task: key, requestId }, { extra: 'refuse' }),
+  'run.exit': s.object({ team: key, run: key, requestId }, { extra: 'refuse' }),
+  'run.tail': s.object({ team: key, run: key, lines: s.maybe(s.number({ integer: true, min: 1, max: 2000 })) }, { extra: 'refuse' }),
+  'team.tidy': s.object({ team: s.maybe(key), requestId }, { extra: 'refuse' }),
 } as const;
 export type ClientCommandName = keyof typeof commandSchemas;

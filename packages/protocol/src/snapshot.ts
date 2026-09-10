@@ -1,4 +1,4 @@
-// The canonical view of a factory, as its owner publishes it. Everything a console or a phone
+// The canonical view of a team, as its owner publishes it. Everything a console or a phone
 // shows comes from here; nothing in a client re-derives lifecycle facts from raw records.
 //
 // Shapes are kept close to what the console has always rendered — a task with its role runs,
@@ -103,9 +103,9 @@ export const alertSchema = s.object({
 
 export const productionSchema = s.object({ finished: s.number(), merged: s.number(), workingMs: s.number(), humanMs: s.number() });
 
-export const factorySnapshotSchema = s.object({
+export const teamSnapshotSchema = s.object({
   protocolVersion: s.literal(1),
-  factoryId: s.string(),
+  teamId: s.string(),
   id: s.string(),
   name: s.string(),
   repo: s.string(),
@@ -129,19 +129,19 @@ export const factorySnapshotSchema = s.object({
   live: s.maybe(s.object({ tracker: s.boolean(), github: s.boolean(), why: s.maybe(s.string()) })),
   capabilities: s.maybe(s.array(s.string())),
 });
-export type FactorySnapshot = Infer<typeof factorySnapshotSchema>;
+export type TeamSnapshot = Infer<typeof teamSnapshotSchema>;
 export type TaskView = Infer<typeof taskViewSchema>;
 export type RunView = Infer<typeof runViewSchema>;
 export type Alert = Infer<typeof alertSchema>;
 export type OwnerInfo = Infer<typeof ownerSchema>;
 
-/** What `weawr serve` publishes: every factory on this host, plus the host itself. */
+/** What `weawr serve` publishes: every team on this host, plus the host itself. */
 export const hostSnapshotSchema = s.object({
   protocolVersion: s.literal(1),
   hostname: s.string(),
   version: s.maybe(s.string()),
   herdr: s.object({ connected: s.boolean(), version: s.maybe(s.string()) }),
   generatedAt: s.string(),
-  factories: s.array(factorySnapshotSchema),
+  teams: s.array(teamSnapshotSchema),
 });
 export type HostSnapshot = Infer<typeof hostSnapshotSchema>;

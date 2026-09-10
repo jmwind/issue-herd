@@ -1,4 +1,4 @@
-// `weawr plugins`: which plugins this factory enables, where each came from, what it provides,
+// `weawr plugins`: which plugins this team enables, where each came from, what it provides,
 // and what did not load. `weawr plugins examples` lists what ships with weawr.
 import fs from 'node:fs';
 import path from 'node:path';

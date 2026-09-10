@@ -6,7 +6,7 @@
 /** The coordinator's byline. A comment that starts with it was not written by any agent. */
 export const COORDINATOR = '**Weawr Coordinator**';
 
-/** How a role signs: "**weawr** as `review`", or plain **weawr** for a factory with one role. */
+/** How a role signs: "**weawr** as `review`", or plain **weawr** for a team with one role. */
 export function roleByline(role: string | null | undefined): string {
   return role ? `**weawr** as \`${role}\`` : '**weawr**';
 }

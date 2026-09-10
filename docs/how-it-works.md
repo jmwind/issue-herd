@@ -211,7 +211,7 @@ that has read the issue's text, so it does not get to say where your token goes.
 
 ## The console: `weawr console` (and `weawr serve`)
 
-The watcher pane tells one factory's story in text. The console shows every factory on the machine
+The watcher pane tells one team's story in text. The console shows every team on the machine
 in a browser, phone first, and is built from one question: *what changes what you do next?*
 
 ```bash
@@ -221,10 +221,10 @@ weawr serve --no-web          # the same host without the page: just the interfa
 ```
 
 The console is a page on top of the CLI's own interface. `weawr serve` (`console` is its older
-name) hosts every factory on the machine over HTTP and server-sent events at `/api/v1`, forwarding
-each question and each action to that factory's running watcher — the **owner** — over a private
+name) hosts every team on the machine over HTTP and server-sent events at `/api/v1`, forwarding
+each question and each action to that team's running watcher — the **owner** — over a private
 socket. Nothing in the page decides what a task needs; the owner does, and the page draws it. A
-factory whose watcher is not running is shown from its last recorded state, marked *watcher
+team whose watcher is not running is shown from its last recorded state, marked *watcher
 offline* with when it was last seen, and every action on it is refused until the watcher is back:
 the page never starts anything because you looked at it. Killing `weawr serve` stops no watcher;
 starting it again restores the view. When the page's link to weawr is down, the title bar says how
@@ -234,7 +234,7 @@ Six looks ship. **Factorio** is the default — the floor as it has always been.
 are flat: the machinery gone, the facts and the lights kept. **weawr clean** is the brand's own
 palette (light or dark with the system); **Linear** and **GitHub** borrow those apps' looks
 (Linear dark by default, GitHub light, each following the system); **Tokyo Night** and
-**Solarized Light** are the VS Code themes. Pick one from the factories sheet (the picker in the
+**Solarized Light** are the VS Code themes. Pick one from the teams sheet (the picker in the
 title bar); it is remembered per browser. `weawr console --theme <name>` (or
 `WEAWR_CONSOLE_THEME`) sets what a browser gets before it has chosen, and `?theme=<name>` on the
 URL picks one for that visit. A theme is one CSS file in `apps/web/src/themes/` that sets the
@@ -247,9 +247,9 @@ with a **device token** — `weawr console device add <name>` mints one, shown o
 browser session; see [mobile.md](mobile.md). The interface itself is in
 [architecture.md](architecture.md#the-cli-interface-weawr-serve-the-protocol-and-the-client).
 
-Four screens, in Factorio's idiom because a factory is what this is:
+Four screens, in Factorio's idiom — the look the console has always had:
 
-- **All factories.** The page the console opens on: every factory on the machine as one plant,
+- **All teams.** The page the console opens on: every team on the machine as one plant,
   with a belt running from each down to the next. A plant shows its name, tracker and
   repository, who works there (the roles, or the rules when it has none, and the agents behind
   them), and a production table — tasks finished today, this week and this month (and how many
@@ -259,22 +259,22 @@ Four screens, in Factorio's idiom because a factory is what this is:
   belt out of it; an idle plant stands still; one whose watcher has gone dark is dimmed with a
   red light. Tap a plant for its floor. Today, the week and the month begin at local midnight,
   Monday and the first; a run that straddles a boundary counts the part inside the window.
-- **Overview.** One factory's floor. The factory picker in the title bar switches factories or
+- **Overview.** One team's room. The team picker in the title bar switches teams or
   goes back to all of them (the mark beside it opens weawr on GitHub in a new tab), then
-  the factory itself at a glance — its tracker and
+  the team itself at a glance — its tracker and
   repository, every rule with the role it plays, the agent and model behind it and the issues it
   matches, and whether the watcher is alive — with the legend for the lights under it. Then
   **Alerts** (one card per task that needs a person, with what to do about it), **Assembling**
   (one row per open issue, with the roles on it and how long it has waited on you), and **Output
   today** (one plain line per finished task; the roles are on the detail screen). Every task shows
   lines added and removed with a size grade, and the state of its issue and its pull request. The
-  belt across the top carries the factory's four numbers.
+  belt across the top carries the team's four numbers.
 - **Issue detail.** Links to the issue and the PR, a timeline bar per role (working, blocked,
   waiting on you, done) plus a "you" row, lines added and removed with a size grade and its reason,
   each role's report, a merged scrollback (the last 100 lines of every agent on the task, one
   block per role in that role's colour, read only; while an agent is working, herdr can only
   give the screen it is showing right now, so the block is shorter), and one **Mark done** button.
-- **Factory picker.** In the title bar on every screen: all factories, then each one with its
+- **Team picker.** In the title bar on every screen: all teams, then each one with its
   tracker, last poll, running and alert counts, and a watcher not seen for three polls marked
   stale.
 
@@ -299,15 +299,15 @@ shows at once. A dialog or question the watcher has already logged counts from t
 so a console started next to a long-blocked agent does not wait again. Results the watcher wrote
 (a decision, a failure, a stop) are its call and are never held back.
 
-**Where it reads from.** Each watcher stamps `~/.config/weawr/factories.json` every poll
+**Where it reads from.** Each watcher stamps `~/.config/weawr/teams/<teamId>.json` every poll
 (name, tracker, version, last poll); the console lists those entries, plus any `<name>Watch`
-workspace herdr shows, and reads each factory's `config.json`, `state.json` and log directly. Agent
+workspace herdr shows, and reads each team's `config.json`, `state.json` and log directly. Agent
 state is one `herdr api snapshot` per tick (every 2s). Lines changed come from `git diff` in the
 run's worktree. A run's `result.json` in its worktree is read live, so an agent that rewrote it
 after the watcher recorded the first version (a plan that became a PR) is shown as it stands.
 The issue's state (open, closed) and the PR's (open, closed, merged) come from the
 tracker and GitHub with the credentials this machine already has (the saved login, `gh`, or the
-factory's own `.env.local`); a run that never recorded a PR gets the one GitHub has for its
+team's own `.env.local`); a run that never recorded a PR gets the one GitHub has for its
 branch. One call per task, every 90s for tasks in flight or finished this
 week and every 30 minutes for older ones; without a credential those fields are not shown.
 Nothing is written except the registry.
@@ -344,14 +344,14 @@ closes what `onMerged` by default keeps.
 
 **Tidy.** Tasks marked done before Mark done closed workspaces left a pile. When any task marked
 done still has a workspace open for an agent that has exited, the Output section's header shows
-*Tidy N workspaces*: one click, one confirm, and those workspaces are closed (for the factory on
+*Tidy N workspaces*: one click, one confirm, and those workspaces are closed (for the team on
 screen, or all of them from the overview). Agents still up are never touched by it, and neither is
 a workspace that herdr has since given the run's old id to (it is not counted in the N).
 
 **The gate.** With no passcode the console binds to loopback only and asks nothing. With one
 (`set-passcode`, at least four digits because the phone's keypad has no letters; stored as a
 salted scrypt hash in `credentials.json`, never in a repository) it
-also binds to this machine's Tailscale address, never `0.0.0.0`, and nothing about any factory is
+also binds to this machine's Tailscale address, never `0.0.0.0`, and nothing about any team is
 served before the passcode: a correct entry sets an `HttpOnly`, `SameSite=Strict` cookie for a day;
 five wrong entries from one address lock the gate for five minutes and are logged; actions are
 POSTs checked for a same-origin `Origin`. Tailscale encrypts the wire, so the console speaks plain
@@ -362,7 +362,7 @@ and `0.0.0.0` is refused always.
 
 ## Trying it out: `weawr demo`
 
-The fastest way to see the whole harness run is a factory whose issues, code and pull requests
+The fastest way to see the whole harness run is a team whose issues, code and pull requests
 exist to be experimented on. [`jmwind/weawr-demo`](https://github.com/jmwind/weawr-demo) is that
 repository, and `weawr demo` sets it up:
 
@@ -373,7 +373,7 @@ cd ~/.config/weawr/demos/weawr-demo && weawr      # run the watcher on it (or `w
 weawr demo reset            # when you are done: close the issues and PRs, delete the branches, clear the state
 ```
 
-A scenario is a factory config, the briefs and instructions it needs, and the issues to file, all
+A scenario is a team config, the briefs and instructions it needs, and the issues to file, all
 shipped with weawr (`apps/cli/demos/<name>/`). Four ship:
 
 | scenario | what runs |
@@ -386,10 +386,10 @@ shipped with weawr (`apps/cli/demos/<name>/`). Four ship:
 The first run pushes a small starter app (`tally`, a command-line counter) to the demo
 repository, because the issues need code to work on. The scenario's `.weawr/` stays in the clone
 and out of git (`.git/info/exclude`), so switching scenarios is `weawr demo reset` and then the
-next scenario. `--into DIR` puts the factory somewhere else; `--repo owner/name` points at a demo
+next scenario. `--into DIR` puts the team somewhere else; `--repo owner/name` points at a demo
 repository of your own; `--dry-run` says what would be filed and files nothing.
 
-`reset` closes only what the ledger says this factory filed (`.weawr/demo.json`): those issues,
+`reset` closes only what the ledger says this team filed (`.weawr/demo.json`): those issues,
 the pull requests and branches that grew from them, and the claim labels. It also puts the app
 back to the starter — a new commit on `main` that restores the starter's files, so a feature a
 demo merged is missing again for the next run and history is kept; `--keep-code` skips that. The
@@ -447,9 +447,9 @@ running watcher hands out never change under it: every recipe revision weawr has
 bundled and a revision is never edited once published. (`npm update -g` does not reliably refresh
 packages installed from a git URL, so use this.)
 
-## Upgrading a factory
+## Upgrading a team
 
-A factory's state used to be `.weawr/state/state.json`. It is now `.weawr/state/factory.sqlite`:
+A team's state used to be `.weawr/state/state.json`. It is now `.weawr/state/team.sqlite`:
 one SQLite file holding the runs, the nudge log, every attempt's record (the exact brief it was
 given, under which policy, by which agent), a structured event log, the external work each
 transition still owes, and what a person marked done in the console. The first watcher a newer
@@ -457,11 +457,11 @@ weawr starts in a repository migrates the old file under its lock — backup in
 `state/backup-<time>/`, one transaction, `state.json` renamed to `state.json.migrated` — and
 carries on. `weawr migrate --dry-run` shows what it will do; `weawr migrate` does it by hand. A
 `state.json` that does not parse stops the watcher with the reason; it is never read as an empty
-factory. Stop the old watcher before starting the new one (the lock refuses a second owner either
-way). Rollback — move the `.migrated` file back and delete `factory.sqlite*` — is only sound before
+team. Stop the old watcher before starting the new one (the lock refuses a second owner either
+way). Rollback — move the `.migrated` file back and delete `team.sqlite*` — is only sound before
 new work has started; after that the store is the truth, so drain or reconcile first.
 
-The briefs are pinned too. A migrated factory keeps recipe revision 1, the words it was running
+The briefs are pinned too. A migrated team keeps recipe revision 1, the words it was running
 (prose verdicts; the implementer merges when the issue's text grants it). `weawr recipe upgrade
 --dry-run` shows what revision 2 changes — reviewers put a verdict on a specific commit in their
 result, and merging goes through `weawr merge`, authorised by a label on the issue — and

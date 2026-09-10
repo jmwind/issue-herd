@@ -37,18 +37,18 @@ install paths of `scripts/verify-install.mjs` (the packed tarball, and `git+file
 ### Recipe revisions
 
 The briefs are versioned. `packages/recipes/prompts/<n>/` is revision *n*, and a revision is never
-edited once it has shipped: a factory pinned to it keeps getting exactly those words. To change a
+edited once it has shipped: a team pinned to it keeps getting exactly those words. To change a
 brief, copy the latest revision to `prompts/<n+1>/`, edit there, add the revision to
 `packages/recipes/src/manifest.ts` with its `changes` (they are what `weawr recipe upgrade` shows),
 extend `KNOWN_PLACEHOLDERS` if the engine now fills something new, and pin the wording that is
 policy in `packages/recipes/test/prompts.test.mjs` for both the old and the new revision. New
-factories take the latest; existing ones move only on `weawr recipe upgrade`.
+teams take the latest; existing ones move only on `weawr recipe upgrade`.
 
 ### Compatibility
 
 | Change | What holds |
 | --- | --- |
-| Newer weawr, older factory | its store is opened as is (schema version checked; a newer schema is refused, never rewritten); its recipe revision is kept; every attempt keeps its recorded brief and policy |
+| Newer weawr, older team | its store is opened as is (schema version checked; a newer schema is refused, never rewritten); its recipe revision is kept; every attempt keeps its recorded brief and policy |
 | Newer weawr, older `state.json` | migrated once under the owner's lock, with a backup; a corrupt file is refused |
 | Older client, newer host | protocol v1 is additive: a v1 client reads a v1 host; a client asking for another major gets `unsupported_protocol` |
 | Newer client, older host | `GET /api/v1/capabilities` says what the host speaks; the client does not offer what is not there |
@@ -57,11 +57,11 @@ factories take the latest; existing ones move only on `weawr recipe upgrade`.
 
 ### Owner recovery and rollback limits
 
-One process owns a factory at a time (the SQLite lock in `.weawr/state/`), released by the OS
+One process owns a team at a time (the SQLite lock in `.weawr/state/`), released by the OS
 when it dies. A new owner finishes what the last one left: pending external work (comments,
 label removals, workspace closes, agent exits) is retried up to three times, comments reconciled
 against the issue first; in-flight runs are re-attached to their agents. Nothing is resent
-blindly into an agent session. Rolling a factory back to `state.json` is sound only before new
+blindly into an agent session. Rolling a team back to `state.json` is sound only before new
 work has started under the store; afterwards the store is the truth. Rolling the *tool* back is
 `weawr update --to v<old>`; an older tool refuses a store or a result it does not understand
 rather than guessing.
@@ -93,14 +93,14 @@ package's output changes:
   served straight from `apps/web/src`, read on every request, and when a file there changes the
   host pushes a `reload` event down the console's own event stream, so the browser reloads by
   itself;
-- `weawr`, the watcher, on the factory in `WEAWR_DEV_FACTORY` — by default the directory you ran
-  `pnpm dev` from when it has a `.weawr/config.json`, else this repository's own factory.
+- `weawr`, the watcher, on the team in `WEAWR_DEV_TEAM` — by default the directory you ran
+  `pnpm dev` from when it has a `.weawr/config.json`, else this repository's own team.
   `WEAWR_DEV_WATCHER=0` runs the server alone. A restart is safe by design: the watcher's pending
   work is durable and its agents are never touched.
 
-To try a change end to end, `pnpm demo squad` builds the checkout, sets a demo factory up with
-it (`apps/cli/demos/README.md`) and runs this loop on that factory; `pnpm demo reset` cleans up
-after. It is `weawr demo` plus `WEAWR_DEV_FACTORY=<the demo directory> pnpm dev`. The agents run
+To try a change end to end, `pnpm demo squad` builds the checkout, sets a demo team up with
+it (`apps/cli/demos/README.md`) and runs this loop on that team; `pnpm demo reset` cleans up
+after. It is `weawr demo` plus `WEAWR_DEV_TEAM=<the demo directory> pnpm dev`. The agents run
 the same weawr as the watcher: a brief names the command that reaches the running program
 (`{{weawr}}` — plain `weawr` when PATH resolves to it, else the explicit invocation), so a
 development build is what `weawr merge` and `weawr result` run even with a release installed.

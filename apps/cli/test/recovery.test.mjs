@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { FactoryEngine, SqliteStore, createApplication, factoryPaths, loadConfig, storePath } from '@weawr/engine';
+import { TeamEngine, SqliteStore, createApplication, teamPaths, loadConfig, storePath } from '@weawr/engine';
 
 const PROMPTS = fileURLToPath(new URL('../../../packages/recipes/prompts', import.meta.url));
 const ISSUE = { id: 'i7', identifier: 'GH-7', ref: 'GH-7', title: 'Fix the thing', description: '', url: 'https://example.test/7', labels: ['ai'], comments: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', project: null, team: null, assignee: null, assignees: [], state: { name: 'open', type: 'started' } };
@@ -57,15 +57,15 @@ function finishedRun(dir, role, over = {}) {
   return { rule: role, role, pass: 1, status: 'awaiting_merge', claimed: `herdr:${role}`, issueId: 'i7', issueKey: 'GH-7', title: ISSUE.title, startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T01:00:00Z', archiveDir: runDir, worktree: 'none', agentName: `gh-7-${role}`, notified: {}, workspaceId: 'w1', paneId: 'p1', workDir: dir, worktreePath: dir, dir: runDir, resultPath: path.join(runDir, 'result.json'), prUrl: 'https://github.com/o/r/pull/1', ...over };
 }
 function engine(dir, { store, herdr = fakeHerdr(dir), tracker = null, runs = null }) {
-  const paths = factoryPaths(dir);
+  const paths = teamPaths(dir);
   if (runs) store.save({ runs, nudges: {} });
   const cfg = loadConfig({ paths, promptsRoot: PROMPTS });
-  return new FactoryEngine({ cfg, tracker, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'fac0001' }, log: () => {} });
+  return new TeamEngine({ cfg, tracker, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', teamId: 'fac0001' }, log: () => {} });
 }
 
 test('a finish comment the tracker refused is owed, survives the owner, and is sent once by the next owner', async () => {
   const dir = repo(CONFIG());
-  const store = SqliteStore.open(storePath(factoryPaths(dir).stateDir));
+  const store = SqliteStore.open(storePath(teamPaths(dir).stateDir));
   const tracker = fakeTracker({ failComments: true });
   const a = engine(dir, { store, tracker, runs: { 'GH-7@impl': finishedRun(dir, 'impl', { status: 'running' }) } });
   fs.writeFileSync(a.state.runs['GH-7@impl'].resultPath, JSON.stringify({ status: 'pr_open', prUrl: 'https://github.com/o/r/pull/1', summary: 'did it' }));
@@ -91,7 +91,7 @@ test('a finish comment the tracker refused is owed, survives the owner, and is s
 
 test('a comment whose send was uncertain is reconciled against the issue before it is repeated', async () => {
   const dir = repo(CONFIG());
-  const store = SqliteStore.open(storePath(factoryPaths(dir).stateDir));
+  const store = SqliteStore.open(storePath(teamPaths(dir).stateDir));
   const tracker = fakeTracker();
   // The comment reached the tracker, but the owner died before recording that (the action is still open).
   const body = '✅ **weawr** as `impl` finished GH-7 with status `pr_open`.\n\nmore';
@@ -106,7 +106,7 @@ test('a comment whose send was uncertain is reconciled against the issue before 
 
 test('a repeated request is one reset: the second call replays the first operation', async () => {
   const dir = repo(CONFIG());
-  const store = SqliteStore.open(storePath(factoryPaths(dir).stateDir));
+  const store = SqliteStore.open(storePath(teamPaths(dir).stateDir));
   const a = engine(dir, { store, runs: { 'GH-7@impl': finishedRun(dir, 'impl'), 'GH-7@review': finishedRun(dir, 'review', { status: 'done' }) } });
   const app = createApplication(a);
   const r1 = await app.dispatch({ type: 'run.reset', key: 'GH-7', requestId: 'req-1' });
@@ -124,7 +124,7 @@ test('a repeated request is one reset: the second call replays the first operati
 
 test('a nudged turn waits for a slot: held when the cap is reached, started by the poll that finds room', async () => {
   const dir = repo(CONFIG({ maxConcurrent: 1 }));
-  const store = SqliteStore.open(storePath(factoryPaths(dir).stateDir));
+  const store = SqliteStore.open(storePath(teamPaths(dir).stateDir));
   const herdr = fakeHerdr(dir);
   const a = engine(dir, { store, herdr, runs: {
     'GH-7@impl': finishedRun(dir, 'impl'),
@@ -151,7 +151,7 @@ test('a nudged turn waits for a slot: held when the cap is reached, started by t
 
 test('every attempt keeps its own brief and policy: the record is not rewritten by a later turn', async () => {
   const dir = repo(CONFIG());
-  const store = SqliteStore.open(storePath(factoryPaths(dir).stateDir));
+  const store = SqliteStore.open(storePath(teamPaths(dir).stateDir));
   const herdr = fakeHerdr(dir, { gone: ['gh-7-impl-fac000'] });
   const a = engine(dir, { store, herdr });
   await a.pickUp(ISSUE, a.cfg.rules[0]);

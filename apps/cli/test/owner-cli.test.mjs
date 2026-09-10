@@ -1,5 +1,5 @@
 // Ownership and the private dispatch, from the command line: a mutation goes to the running owner
-// over its socket, a factory held by a silent owner is not mutated behind its back, and a
+// over its socket, a team held by a silent owner is not mutated behind its back, and a
 // transport failure reads as "the owner is not answering", never as an absent agent.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,8 +9,8 @@ import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { callOwner, serveIpc, OWNER_OFFLINE } from '../build/transports/ipc.js';
-import { factoryPaths, readFactoryState } from '@weawr/engine';
-function runsIn(dir) { const v = readFactoryState(factoryPaths(dir)); const runs = v.state.runs; v.store?.close(); return runs; }
+import { teamPaths, readTeamState } from '@weawr/engine';
+function runsIn(dir) { const v = readTeamState(teamPaths(dir)); const runs = v.state.runs; v.store?.close(); return runs; }
 
 const BIN = fileURLToPath(new URL('../dist/weawr.mjs', import.meta.url));
 const ENGINE = fileURLToPath(new URL('../../../packages/engine/dist/index.js', import.meta.url));
@@ -29,16 +29,16 @@ function repo(t, runs) {
 const run = (dir, args) => { const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, WEAWR_NO_UPDATE_CHECK: '1' } }); return { status: r.status ?? 1, out: `${r.stdout || ''}${r.stderr || ''}` }; };
 const RUNS = { 'GH-7': { rule: 'r', status: 'done', startedAt: '2026-01-01T00:00', title: 'a' }, 'GH-8': { rule: 'r', status: 'done', startedAt: '2026-01-01T00:00', title: 'b' } };
 
-/** A process that owns `dir`'s factory; with `serve`, it also answers on the factory's socket. */
+/** A process that owns `dir`'s team; with `serve`, it also answers on the team's socket. */
 function owner(t, dir, { serve }) {
   const child = spawn(process.execPath, ['--input-type=module', '-e', `
-    import { acquireOwnership, factoryPaths, loadConfig, FactoryEngine, createApplication } from ${JSON.stringify(ENGINE)};
+    import { acquireOwnership, teamPaths, loadConfig, TeamEngine, createApplication } from ${JSON.stringify(ENGINE)};
     import { serveIpc } from ${JSON.stringify(IPC)};
-    const paths = factoryPaths(${JSON.stringify(dir)});
-    const r = acquireOwnership({ lockPath: paths.lockPath, ownerPath: paths.ownerPath, card: { factoryId: 'f', hostId: 'h', startedAt: 'now', version: 'test', socketPath: ${serve ? 'paths.socketPath' : 'null'} } });
+    const paths = teamPaths(${JSON.stringify(dir)});
+    const r = acquireOwnership({ lockPath: paths.lockPath, ownerPath: paths.ownerPath, card: { teamId: 'f', hostId: 'h', startedAt: 'now', version: 'test', socketPath: ${serve ? 'paths.socketPath' : 'null'} } });
     if (!r.ok) { process.stdout.write('busy\\n'); process.exit(2); }
     if (${serve}) {
-      const engine = new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: ${JSON.stringify(PROMPTS)} }), tracker: null, herdr: { async agentGet() { return null; } }, paths, promptsRoot: ${JSON.stringify(PROMPTS)}, ids: { hostId: 'h', factoryId: 'f' }, log: () => {} });
+      const engine = new TeamEngine({ cfg: loadConfig({ paths, promptsRoot: ${JSON.stringify(PROMPTS)} }), tracker: null, herdr: { async agentGet() { return null; } }, paths, promptsRoot: ${JSON.stringify(PROMPTS)}, ids: { hostId: 'h', teamId: 'f' }, log: () => {} });
       await serveIpc(createApplication(engine), paths.socketPath);
     }
     process.stdout.write('ready\\n');
@@ -63,7 +63,7 @@ test('with a running owner, status and reset are answered by it, and the file it
   assert.deepEqual(Object.keys(runsIn(dir)), ['GH-8']);
 });
 
-test('a factory held by an owner that is not answering is not mutated behind its back', async (t) => {
+test('a team held by an owner that is not answering is not mutated behind its back', async (t) => {
   const dir = repo(t, RUNS);
   await owner(t, dir, { serve: false });
   const rs = run(dir, ['reset', 'GH-7']);

@@ -5,8 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LATEST_REVISION, RECIPE_REVISIONS, diffTemplates, revision, validateTemplate } from '../dist/index.js';
 
-// Recipe revisions are kept, not replaced: revision 1 is what every factory ran before structured
-// verdicts and `weawr merge` existed, and a factory pinned to it keeps getting exactly those words.
+// Recipe revisions are kept, not replaced: revision 1 is what every team ran before structured
+// verdicts and `weawr merge` existed, and a team pinned to it keeps getting exactly those words.
 const promptsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'prompts');
 const read = (rev, name) => fs.readFileSync(path.join(promptsDir, String(rev), name), 'utf8');
 const REVIEWERS = ['review-lead.md', 'review-security.md', 'review-usability.md'];
@@ -36,7 +36,7 @@ test('revision 1: the implementer brief lets the issue grant the merge, gated on
 test('revision 2: the implementer never merges by hand; the merge label and `weawr merge` are the only route', () => {
   const brief = read(2, 'default.md');
   assert.match(brief, /Never merge the PR yourself/);
-  assert.match(brief, /\{\{weawr\}\} merge \{\{runKey\}\}/, 'the command names the weawr that runs the factory');
+  assert.match(brief, /\{\{weawr\}\} merge \{\{runKey\}\}/, 'the command names the weawr that runs the team');
   assert.match(brief, /\{\{mergeLabel\}\}/);
   assert.match(brief, /a missing verdict is not a yes/);
   assert.match(brief, /only the `\{\{mergeLabel\}\}` label and `\{\{weawr\}\} merge` \(step 5\) can do that/);

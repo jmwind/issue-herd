@@ -1,11 +1,11 @@
-// `weawr serve [--port N] [--host ADDR] [--no-web]` — the CLI's transport host for every factory
+// `weawr serve [--port N] [--host ADDR] [--no-web]` — the CLI's transport host for every team
 // on this machine: the versioned HTTP/SSE interface and, unless --no-web, the bundled console.
 // `weawr console` is the same command by its older name, plus the passcode and device
 // subcommands. Killing it stops nothing: owners keep running; starting it again restores the view.
 import os from 'node:os';
 import { askSecret, credentialsPath, loadCredentials, saveCredential } from '@weawr/engine/adapters/auth.mjs';
 import * as _gate from './../transports/gate.mjs';
-import { FactoryHub } from '../transports/hub.js';
+import { TeamHub } from '../transports/hub.js';
 import { THEMES, createHandler, listen, tailscaleAddresses } from '../transports/http.js';
 import type { Context } from '../context.js';
 const { Gate, hashPasscode, newDeviceToken } = _gate as Record<string, any>;
@@ -58,7 +58,7 @@ export async function serve(ctx: Context, args: string[], { asConsole = false } 
   const creds = () => loadCredentials(file).console || {};
   const gate = new Gate({ hash: creds().passcode || null });
   if (hosts.length && !gate.enabled) throw new Error('--host needs a passcode first (weawr console set-passcode); an ungated console stays on loopback');
-  const hub = new FactoryHub({ herdr: ctx.herdr, version: ctx.version, promptsRoot: ctx.promptsRoot, log });
+  const hub = new TeamHub({ herdr: ctx.herdr, version: ctx.version, promptsRoot: ctx.promptsRoot, log });
   const live = args.includes('--dev');
   const { handler } = createHandler({ gate, hub, log, webDir: args.includes('--no-web') ? null : ctx.webDir, devices: () => creds().devices || {}, version: ctx.version, theme: themeArg, live, clientJs: process.env.WEAWR_CLIENT_JS || null, assetsDir: process.env.WEAWR_ASSETS_DIR || null });
   let bound;

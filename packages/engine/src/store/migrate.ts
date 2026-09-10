@@ -3,11 +3,11 @@
 // Inspect first (`inventory`), then `migrate`: back the legacy files up, import runs and nudges in
 // one transaction, bring the console's acknowledgements across, mark the store as migrated, and
 // set state.json aside. Never a dual write: after this the JSON file is a backup, not a source. A
-// state file that does not parse is a refusal, not an empty factory.
+// state file that does not parse is a refusal, not an empty team.
 import fs from 'node:fs';
 import path from 'node:path';
 import { SqliteStore, storePath } from './sqlite.js';
-import type { FactoryPaths } from '../paths.js';
+import type { TeamPaths } from '../paths.js';
 
 export interface Inventory {
   statePath: string;
@@ -27,7 +27,7 @@ export interface Inventory {
 }
 
 export interface MigrationOptions {
-  paths: FactoryPaths;
+  paths: TeamPaths;
   /** The console's notes file (~/.config/weawr/console.json), or null to skip acknowledgements. */
   consoleNotesPath?: string | null;
   now?: () => Date;
@@ -62,7 +62,7 @@ export function inventory({ paths, consoleNotesPath = null }: MigrationOptions):
 export interface MigrationResult { migrated: boolean; reason?: string; backupDir?: string; runs: number; nudges: number; acknowledgements: number }
 
 /**
- * Do it. Call only while holding the factory's ownership. Refuses when the store already says it
+ * Do it. Call only while holding the team's ownership. Refuses when the store already says it
  * was migrated, when state.json does not parse, or when there is nothing legacy to import (then
  * the store is simply created).
  */
@@ -70,7 +70,7 @@ export function migrateLegacyState(opts: MigrationOptions): MigrationResult {
   const { paths, consoleNotesPath = null, now = () => new Date() } = opts;
   const inv = inventory(opts);
   if (inv.alreadyMigrated) return { migrated: false, reason: `already migrated at ${inv.alreadyMigrated}; ${path.basename(paths.statePath)} is a backup now, not a source`, runs: 0, nudges: 0, acknowledgements: 0 };
-  if (inv.stateExists && inv.stateParses === false) throw new Error(`${paths.statePath} is not valid JSON (${inv.stateError}). It was left exactly as it is: fix it, or move it aside deliberately, then run again. A corrupt state file is never treated as an empty factory.`);
+  if (inv.stateExists && inv.stateParses === false) throw new Error(`${paths.statePath} is not valid JSON (${inv.stateError}). It was left exactly as it is: fix it, or move it aside deliberately, then run again. A corrupt state file is never treated as an empty team.`);
   const stamp = now().toISOString().replace(/[:.]/g, '-');
   const store = SqliteStore.open(storePath(paths.stateDir), { now });
   try {
@@ -98,10 +98,10 @@ export function migrateLegacyState(opts: MigrationOptions): MigrationResult {
           }
         } catch { /* no notes */ }
       }
-      store.appendEvent('factory.migrated', { data: { from: 'state.json', runs: Object.keys(runs).length, backupDir } }, now());
+      store.appendEvent('team.migrated', { data: { from: 'state.json', runs: Object.keys(runs).length, backupDir } }, now());
       store.setMeta('migrated_at', now().toISOString());
       store.setMeta('migrated_from', paths.statePath);
-      // What this factory was running: the original briefs. An upgrade is a decision, not a side effect.
+      // What this team was running: the original briefs. An upgrade is a decision, not a side effect.
       store.setMeta('recipe_revision', '1');
     });
     // The JSON file steps aside only after the store has it. Not deleted: it is the rollback.

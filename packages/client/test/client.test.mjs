@@ -29,7 +29,7 @@ function host(t, script) {
 function await_listen(server) { server.listen(0, '127.0.0.1'); }
 const okEnv = (result) => ({ protocolVersion: 1, ok: true, result, generatedAt: new Date().toISOString() });
 const errEnv = (code, message, status = 400) => ({ status, body: { protocolVersion: 1, ok: false, error: { code, message } } });
-const snap = (rev) => ({ protocolVersion: 1, hostname: 'h', version: '1', herdr: { connected: true, version: null }, generatedAt: 'now', factories: [{ factoryId: 'f1', id: 'app', name: 'app', repo: '/r', tracker: 'github', revision: rev, owner: { status: 'online', observedAt: 'now' }, freshness: {}, roles: [], rules: [], watcher: { stale: false }, counts: { running: 0, working: 0, alerts: 0, inflight: 0, merged: 0, done: 0 }, humanWaitMs: 0, production: {}, alerts: [], issues: [] }] });
+const snap = (rev) => ({ protocolVersion: 1, hostname: 'h', version: '1', herdr: { connected: true, version: null }, generatedAt: 'now', teams: [{ teamId: 'f1', id: 'app', name: 'app', repo: '/r', tracker: 'github', revision: rev, owner: { status: 'online', observedAt: 'now' }, freshness: {}, roles: [], rules: [], watcher: { stale: false }, counts: { running: 0, working: 0, alerts: 0, inflight: 0, merged: 0, done: 0 }, humanWaitMs: 0, production: {}, alerts: [], issues: [] }] });
 
 test('requests are envelopes; an error envelope becomes a WeawrError with its code; a dead host is a transport error', async (t) => {
   await new Promise((r) => setTimeout(r, 10));
@@ -37,9 +37,9 @@ test('requests are envelopes; an error envelope becomes a WeawrError with its co
   const h = host(t, { snapshot: () => snap(1), request: (m, url, body, headers) => {
     seen.push([m, url.pathname, body, headers.authorization || null, headers['x-weawr-protocol']]);
     if (url.pathname === '/api/v1/capabilities') return { body: okEnv({ protocolVersions: [1], version: '1', commands: [], features: {}, auth: { gated: false, mechanisms: [] } }) };
-    if (url.pathname === '/api/v1/factories/f1/tasks/GH-7') return errEnv('no_such_task', 'no task GH-7', 404);
+    if (url.pathname === '/api/v1/teams/f1/tasks/GH-7') return errEnv('no_such_task', 'no task GH-7', 404);
     if (url.pathname === '/api/v1/commands/task.done') return { body: okEnv({ operation: { id: 'op1', kind: 'task.done', status: 'running', createdAt: 'a', updatedAt: 'a' }, result: null }) };
-    if (url.pathname === '/api/v1/factories/f1/operations/op1') return { body: okEnv({ id: 'op1', kind: 'task.done', status: seen.filter((s) => s[1].endsWith('/op1')).length > 1 ? 'completed' : 'running', result: { done: true }, createdAt: 'a', updatedAt: 'b' }) };
+    if (url.pathname === '/api/v1/teams/f1/operations/op1') return { body: okEnv({ id: 'op1', kind: 'task.done', status: seen.filter((s) => s[1].endsWith('/op1')).length > 1 ? 'completed' : 'running', result: { done: true }, createdAt: 'a', updatedAt: 'b' }) };
     return { status: 500, body: 'not an envelope' };
   } });
   await new Promise((r) => setTimeout(r, 20));
@@ -60,21 +60,21 @@ test('requests are envelopes; an error envelope becomes a WeawrError with its co
 
 test('subscribe: a snapshot, events with cursors, a resnapshot on request, reconnection after a drop with the cursors carried', async (t) => {
   const asked = [];
-  const h = host(t, { snapshot: (url) => { asked.push(url.searchParams.get('cursors')); return snap(3); }, request: (m, url) => (url.pathname === '/api/v1/factories/f1/snapshot' ? { body: okEnv({ ...snap(7).factories[0], revision: 7 }) } : errEnv('not_found', 'no', 404)) });
+  const h = host(t, { snapshot: (url) => { asked.push(url.searchParams.get('cursors')); return snap(3); }, request: (m, url) => (url.pathname === '/api/v1/teams/f1/snapshot' ? { body: okEnv({ ...snap(7).teams[0], revision: 7 }) } : errEnv('not_found', 'no', 404)) });
   await new Promise((r) => setTimeout(r, 20));
   const c = new WeawrClient({ baseUrl: h.url() });
   const got = { snapshots: [], events: [], resnaps: [], status: [] };
   const sub = c.subscribe({ onSnapshot: (s) => got.snapshots.push(s), onEvent: (e) => got.events.push(e), onResnapshot: (s, why) => got.resnaps.push([s.revision, why]), onStatus: (s) => got.status.push(s) });
   await until(() => got.snapshots.length === 1);
   assert.equal(sub.connected, true); assert.equal(sub.cursors.get('f1'), 3, 'the snapshot revision is the first cursor');
-  h.push('event', { factoryId: 'f1', seq: 4, at: 'x', kind: 'run.blocked', runKey: 'GH-7', issueKey: 'GH-7', data: {} });
-  h.push('event', { factoryId: 'f1', seq: 5, at: 'x', kind: 'run.working', runKey: 'GH-7', issueKey: 'GH-7', data: {} });
+  h.push('event', { teamId: 'f1', seq: 4, at: 'x', kind: 'run.blocked', runKey: 'GH-7', issueKey: 'GH-7', data: {} });
+  h.push('event', { teamId: 'f1', seq: 5, at: 'x', kind: 'run.working', runKey: 'GH-7', issueKey: 'GH-7', data: {} });
   await until(() => got.events.length === 2);
   assert.equal(sub.cursors.get('f1'), 5);
-  h.push('resnapshot', { factoryId: 'f1', reason: 'expired' });
+  h.push('resnapshot', { teamId: 'f1', reason: 'expired' });
   await until(() => got.resnaps.length === 1);
   assert.deepEqual(got.resnaps[0], [7, 'expired']); assert.equal(sub.cursors.get('f1'), 7);
-  assert.equal(c.last.snapshot.factories[0].revision, 3);
+  assert.equal(c.last.snapshot.teams[0].revision, 3);
   // the connection drops: the client says so, then comes back after the cursor it had
   h.drop();
   await until(() => got.status.some((s) => !s.connected));

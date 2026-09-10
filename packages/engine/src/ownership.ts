@@ -1,4 +1,4 @@
-// Exclusive local ownership of a factory.
+// Exclusive local ownership of a team.
 //
 // Two watchers on one repository would both schedule pickups and both write the state, so the
 // first one to start takes a lock and every other one reports who holds it. The lock is an
@@ -13,7 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { writeJsonAtomic, readJson } from './state.js';
 
 export interface OwnerCard {
-  factoryId: string;
+  teamId: string;
   hostId: string;
   hostname: string;
   pid: number;
@@ -46,13 +46,13 @@ export interface AcquireOptions {
 export function processStartedAt(): number { return Math.round(Date.now() - process.uptime() * 1000); }
 
 // The lock lives exactly as long as its connection, and a `DatabaseSync` nobody references is
-// closed by the garbage collector — which would give the factory away the first time a caller let
+// closed by the garbage collector — which would give the team away the first time a caller let
 // the acquire result go out of scope. So every held lock is pinned here until it is released, and
 // a caller's bookkeeping cannot cost it ownership.
 const held = new Set<DatabaseSync>();
 
 /**
- * Try to become the factory's owner. Never blocks: a busy lock is an answer, not a wait.
+ * Try to become the team's owner. Never blocks: a busy lock is an answer, not a wait.
  */
 export function acquireOwnership({ lockPath, ownerPath, card }: AcquireOptions): AcquireResult {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -71,7 +71,7 @@ export function acquireOwnership({ lockPath, ownerPath, card }: AcquireOptions):
     db.prepare('INSERT OR REPLACE INTO lock (id, pid, since) VALUES (1, ?, ?)').run(process.pid, new Date().toISOString());
   } catch (e: any) {
     db.close();
-    if (/SQLITE_BUSY|locked/i.test(e.message)) return { ok: false, holder: readCard(ownerPath), reason: 'another watcher owns this factory' };
+    if (/SQLITE_BUSY|locked/i.test(e.message)) return { ok: false, holder: readCard(ownerPath), reason: 'another watcher owns this team' };
     throw e;
   }
   const full: OwnerCard = {
@@ -108,7 +108,7 @@ export function readCard(ownerPath: string): OwnerCard | null {
 }
 
 /**
- * Is the factory owned right now? Asks the lock, not the card: the lock cannot lie about a dead
+ * Is the team owned right now? Asks the lock, not the card: the lock cannot lie about a dead
  * process. Returns the card when it is, for the report.
  */
 export function currentOwner({ lockPath, ownerPath }: { lockPath: string; ownerPath: string }): { owned: boolean; holder: OwnerCard | null } {
@@ -126,8 +126,8 @@ export function currentOwner({ lockPath, ownerPath }: { lockPath: string; ownerP
   } finally { try { db?.close(); } catch { /* ignore */ } }
 }
 
-/** One line about who holds a factory, for an error message. */
+/** One line about who holds a team, for an error message. */
 export function describeHolder(holder: OwnerCard | null): string {
-  if (!holder) return 'another process holds the factory lock (it left no calling card)';
+  if (!holder) return 'another process holds the team lock (it left no calling card)';
   return `pid ${holder.pid} on ${holder.hostname}${holder.version ? ` (weawr ${holder.version})` : ''}, since ${holder.startedAt}`;
 }

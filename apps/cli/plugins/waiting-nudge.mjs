@@ -1,6 +1,6 @@
 // A shipped example plugin: a scheduled task.
 //
-// Every 15 minutes, look at the factory's snapshot and send one herdr notification for each task
+// Every 15 minutes, look at the team's snapshot and send one herdr notification for each task
 // that has waited on a person for more than an hour — once per task, not once per run of the
 // task. The engine calls `run` with the canonical snapshot, a logger, a notifier and the memory
 // the task returned last time. `"plugins": ["examples/waiting-nudge"]`.

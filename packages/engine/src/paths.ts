@@ -1,4 +1,4 @@
-// Where a factory keeps its things. Computed once from the repository root and handed to
+// Where a team keeps its things. Computed once from the repository root and handed to
 // everything else, so two engines for two repositories can live in one process and nothing reads
 // process.cwd() at import time.
 import fs from 'node:fs';
@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-export interface FactoryPaths {
+export interface TeamPaths {
   /** The repository root (real path). */
   repo: string;
   /** <repo>/.weawr — committed config, instructions, prompt overrides. */
@@ -29,7 +29,7 @@ export interface FactoryPaths {
   envFiles: string[];
 }
 
-export function factoryPaths(repo: string): FactoryPaths {
+export function teamPaths(repo: string): TeamPaths {
   const root = realpathOr(repo);
   const configDir = path.join(root, '.weawr');
   const stateDir = path.join(configDir, 'state');
@@ -64,9 +64,9 @@ function socketPathFor(repo: string, stateDir: string): string {
 
 /**
  * The repository that contains `cwd`, or `cwd` itself when it is not one. A linked worktree — the
- * kind weawr makes for a run — resolves to the main working tree, because the factory (its
+ * kind weawr makes for a run — resolves to the main working tree, because the team (its
  * `.weawr/`, its state) lives there: `weawr merge` and `weawr result` are run by agents from
- * inside their worktrees, and must find the factory that started them, not an empty one.
+ * inside their worktrees, and must find the team that started them, not an empty one.
  */
 export function findRepoRoot(cwd: string): string {
   const git = (args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
@@ -80,7 +80,7 @@ export function findRepoRoot(cwd: string): string {
   return top;
 }
 
-/** Where per-user weawr files live: credentials, host id, factory registrations. */
+/** Where per-user weawr files live: credentials, host id, team registrations. */
 export function userDir(): string {
   if (process.env.WEAWR_CREDENTIALS) return path.dirname(process.env.WEAWR_CREDENTIALS);
   const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');

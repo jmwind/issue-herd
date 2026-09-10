@@ -1,4 +1,4 @@
-// `weawr demo`: every shipped scenario is a factory that loads, with briefs that check; the
+// `weawr demo`: every shipped scenario is a team that loads, with briefs that check; the
 // starter app the scenarios file issues against passes its own tests; the issues are filed and
 // reset through the GitHub API in the shapes it uses — all without a network.
 import { test } from 'node:test';
@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { SqliteStore, factoryPaths, loadConfig, storePath } from '@weawr/engine';
+import { SqliteStore, teamPaths, loadConfig, storePath } from '@weawr/engine';
 import { GitHubTracker } from '@weawr/engine/adapters/trackers/github.mjs';
 import { validateTemplate } from '@weawr/recipes';
 import { defaultDemoDir, fileIssues, listScenarios, parseOpts, pushStarter, readLedger, resetLocal, resetRemote, restoreStarter, writeScenario } from '../build/commands/demo.js';
@@ -49,11 +49,11 @@ test('the scenarios ship, each with a title, a summary, issues, and rules', () =
   }
 });
 
-test('every scenario writes a factory that loads, on GitHub, with its briefs checking as templates', (t) => {
+test('every scenario writes a team that loads, on GitHub, with its briefs checking as templates', (t) => {
   for (const s of scenarios) {
     const repo = tmp(t, `weawr-demo-${s.name}-`);
     git(repo, ['init', '-q']);
-    const paths = factoryPaths(repo);
+    const paths = teamPaths(repo);
     writeScenario(paths, s, 'jmwind/weawr-demo');
     assert.ok(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8').includes('.weawr/'), `${s.name}: the scenario is kept out of the repository`);
     const written = JSON.parse(fs.readFileSync(paths.configPath, 'utf8'));
@@ -175,7 +175,7 @@ test('reset closes the ledger\'s issues, their PRs and branches, strips the clai
 test('the local reset closes the runs\' workspaces, sets the state aside, removes worktrees, and forgets the registration', async (t) => {
   const repo = tmp(t, 'weawr-demo-local-');
   git(repo, ['init', '-q', '-b', 'main']); fs.writeFileSync(path.join(repo, 'a'), 'a'); git(repo, ['add', '-A']); git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '-m', 'a']);
-  const paths = factoryPaths(repo);
+  const paths = teamPaths(repo);
   fs.mkdirSync(paths.stateDir, { recursive: true });
   const store = SqliteStore.open(storePath(paths.stateDir));
   store.save({ runs: { 'GH-1@dev': { status: 'running', workspaceId: 'w7', workspaceLabel: 'GH-1 dev x', agentName: 'gh-1-dev' }, 'GH-2': { status: 'done', workspaceId: null } }, nudges: {} });
@@ -202,7 +202,7 @@ test('options: --into, --repo, --dry-run; an unknown option is refused; the defa
   assert.equal(defaultDemoDir('/u', 'jmwind/weawr-demo'), '/u/demos/weawr-demo');
 });
 
-test('the command: list needs no factory, and --dry-run files nothing', (t) => {
+test('the command: list needs no team, and --dry-run files nothing', (t) => {
   const nowhere = tmp(t, 'weawr-nowhere-');
   const run = (args) => spawnSync(process.execPath, [BIN, 'demo', ...args], { cwd: nowhere, encoding: 'utf8', env: { ...process.env, WEAWR_NO_UPDATE_CHECK: '1' } });
   const list = run(['list']);
@@ -216,5 +216,5 @@ test('the command: list needs no factory, and --dry-run files nothing', (t) => {
   const bad = run(['nope']);
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /no demo scenario "nope"/);
-  assert.equal(readLedger(factoryPaths(nowhere)), null);
+  assert.equal(readLedger(teamPaths(nowhere)), null);
 });

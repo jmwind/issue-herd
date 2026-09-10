@@ -1,5 +1,5 @@
 // `weawr` (run), `weawr once`, `weawr dry-run`: the watcher itself. Running and polling once take
-// the factory's ownership and answer on its socket; a dry run reads and touches nothing.
+// the team's ownership and answer on its socket; a dry run reads and touches nothing.
 import { createApplication, hostApplication, makeEngine, takeOwnership } from '../context.js';
 import type { Context } from '../context.js';
 import { updateReminder } from './update.js';

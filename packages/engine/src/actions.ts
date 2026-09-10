@@ -2,7 +2,7 @@
 // workspace closes, the task moves to output), undo that, stop its agents, tidy the pile, read an
 // agent's screen, exit one agent. Ported from the console's orchestrator into the owner: one
 // implementation, evented, and refused rather than recorded when herdr is not answering.
-import type { FactoryEngine } from './factory.js';
+import type { TeamEngine } from './team.js';
 import { isDurable } from './store/index.js';
 import * as _agents from './agents.mjs';
 import * as _herdr from './adapters/herdr.mjs';
@@ -19,7 +19,7 @@ export interface CloseOutcome { run: string; role: string | null; agent: string 
  * reused by herdr for "…"' (the id names somebody else's workspace now — herdr numbers them per
  * server session — and that one is left alone), or 'is still open (why)'.
  */
-export async function closeWorkspace(engine: FactoryEngine, r: { workspaceId?: string | null; workspaceLabel?: string | null; agent?: string | null }): Promise<string> {
+export async function closeWorkspace(engine: TeamEngine, r: { workspaceId?: string | null; workspaceLabel?: string | null; agent?: string | null }): Promise<string> {
   if (!r.workspaceId) return 'was already closed';
   try {
     if (typeof engine.herdr.closeWorkspaceOf === 'function') return await engine.herdr.closeWorkspaceOf(r.workspaceId, { label: r.workspaceLabel ?? null, repo: engine.paths.repo, agentName: r.agent ?? null });
@@ -37,7 +37,7 @@ export async function closeWorkspace(engine: FactoryEngine, r: { workspaceId?: s
  * with its own idea of how to stop; the workspace second. A workspace whose agent would not exit is
  * left alone. Runs with nothing to close are not reported.
  */
-export async function closeTask(engine: FactoryEngine, task: any): Promise<CloseOutcome[]> {
+export async function closeTask(engine: TeamEngine, task: any): Promise<CloseOutcome[]> {
   const outcomes: CloseOutcome[] = [];
   for (const r of task.runs) {
     const hasWorkspace = !!r.workspaceId && r.workspaceOpen !== false;
@@ -57,10 +57,10 @@ export async function closeTask(engine: FactoryEngine, task: any): Promise<Close
  * with an agent or a workspace still on it is not done whatever anyone clicked, and when herdr is
  * not answering nothing is recorded at all.
  */
-export async function markDone(engine: FactoryEngine, issueKey: string, { by = 'console' }: { by?: string } = {}): Promise<{ done: boolean; outcomes: CloseOutcome[]; error: string | null }> {
+export async function markDone(engine: TeamEngine, issueKey: string, { by = 'console' }: { by?: string } = {}): Promise<{ done: boolean; outcomes: CloseOutcome[]; error: string | null }> {
   const snap = await engine.snapshot();
   const task = snap.issues.find((i: any) => i.key === issueKey);
-  if (!task) throw new Error(`no task ${issueKey} in this factory`);
+  if (!task) throw new Error(`no task ${issueKey} in this team`);
   if (!snap.freshness.herdrAt) return { done: false, outcomes: [], error: HERDR_AWAY };
   const outcomes = await closeTask(engine, task);
   const stuck = outcomes.filter((o) => o.outcome === 'is still running' || /^is still open/.test(o.workspace || ''));
@@ -75,7 +75,7 @@ export async function markDone(engine: FactoryEngine, issueKey: string, { by = '
   return { done: true, outcomes, error: null };
 }
 
-export function undoDone(engine: FactoryEngine, issueKey: string): { done: false } {
+export function undoDone(engine: TeamEngine, issueKey: string): { done: false } {
   engine.commit(() => { if (isDurable(engine.store)) engine.store.unacknowledge(issueKey); engine.emit('task.unacknowledged', null, { issueKey }); });
   engine.log(`${issueKey}: no longer marked done`);
   engine.invalidateSnapshot();
@@ -83,10 +83,10 @@ export function undoDone(engine: FactoryEngine, issueKey: string): { done: false
 }
 
 /** Stop a task's agents (each asked to exit its own way). Explicit: stopping is not finishing, and nothing is acknowledged. */
-export async function stopTask(engine: FactoryEngine, issueKey: string): Promise<{ outcomes: Array<{ run: string; agent: string | null; outcome: string }> }> {
+export async function stopTask(engine: TeamEngine, issueKey: string): Promise<{ outcomes: Array<{ run: string; agent: string | null; outcome: string }> }> {
   const snap = await engine.snapshot();
   const task = snap.issues.find((i: any) => i.key === issueKey);
-  if (!task) throw new Error(`no task ${issueKey} in this factory`);
+  if (!task) throw new Error(`no task ${issueKey} in this team`);
   if (!snap.freshness.herdrAt) throw new Error(HERDR_AWAY);
   const outcomes: Array<{ run: string; agent: string | null; outcome: string }> = [];
   for (const r of task.runs) {
@@ -100,10 +100,10 @@ export async function stopTask(engine: FactoryEngine, issueKey: string): Promise
 }
 
 /** Exit one run's agent, its own way. */
-export async function exitRun(engine: FactoryEngine, runKey: string): Promise<{ outcome: string }> {
+export async function exitRun(engine: TeamEngine, runKey: string): Promise<{ outcome: string }> {
   const snap = await engine.snapshot();
   const r = snap.issues.flatMap((i: any) => i.runs).find((x: any) => x.key === runKey);
-  if (!r) throw new Error(`no run ${runKey} in this factory`);
+  if (!r) throw new Error(`no run ${runKey} in this team`);
   const outcome = await engine.herdr.stopAgent(r.agent, { exitCommand: exitCommandFor(r.agentKind) });
   engine.emit('run.exited_by_person', runKey, { outcome });
   engine.invalidateSnapshot();
@@ -114,7 +114,7 @@ export async function exitRun(engine: FactoryEngine, runKey: string): Promise<{ 
  * One-shot clean-up of the pile: every workspace still open for a run whose task a person has
  * already marked done and whose agent is gone. Runs with an agent still up are never touched.
  */
-export async function tidy(engine: FactoryEngine): Promise<Array<{ issue: string; run: string; role: string | null; workspaceId: string; workspace: string }>> {
+export async function tidy(engine: TeamEngine): Promise<Array<{ issue: string; run: string; role: string | null; workspaceId: string; workspace: string }>> {
   const snap = await engine.snapshot();
   if (!snap.freshness.herdrAt) throw new Error(HERDR_AWAY);
   const outcomes: Array<{ issue: string; run: string; role: string | null; workspaceId: string; workspace: string }> = [];
@@ -130,10 +130,10 @@ export async function tidy(engine: FactoryEngine): Promise<Array<{ issue: string
 }
 
 /** The last `lines` of every agent that worked on the task, one block per role, for a read-only look. */
-export async function tailTask(engine: FactoryEngine, issueKey: string, lines = 100) {
+export async function tailTask(engine: TeamEngine, issueKey: string, lines = 100) {
   const snap = await engine.snapshot();
   const task = snap.issues.find((i: any) => i.key === issueKey);
-  if (!task) throw new Error(`no task ${issueKey} in this factory`);
+  if (!task) throw new Error(`no task ${issueKey} in this team`);
   const out: any[] = [];
   for (const r of task.runs) {
     let text: string | null;

@@ -2,7 +2,7 @@
 // (GH-61) are a matter of ordering between runs, which a subprocess per run cannot show.
 //
 // Nothing here changes directory: every engine is told where its repository is, which is also how
-// two factories share one process at the end of this file.
+// two teams share one process at the end of this file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { FactoryEngine, factoryPaths, loadConfig } from '@weawr/engine';
+import { TeamEngine, teamPaths, loadConfig } from '@weawr/engine';
 
 const PROMPTS = fileURLToPath(new URL('../../../packages/recipes/prompts', import.meta.url));
 
@@ -72,12 +72,12 @@ function finishedRun(role, over = {}, repo = REPO) {
   };
 }
 
-function engineFor(repo, { runs = {}, nudges = {}, herdr = fakeHerdr({ repo }), factoryId = 'fac0001' } = {}) {
-  const paths = factoryPaths(repo);
+function engineFor(repo, { runs = {}, nudges = {}, herdr = fakeHerdr({ repo }), teamId = 'fac0001' } = {}) {
+  const paths = teamPaths(repo);
   fs.mkdirSync(paths.stateDir, { recursive: true });
   fs.writeFileSync(paths.statePath, JSON.stringify({ runs, nudges }));
   const cfg = loadConfig({ paths, promptsRoot: PROMPTS });
-  const a = new FactoryEngine({ cfg, tracker: null, herdr, paths, promptsRoot: PROMPTS, ids: { hostId: 'testhost', factoryId }, log: () => {} });
+  const a = new TeamEngine({ cfg, tracker: null, herdr, paths, promptsRoot: PROMPTS, ids: { hostId: 'testhost', teamId }, log: () => {} });
   return { a, herdr, rule: (name) => a.cfg.rules.find((r) => r.name === name) };
 }
 const app = (opts) => engineFor(REPO, opts);
@@ -163,15 +163,15 @@ test('nudging that is switched off is refused quietly; only a spent budget wakes
   assert.match(herdr.notifications[0].body, /nudged each other 1 times, which is the limit/);
 });
 
-test('two factories in one process: distinct agent names, state and briefs for the same GH-7@impl, without changing directory', async () => {
+test('two teams in one process: distinct agent names, state and briefs for the same GH-7@impl, without changing directory', async () => {
   // The old CLI resolved its repository from process.cwd() at import time, so one process meant
-  // one factory, and agent names came from the run key alone, so two repositories watched on one
+  // one team, and agent names came from the run key alone, so two repositories watched on one
   // machine could both want "gh-7-impl". Neither is true of the engine.
   const cwdBefore = process.cwd();
   const cfgOne = { tracker: 'linear', roles: ['impl'], defaults: { worktree: 'none', onPickup: { comment: false }, onDone: { comment: false, notify: false }, onBlocked: { comment: false, notify: false }, onIdle: { comment: false, notify: false } }, rules: [{ name: 'impl', role: 'impl', match: 'any:true' }] };
   const repoA = makeRepo(cfgOne); const repoB = makeRepo(cfgOne);
-  const A = engineFor(repoA, { factoryId: 'aaaaaa111111', herdr: fakeHerdr({ repo: repoA, gone: ['gh-7-impl-aaaaaa'] }) });
-  const B = engineFor(repoB, { factoryId: 'bbbbbb222222', herdr: fakeHerdr({ repo: repoB, gone: ['gh-7-impl-bbbbbb'] }) });
+  const A = engineFor(repoA, { teamId: 'aaaaaa111111', herdr: fakeHerdr({ repo: repoA, gone: ['gh-7-impl-aaaaaa'] }) });
+  const B = engineFor(repoB, { teamId: 'bbbbbb222222', herdr: fakeHerdr({ repo: repoB, gone: ['gh-7-impl-bbbbbb'] }) });
   await A.a.pickUp(ISSUE, A.rule('impl'));
   await B.a.pickUp(ISSUE, B.rule('impl'));
   const ra = A.a.state.runs['GH-7@impl'], rb = B.a.state.runs['GH-7@impl'];
@@ -182,7 +182,7 @@ test('two factories in one process: distinct agent names, state and briefs for t
   assert.equal(JSON.parse(fs.readFileSync(path.join(repoB, '.weawr/state/state.json'), 'utf8')).runs['GH-7@impl'].agentName, 'gh-7-impl-bbbbbb');
   assert.equal(process.cwd(), cwdBefore);
   // An agent that already exists under its old name keeps it: live sessions are never renamed.
-  const C = engineFor(repoA, { factoryId: 'aaaaaa111111', runs: { 'GH-7@impl': finishedRun('impl', { status: 'stopped', agentName: 'gh-7-impl' }, repoA) } });
+  const C = engineFor(repoA, { teamId: 'aaaaaa111111', runs: { 'GH-7@impl': finishedRun('impl', { status: 'stopped', agentName: 'gh-7-impl' }, repoA) } });
   await C.a.pickUp(ISSUE, C.rule('impl'), { pass: 2, holdsClaim: true });
   assert.equal(C.a.state.runs['GH-7@impl'].agentName, 'gh-7-impl');
 });

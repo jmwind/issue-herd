@@ -267,7 +267,7 @@ that the PR is open with no conflicts — then asks GitHub to merge that head (s
 is refused by GitHub itself, and branch protection still applies), and says on the issue what
 allowed it. A verdict without a commit, including every revision-1 prose verdict, authorises
 nothing; an approval of one head never merges another. `weawr recipe show` says which revision a
-factory runs; `weawr recipe upgrade --dry-run` shows the difference and `weawr recipe upgrade`
+team runs; `weawr recipe upgrade --dry-run` shows the difference and `weawr recipe upgrade`
 moves new tasks to it.
 
 The implementer does not have to watch for those verdicts. Its session is idle once its result is

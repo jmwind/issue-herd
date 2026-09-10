@@ -1,7 +1,7 @@
 // The bundled recipe: which revisions ship, what each asks of an agent, and what a template may say.
 //
 // A recipe revision is a set of templates and the result/nudge protocol they teach. Revisions are
-// kept, not replaced: a factory pinned to revision 1 keeps rendering revision 1 after weawr is
+// kept, not replaced: a team pinned to revision 1 keeps rendering revision 1 after weawr is
 // upgraded, and an active run keeps the words it was given.
 
 export const RECIPE_ID = 'weawr-default';
@@ -30,7 +30,7 @@ export const RECIPE_REVISIONS: readonly RecipeRevision[] = [
       'the implementer never merges by hand; when the issue carries the merge label it runs `weawr merge <run key>`, which checks the label, every reviewing role\'s verdict against the PR\'s current head, and mergeability',
       'reviewers put their verdict in `review: { verdict, prUrl, headSha }` as well as in words; a verdict without a head counts for nothing at merge time',
       'results are written whole (temporary file, then rename) and are checked against the schema; an unreadable result does not finish a turn',
-      'new placeholders: {{runKey}}, {{mergeLabel}}, {{worktree}} (the run\'s own working tree, which the briefs now name as the only place to read, run and edit), {{weawr}} (the weawr command that runs this factory, which is what an agent is told to run)',
+      'new placeholders: {{runKey}}, {{mergeLabel}}, {{worktree}} (the run\'s own working tree, which the briefs now name as the only place to read, run and edit), {{weawr}} (the weawr command that runs this team, which is what an agent is told to run)',
     ],
   },
 ];

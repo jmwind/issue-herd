@@ -3,7 +3,7 @@
 // says how stale it is; it never invents a lifecycle fact and never treats a lost connection as
 // success.
 import { PROTOCOL_VERSION } from '@weawr/protocol';
-import type { Capabilities, ClientCommandName, Envelope, EventView, FactorySnapshot, HostSnapshot, OperationView, TaskView } from '@weawr/protocol';
+import type { Capabilities, ClientCommandName, Envelope, EventView, TeamSnapshot, HostSnapshot, OperationView, TaskView } from '@weawr/protocol';
 
 export { PROTOCOL_VERSION };
 
@@ -24,12 +24,12 @@ export interface ClientOptions {
 export interface Subscription { close(): void; readonly cursors: ReadonlyMap<string, number>; readonly connected: boolean }
 
 export interface SubscribeHandlers {
-  /** Every factory on the host, whenever what is shown changed. */
+  /** Every team on the host, whenever what is shown changed. */
   onSnapshot?: (snapshot: HostSnapshot) => void;
-  /** One structured event, in order, per factory. */
+  /** One structured event, in order, per team. */
   onEvent?: (event: EventView) => void;
-  /** A factory's cursor expired: the client has refetched its snapshot for you; here is the new one. */
-  onResnapshot?: (snapshot: FactorySnapshot, reason: string) => void;
+  /** A team's cursor expired: the client has refetched its snapshot for you; here is the new one. */
+  onResnapshot?: (snapshot: TeamSnapshot, reason: string) => void;
   /** Connection state: connected, or disconnected with the retry delay. What a UI shows as "stale". */
   onStatus?: (status: { connected: boolean; retryInMs?: number; error?: string }) => void;
   /** Any other event the host sends (a development `reload`, say), with its parsed data. */
@@ -76,12 +76,12 @@ export class WeawrClient {
   }
 
   capabilities(): Promise<Capabilities> { return this.request('GET', '/api/v1/capabilities'); }
-  factories(): Promise<{ factories: Array<Pick<FactorySnapshot, 'factoryId' | 'id' | 'name' | 'repo' | 'tracker' | 'owner' | 'capabilities'>> }> { return this.request('GET', '/api/v1/factories'); }
+  teams(): Promise<{ teams: Array<Pick<TeamSnapshot, 'teamId' | 'id' | 'name' | 'repo' | 'tracker' | 'owner' | 'capabilities'>> }> { return this.request('GET', '/api/v1/teams'); }
   async hostSnapshot(): Promise<HostSnapshot> { const s = await this.request<HostSnapshot>('GET', '/api/v1/snapshot'); this.last = { snapshot: s, receivedAt: Date.now() }; return s; }
-  snapshot(factoryId: string): Promise<FactorySnapshot> { return this.request('GET', `/api/v1/factories/${encodeURIComponent(factoryId)}/snapshot`); }
-  task(factoryId: string, taskKey: string): Promise<TaskView & { attempts: unknown[] }> { return this.request('GET', `/api/v1/factories/${encodeURIComponent(factoryId)}/tasks/${encodeURIComponent(taskKey)}`); }
-  tail(factoryId: string, taskKey: string, lines = 100): Promise<{ blocks: Array<{ run: string; role: string | null; agent: string | null; alive: boolean; phrase: string; text: string | null; source: string; observedAt: string }> }> { return this.request('GET', `/api/v1/factories/${encodeURIComponent(factoryId)}/tasks/${encodeURIComponent(taskKey)}/tail?lines=${lines}`); }
-  operation(factoryId: string, id: string): Promise<OperationView> { return this.request('GET', `/api/v1/factories/${encodeURIComponent(factoryId)}/operations/${encodeURIComponent(id)}`); }
+  snapshot(teamId: string): Promise<TeamSnapshot> { return this.request('GET', `/api/v1/teams/${encodeURIComponent(teamId)}/snapshot`); }
+  task(teamId: string, taskKey: string): Promise<TaskView & { attempts: unknown[] }> { return this.request('GET', `/api/v1/teams/${encodeURIComponent(teamId)}/tasks/${encodeURIComponent(taskKey)}`); }
+  tail(teamId: string, taskKey: string, lines = 100): Promise<{ blocks: Array<{ run: string; role: string | null; agent: string | null; alive: boolean; phrase: string; text: string | null; source: string; observedAt: string }> }> { return this.request('GET', `/api/v1/teams/${encodeURIComponent(teamId)}/tasks/${encodeURIComponent(taskKey)}/tail?lines=${lines}`); }
+  operation(teamId: string, id: string): Promise<OperationView> { return this.request('GET', `/api/v1/teams/${encodeURIComponent(teamId)}/operations/${encodeURIComponent(id)}`); }
 
   /**
    * A command. Every mutation carries a request id: repeating the call with the same id returns the
@@ -94,10 +94,10 @@ export class WeawrClient {
   }
 
   /** Poll an operation until it is terminal, or give up after `timeoutMs` (the operation may still finish). */
-  async waitForOperation(factoryId: string, id: string, { pollMs = 1000, timeoutMs = 120_000 } = {}): Promise<OperationView> {
+  async waitForOperation(teamId: string, id: string, { pollMs = 1000, timeoutMs = 120_000 } = {}): Promise<OperationView> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const op = await this.operation(factoryId, id);
+      const op = await this.operation(teamId, id);
       if (op.status === 'completed' || op.status === 'failed' || op.status === 'partial') return op;
       if (Date.now() >= deadline) return op;
       await new Promise((r) => setTimeout(r, pollMs));
@@ -105,17 +105,17 @@ export class WeawrClient {
   }
 
   // ---- the actions a console offers, each one command
-  taskDone(factory: string, task: string, opts: { requestId?: string; expectedRevision?: number } = {}) { return this.command<{ done: boolean; outcomes: unknown[]; error: string | null }>('task.done', { factory, task, ...opts }); }
-  taskUndo(factory: string, task: string, opts: { requestId?: string } = {}) { return this.command<{ done: boolean }>('task.undo', { factory, task, ...opts }); }
-  taskStop(factory: string, task: string, opts: { requestId?: string } = {}) { return this.command<{ outcomes: unknown[] }>('task.stop', { factory, task, ...opts }); }
-  taskReset(factory: string, task: string, opts: { requestId?: string } = {}) { return this.command<{ forgot: string[] }>('task.reset', { factory, task, ...opts }); }
-  runExit(factory: string, run: string, opts: { requestId?: string } = {}) { return this.command<{ outcome: string }>('run.exit', { factory, run, ...opts }); }
-  tidy(factory: string | null = null, opts: { requestId?: string } = {}) { return this.command<{ outcomes: unknown[] }>('factory.tidy', { ...(factory ? { factory } : {}), ...opts }); }
+  taskDone(team: string, task: string, opts: { requestId?: string; expectedRevision?: number } = {}) { return this.command<{ done: boolean; outcomes: unknown[]; error: string | null }>('task.done', { team, task, ...opts }); }
+  taskUndo(team: string, task: string, opts: { requestId?: string } = {}) { return this.command<{ done: boolean }>('task.undo', { team, task, ...opts }); }
+  taskStop(team: string, task: string, opts: { requestId?: string } = {}) { return this.command<{ outcomes: unknown[] }>('task.stop', { team, task, ...opts }); }
+  taskReset(team: string, task: string, opts: { requestId?: string } = {}) { return this.command<{ forgot: string[] }>('task.reset', { team, task, ...opts }); }
+  runExit(team: string, run: string, opts: { requestId?: string } = {}) { return this.command<{ outcome: string }>('run.exit', { team, run, ...opts }); }
+  tidy(team: string | null = null, opts: { requestId?: string } = {}) { return this.command<{ outcomes: unknown[] }>('team.tidy', { ...(team ? { team } : {}), ...opts }); }
 
   /**
-   * Live updates over server-sent events, with reconnection and per-factory cursors. On reconnect
+   * Live updates over server-sent events, with reconnection and per-team cursors. On reconnect
    * the stream resumes after the last cursor seen; when the host says a cursor expired, the client
-   * refetches that factory's snapshot and tells you. Implemented over fetch's body stream so the
+   * refetches that team's snapshot and tells you. Implemented over fetch's body stream so the
    * same code runs in a browser, in Node, and in a native shell.
    */
   subscribe(handlers: SubscribeHandlers, { initialCursors = new Map<string, number>() }: { initialCursors?: Map<string, number> } = {}): Subscription {
@@ -132,9 +132,9 @@ export class WeawrClient {
         status({ connected: true }); backoff = 1000;
         for await (const msg of parseSse(res.body)) {
           if (closed) break;
-          if (msg.event === 'snapshot') { const snap = JSON.parse(msg.data) as HostSnapshot; this.last = { snapshot: snap, receivedAt: Date.now() }; for (const f of snap.factories) if (!cursors.has(f.factoryId) || (cursors.get(f.factoryId) ?? 0) < f.revision) cursors.set(f.factoryId, f.revision); handlers.onSnapshot?.(snap); }
-          else if (msg.event === 'event') { const ev = JSON.parse(msg.data) as EventView; cursors.set(ev.factoryId, ev.seq); handlers.onEvent?.(ev); }
-          else if (msg.event === 'resnapshot') { const { factoryId, reason } = JSON.parse(msg.data); try { const snap = await this.snapshot(factoryId); cursors.set(factoryId, snap.revision); handlers.onResnapshot?.(snap, reason); } catch (e: any) { status({ connected: true, error: e.message }); } }
+          if (msg.event === 'snapshot') { const snap = JSON.parse(msg.data) as HostSnapshot; this.last = { snapshot: snap, receivedAt: Date.now() }; for (const f of snap.teams) if (!cursors.has(f.teamId) || (cursors.get(f.teamId) ?? 0) < f.revision) cursors.set(f.teamId, f.revision); handlers.onSnapshot?.(snap); }
+          else if (msg.event === 'event') { const ev = JSON.parse(msg.data) as EventView; cursors.set(ev.teamId, ev.seq); handlers.onEvent?.(ev); }
+          else if (msg.event === 'resnapshot') { const { teamId, reason } = JSON.parse(msg.data); try { const snap = await this.snapshot(teamId); cursors.set(teamId, snap.revision); handlers.onResnapshot?.(snap, reason); } catch (e: any) { status({ connected: true, error: e.message }); } }
           else { let data: unknown = msg.data; try { data = JSON.parse(msg.data); } catch { /* as is */ } handlers.onOther?.(msg.event, data); }
         }
         if (!closed) throw new WeawrError('transport', 'the event stream ended', null, true);

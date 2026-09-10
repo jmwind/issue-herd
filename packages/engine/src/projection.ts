@@ -1,4 +1,4 @@
-// The canonical projection of a factory: from the runs, the structured events, what herdr says
+// The canonical projection of a team: from the runs, the structured events, what herdr says
 // and what the tracker/GitHub said, to the snapshot every client renders. Pure: every input is
 // passed in, so the whole thing is testable with fixtures. Ported from the console's model, with
 // one change of principle: a run's history comes from its events, and a run with no events (one
@@ -29,7 +29,7 @@ export function timelineOf(events: Array<{ at: string; kind: string; runKey?: st
   return out;
 }
 
-// The console's view of a factory, computed from what is already on disk and what herdr says.
+// The console's view of a team, computed from what is already on disk and what herdr says.
 // Pure: every input is passed in, so the whole thing is testable with fixtures.
 
 
@@ -178,7 +178,7 @@ export function runState(run: any, agent: any, { othersLive = false, reviewer = 
 }
 
 /**
- * One factory, ready to render.
+ * One team, ready to render.
  *   config    the merged config.json (+ local): name, tracker, roles, rules, maxConcurrent, pollSeconds
  *   state     state.json
  *   events    parseLog() of the watcher's log
@@ -191,12 +191,12 @@ export function runState(run: any, agent: any, { othersLive = false, reviewer = 
 export interface HerdrIndex { agents: Map<string, any>; workspaces: Map<string, any>; panes: Map<string, any>; version: string | null; available: boolean }
 
 export interface ProjectionInput {
-  id: string; factoryId?: string; repo: string; config?: any; state?: { runs: Record<string, any> }; events?: TimelineEvent[]; index?: HerdrIndex; sizes?: Record<string, any>;
+  id: string; teamId?: string; repo: string; config?: any; state?: { runs: Record<string, any> }; events?: TimelineEvent[]; index?: HerdrIndex; sizes?: Record<string, any>;
   registry?: any; stale?: boolean; enrich?: { issues: Record<string, any>; prs: Record<string, any>; branches: Record<string, any> }; cleared?: Record<string, number>;
   seen?: Record<string, any> | null; settleMs?: number; now?: number; recipeRevision?: number | null; trackerScope?: string | null;
 }
 
-export function factoryView({ id, factoryId = id, repo, config = {}, state = { runs: {} }, events = [], index = indexSnapshot(null), sizes = {}, registry = null, stale = false, enrich = { issues: {}, prs: {}, branches: {} }, cleared = {}, seen = null, settleMs = SETTLE_MS, now = Date.now(), recipeRevision = null, trackerScope = null }: ProjectionInput) {
+export function teamView({ id, teamId = id, repo, config = {}, state = { runs: {} }, events = [], index = indexSnapshot(null), sizes = {}, registry = null, stale = false, enrich = { issues: {}, prs: {}, branches: {} }, cleared = {}, seen = null, settleMs = SETTLE_MS, now = Date.now(), recipeRevision = null, trackerScope = null }: ProjectionInput) {
   const name = config.name || registry?.name || repo.split('/').pop();
   const tracker = typeof config.tracker === 'object' ? config.tracker?.type : (config.tracker || registry?.tracker || 'linear');
   const rules = (config.rules || []).filter((r: any) => r.enabled !== false).map((r: any) => ({
@@ -307,7 +307,7 @@ export function factoryView({ id, factoryId = id, repo, config = {}, state = { r
       // A task with a run whose dialogs were never recorded reports a floor, and says so.
       evidence: iss.runs.some((r: any) => r.evidence === 'partial') ? 'partial' : 'events',
       finishedAt: iss.runs.every((r: any) => r.finishedAt) ? new Date(lastEnd).toISOString() : null,
-      taskId: trackerScope ? `${factoryId}/${trackerScope}/${iss.key}` : null,
+      taskId: trackerScope ? `${teamId}/${trackerScope}/${iss.key}` : null,
       attention: null as string | null,
     };
   });
@@ -358,7 +358,7 @@ export function factoryView({ id, factoryId = id, repo, config = {}, state = { r
 
   const allRuns = issues.flatMap((i: any) => i.runs);
   const running = allRuns.filter((r: any) => r.status === 'running' || r.status === 'starting').length;
-  // A factory is working when an agent on it is: the lights are on and the belts move.
+  // A team is working when an agent on it is: the lights are on and the belts move.
   const working = allRuns.filter((r: any) => r.light === 'green' && r.agentAlive).length;
   const windows = productionWindows(now);
   return {
@@ -367,7 +367,7 @@ export function factoryView({ id, factoryId = id, repo, config = {}, state = { r
     watcher: { version: registry?.version || null, lastPoll: registry?.lastPoll || null, stale, workspaceId: registry?.workspaceId || null, pid: registry?.pid || null },
     counts: { running, working, alerts: alerts.length, inflight: issues.filter((i: any) => i.bucket === 'inflight').length, merged: issues.filter((i: any) => i.bucket === 'merged').length, done: issues.filter((i: any) => i.bucket === 'done').length },
     humanWaitMs: issues.reduce((s: any, i: any) => s + i.humanWaitMs, 0),
-    recipeRevision, factoryId,
+    recipeRevision, teamId,
     production: { today: production(issues, windows.today, now), week: production(issues, windows.week, now), month: production(issues, windows.month, now) },
     alerts, issues,
   };
@@ -385,7 +385,7 @@ export function productionWindows(now = Date.now()): { today: number; week: numb
 }
 
 /**
- * The factory's production since `from`: tasks finished (and how many of those merged), the
+ * The team's production since `from`: tasks finished (and how many of those merged), the
  * agents' time working with nobody waited for, and a person's time being waited for (dialogs,
  * questions, a PR waiting to be merged, and the wait a merged PR had). Times are clipped to the
  * window, so a run that straddles midnight counts today's part only.

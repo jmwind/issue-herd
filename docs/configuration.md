@@ -26,7 +26,7 @@ your-repo/
 └── .env.example             documents that variable                 (committed)
 
 ~/.config/weawr/credentials.json   what `weawr login` saved, per user, mode 600
-~/.config/weawr/factories.json     which factories run on this machine, stamped by each watcher every poll
+~/.config/weawr/teams/<teamId>.json  one per team running on this machine, stamped by its watcher every poll
 ```
 
 ```bash
@@ -186,7 +186,7 @@ a repo.
 ## Prompt templates
 
 `prompt` names a template: a file in `.weawr/prompts/` (yours), else one of the bundled briefs
-(`prompts/default.md`, `prompts/review-lead.md`, …) at the recipe revision the factory is pinned
+(`prompts/default.md`, `prompts/review-lead.md`, …) at the recipe revision the team is pinned
 to (`weawr recipe show`). Every template is checked when the config loads: a placeholder weawr
 does not fill (`{{titel}}`) or a missing `{{resultPath}}` is an error naming the file, so a typo
 is found now rather than as a hole in a brief at 3am. A template of your own may say which

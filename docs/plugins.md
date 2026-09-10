@@ -5,11 +5,11 @@
 A plugin is one ES module whose default export says what it provides. Three seams, each one
 weawr already had:
 
-| Seam | What a plugin gives | How a factory uses it |
+| Seam | What a plugin gives | How a team uses it |
 | --- | --- | --- |
 | **intake** | a tracker class on the contract in `packages/engine/src/adapters/tracker.mjs` — issues from anywhere | `"tracker": "<id>"` in `config.json` |
 | **roles** | a role preset: a brief, and rule defaults to go with it | a rule with `"use": "<preset>"` |
-| **tasks** | scheduled work, run by the watcher on its own cadence with the factory's snapshot | nothing to configure; it runs while the watcher runs |
+| **tasks** | scheduled work, run by the watcher on its own cadence with the team's snapshot | nothing to configure; it runs while the watcher runs |
 
 ```js
 // my-plugin.mjs
@@ -53,8 +53,8 @@ why rather than a mystery.
 
 - `examples/file-intake` — issues from `.weawr/issues.json` (`[{ "id": 1, "title": "…",
   "labels": ["ai"] }]`), with the claim label, comments and state written back into the same file.
-  An offline factory, a demo, or a source of work that is not a tracker: anything that can write
-  JSON can feed a factory. `"tracker": "file"`.
+  An offline team, a demo, or a source of work that is not a tracker: anything that can write
+  JSON can feed a team. `"tracker": "file"`.
 - `examples/docs-review` — a `docs` role preset: a reviewer that reads the change against the
   documentation and puts its verdict on the reviewed commit (`review: { verdict, headSha }`).
   `{ "name": "docs", "use": "docs", "match": "label:ai and label:ready-for-review" }`.
@@ -63,7 +63,7 @@ why rather than a mystery.
 
 ## What a task gets
 
-`run({ factory, snapshot, log, notify, now, memory })`: the factory's canonical snapshot (the same
+`run({ team, snapshot, log, notify, now, memory })`: the team's canonical snapshot (the same
 one the console shows — `issues[]`, `alerts[]`, `production`), a logger into the watcher's log, a
 notifier through herdr, the clock, and whatever the task returned last time (`memory`), so a task
 can avoid repeating itself across runs. A task that throws is a log line; the watcher carries on.

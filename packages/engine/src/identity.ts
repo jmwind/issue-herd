@@ -1,8 +1,8 @@
 // Stable identities. `GH-7` and `impl` stay what a person reads; these are what records are keyed by.
 //
 //   host      this installation (a random id, created once, in the user's weawr directory)
-//   factory   one repository watched on one host
-//   task      one issue within one factory, scoped by the tracker's own repository or team
+//   team      one repository watched on one host
+//   task      one issue within one team, scoped by the tracker's own repository or team
 //   roleRun   one role's run on a task — what state.json has always called the run key
 //   attempt   one turn of a role run
 import crypto from 'node:crypto';
@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { shortHash } from './paths.js';
 
-export interface Identities { hostId: string; factoryId: string }
+export interface Identities { hostId: string; teamId: string }
 
 /** The host id, created on first use. `dir` is the user's weawr directory. */
 export function hostId(dir: string): string {
@@ -22,8 +22,8 @@ export function hostId(dir: string): string {
   return id;
 }
 
-/** One repository on one host. Stable across renames of the factory and across config edits. */
-export function factoryId(host: string, repo: string): string {
+/** One repository on one host. Stable across renames of the team and across config edits. */
+export function teamId(host: string, repo: string): string {
   return shortHash(`${host}|${repo}`, 12);
 }
 
@@ -37,8 +37,8 @@ export function trackerScope(spec: { type: string; repo?: string; team?: string;
   return bits.join(':');
 }
 
-export function taskId(factory: string, scope: string, issueKey: string): string {
-  return `${factory}/${scope}/${issueKey}`;
+export function taskId(team: string, scope: string, issueKey: string): string {
+  return `${team}/${scope}/${issueKey}`;
 }
 
 export function roleRunId(task: string, role: string | null): string {
@@ -50,14 +50,14 @@ export function attemptId(roleRun: string, pass: number, startedAt: string): str
 }
 
 /**
- * The herdr agent name for a run: the run key, slugified, with the factory's short hash so two
+ * The herdr agent name for a run: the run key, slugified, with the team's short hash so two
  * repositories on one machine with `GH-7@impl` are two agents. herdr names match
  * [a-z][a-z0-9_-]{0,31}. A run that already has a name keeps it — live agents are never renamed.
  */
-export function agentNameFor(runKey: string, factory: string | null = null): string {
+export function agentNameFor(runKey: string, team: string | null = null): string {
   let s = String(runKey).toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/^-+|-+$/g, '');
   if (!/^[a-z]/.test(s)) s = 'i-' + s;
-  if (!factory) return s.slice(0, 32);
-  const suffix = `-${factory.slice(0, 6)}`;
+  if (!team) return s.slice(0, 32);
+  const suffix = `-${team.slice(0, 6)}`;
   return s.slice(0, 32 - suffix.length).replace(/-+$/, '') + suffix;
 }

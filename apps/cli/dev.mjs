@@ -4,7 +4,7 @@
 //
 //   weawr serve --dev   the console and the interface, page served straight from apps/web/src
 //                       with a reload pushed to the browser when a web file changes
-//   weawr               the watcher, on the factory in WEAWR_DEV_FACTORY (default: the current
+//   weawr               the watcher, on the team in WEAWR_DEV_TEAM (default: the current
 //                       directory when it has a .weawr/config.json, else this repository's own)
 //
 // — and restart both whenever a package's compiled output changes, the old pair stopped and gone
@@ -51,7 +51,7 @@ const env = {
 };
 const port = process.env.WEAWR_DEV_PORT || '8498';
 const cwd = process.env.INIT_CWD || process.cwd();
-const factory = process.env.WEAWR_DEV_FACTORY || (fs.existsSync(path.join(cwd, '.weawr', 'config.json')) ? cwd : root);
+const team = process.env.WEAWR_DEV_TEAM || (fs.existsSync(path.join(cwd, '.weawr', 'config.json')) ? cwd : root);
 const withWatcher = process.env.WEAWR_DEV_WATCHER !== '0';
 
 let serve = null, watcher = null;
@@ -67,9 +67,9 @@ async function start() {
   log(`serve: weawr serve --dev --port ${port}`);
   serve = run('serve', [main, 'serve', '--dev', '--port', port], { env, cwd: root });
   if (withWatcher) {
-    log(`watcher: weawr in ${factory}`);
-    watcher = run('watch', [main], { env, cwd: factory });
-    watcher.on('exit', (code) => { if (code !== null && code !== 0) log(`the watcher exited with ${code} (a factory already watched, herdr down, or no config?); it starts again on the next change`); });
+    log(`watcher: weawr in ${team}`);
+    watcher = run('watch', [main], { env, cwd: team });
+    watcher.on('exit', (code) => { if (code !== null && code !== 0) log(`the watcher exited with ${code} (a team already watched, herdr down, or no config?); it starts again on the next change`); });
   }
 }
 await start();

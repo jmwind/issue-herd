@@ -71,7 +71,7 @@ body[data-theme="linear"][data-theme] .btn.confirm{background:var(--orange);colo
 body[data-theme="linear"][data-theme] .btn.done{color:var(--green)}
 body[data-theme="linear"][data-theme] .btn.cancel{background:var(--red);color:#fff;box-shadow:none}
 body[data-theme="linear"][data-theme] .btn:focus-visible,body[data-theme="linear"][data-theme] .row:focus-visible,body[data-theme="linear"][data-theme] .picker:focus-visible,body[data-theme="linear"][data-theme] .opt:focus-visible{outline:2px solid var(--indigo)}
-/* the plant cards on the all-factories page, and the factory's header pane */
+/* the plant cards on the all-teams page, and the team's header pane */
 body[data-theme="linear"][data-theme] .plant{background:var(--frame);box-shadow:0 0 0 1px var(--rule);border-radius:var(--radius);padding:14px 16px}
 body[data-theme="linear"][data-theme] .plant.working{box-shadow:0 0 0 1px var(--indigo)}
 body[data-theme="linear"][data-theme] .plant .roof b{font-size:15px;font-weight:510;letter-spacing:-.01em}

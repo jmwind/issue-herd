@@ -1,7 +1,7 @@
-// `weawr demo`: a factory to try weawr on, end to end, against a repository that exists for that.
+// `weawr demo`: a team to try weawr on, end to end, against a repository that exists for that.
 //
-// A scenario is data (apps/cli/demos/<name>/): a factory config, the briefs and instructions it
-// needs, and the issues to file. `weawr demo <scenario>` clones the demo repository into a factory
+// A scenario is data (apps/cli/demos/<name>/): a team config, the briefs and instructions it
+// needs, and the issues to file. `weawr demo <scenario>` clones the demo repository into a team
 // directory, gives it the starter codebase the first time, writes the scenario's `.weawr/` into
 // the clone, files the issues on GitHub and remembers them in a ledger; you then run the watcher
 // (or `pnpm dev`) on that directory and watch. `weawr demo reset` closes what the ledger lists —
@@ -10,8 +10,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { currentOwner, describeHolder, factoryId, factoryPaths, loadConfig, readFactoryState, registrationsDir, removeRegistration } from '@weawr/engine';
-import type { FactoryPaths } from '@weawr/engine';
+import { currentOwner, describeHolder, teamId, teamPaths, loadConfig, readTeamState, registrationsDir, removeRegistration } from '@weawr/engine';
+import type { TeamPaths } from '@weawr/engine';
 import { GitHubTracker } from '@weawr/engine/adapters/trackers/github.mjs';
 import { resolveCredential, noCredentialError } from '@weawr/engine/adapters/auth.mjs';
 import type { Context } from '../context.js';
@@ -49,7 +49,7 @@ export function listScenarios(root: string): Scenario[] {
   });
 }
 
-/** Where a demo factory lives unless `--into` says otherwise: one directory per demo repository, per user. */
+/** Where a demo team lives unless `--into` says otherwise: one directory per demo repository, per user. */
 export function defaultDemoDir(userDir: string, repo: string): string { return path.join(userDir, 'demos', repo.split('/')[1]); }
 
 export function parseOpts(args: string[]): Opts {
@@ -71,10 +71,10 @@ export async function demo(ctx: Context, args: string[]): Promise<void> {
   const scenarios = listScenarios(ctx.demosRoot);
   const sub = args[0];
   if (!sub || sub === 'list' || sub === '--help') {
-    console.log(`weawr demo <scenario> [--into DIR] [--repo owner/name] [--dry-run]   set a demo factory up and file its issues`);
+    console.log(`weawr demo <scenario> [--into DIR] [--repo owner/name] [--dry-run]   set a demo team up and file its issues`);
     console.log(`weawr demo reset [--into DIR] [--repo owner/name] [--keep-code] [--all --yes]  close what the last demo filed, put the app back to the starter, clear the local state\n`);
     for (const s of scenarios) console.log(`${s.name.padEnd(10)} ${s.title}\n${' '.repeat(11)}${s.summary}\n`);
-    console.log(`the demo repository is ${DEMO_REPO}; a factory directory is made under ${defaultDemoDir(ctx.userDir, DEMO_REPO)} unless --into says where`);
+    console.log(`the demo repository is ${DEMO_REPO}; a team directory is made under ${defaultDemoDir(ctx.userDir, DEMO_REPO)} unless --into says where`);
     return;
   }
   const opts = parseOpts(args.slice(1));
@@ -105,9 +105,9 @@ async function setup(ctx: Context, scenario: Scenario, opts: Opts): Promise<void
     return;
   }
   ensureClone(dir, opts.repo, log);
-  const paths = factoryPaths(dir);
+  const paths = teamPaths(dir);
   const owner = currentOwner(paths);
-  if (owner.owned) log(`note: a watcher owns this factory (${describeHolder(owner.holder)}); it will see the new config and issues as it polls`);
+  if (owner.owned) log(`note: a watcher owns this team (${describeHolder(owner.holder)}); it will see the new config and issues as it polls`);
   pushStarter(dir, path.join(ctx.demosRoot, 'starter'), log);
   writeScenario(paths, scenario, opts.repo);
   // The config the scenario wrote has to load here, with these prompts, before anything is filed.
@@ -119,7 +119,7 @@ async function setup(ctx: Context, scenario: Scenario, opts: Opts): Promise<void
   ledger.scenario = scenario.name; ledger.repo = opts.repo;
   for (const filed of await fileIssues(tracker, scenario.issues)) { ledger.issues.push(filed); log(`filed #${filed.number}: ${filed.title}\n  ${filed.url}`); }
   writeLedger(paths, ledger);
-  log(`\nready in ${dir}\n  cd ${dir} && weawr            the watcher, on this factory\n  weawr console                   the factory floor (from anywhere)\n  WEAWR_DEV_FACTORY=${dir} pnpm dev   the same, from a weawr checkout, on the development build\n  weawr demo reset --into ${dir}    when you are done: close the issues and PRs, clear the state`);
+  log(`\nready in ${dir}\n  cd ${dir} && weawr            the watcher, on this team\n  weawr console                   the team room (from anywhere)\n  WEAWR_DEV_TEAM=${dir} pnpm dev   the same, from a weawr checkout, on the development build\n  weawr demo reset --into ${dir}    when you are done: close the issues and PRs, clear the state`);
 }
 
 /** Clone the demo repository, or make sure the directory already is a clone of it. */
@@ -189,7 +189,7 @@ export function restoreStarter(dir: string, starter: string, log: (m: string) =>
 }
 
 /** Write the scenario's `.weawr/` into the clone: config, instructions, briefs, and the ignore rules that keep it out of the repository. */
-export function writeScenario(paths: FactoryPaths, scenario: Scenario, repo: string): void {
+export function writeScenario(paths: TeamPaths, scenario: Scenario, repo: string): void {
   fs.mkdirSync(paths.configDir, { recursive: true });
   const cfg = { tracker: { type: 'github', repo }, ...scenario.config };
   fs.writeFileSync(paths.configPath, JSON.stringify(cfg, null, 2) + '\n');
@@ -215,21 +215,21 @@ export async function fileIssues(tracker: any, issues: DemoIssue[]): Promise<Led
   return made;
 }
 
-export function readLedger(paths: FactoryPaths): Ledger | null {
+export function readLedger(paths: TeamPaths): Ledger | null {
   try { return JSON.parse(fs.readFileSync(path.join(paths.configDir, LEDGER), 'utf8')); } catch { return null; }
 }
-function writeLedger(paths: FactoryPaths, ledger: Ledger): void { fs.writeFileSync(path.join(paths.configDir, LEDGER), JSON.stringify(ledger, null, 2) + '\n'); }
+function writeLedger(paths: TeamPaths, ledger: Ledger): void { fs.writeFileSync(path.join(paths.configDir, LEDGER), JSON.stringify(ledger, null, 2) + '\n'); }
 
 async function reset(ctx: Context, opts: Opts): Promise<void> {
   const dir = opts.into || defaultDemoDir(ctx.userDir, opts.repo);
   const log = (m: string) => ctx.ui.log(m);
-  if (!fs.existsSync(dir)) throw new Error(`no demo factory at ${dir} (nothing to reset; --into names another directory)`);
-  const paths = factoryPaths(dir);
+  if (!fs.existsSync(dir)) throw new Error(`no demo team at ${dir} (nothing to reset; --into names another directory)`);
+  const paths = teamPaths(dir);
   const ledger = readLedger(paths);
   if (!ledger && !opts.all) { log(`no ledger in ${paths.configDir}: nothing was filed from here. \`--all --yes\` closes every open issue labelled ai in ${opts.repo}, every open PR, and every branch but the default one.`); return; }
   if (opts.all && !opts.yes) throw new Error(`--all closes every open issue labelled ai, every open PR and every branch but the default one in ${opts.repo}; say --yes to mean it`);
   const owner = currentOwner(paths);
-  if (owner.owned) throw new Error(`a watcher owns this factory (${describeHolder(owner.holder)}); stop it first, then reset`);
+  if (owner.owned) throw new Error(`a watcher owns this team (${describeHolder(owner.holder)}); stop it first, then reset`);
   const repo = ledger?.repo || opts.repo;
   if (opts.dryRun) {
     log(`would close ${ledger ? ledger.issues.map((i) => `#${i.number}`).join(', ') : 'every open ai issue'} in ${repo}, their PRs and branches, and set ${paths.stateDir} aside`);
@@ -282,10 +282,10 @@ export async function resetRemote(tracker: any, ledger: Ledger | null, { all = f
   return out;
 }
 
-/** Forget the factory's runs on this machine: their herdr workspaces, the worktrees, the state (set aside, not deleted) and the registration. */
-export async function resetLocal(ctx: Pick<Context, 'userDir' | 'ids' | 'herdr'>, paths: FactoryPaths, log: (m: string) => void): Promise<void> {
+/** Forget the team's runs on this machine: their herdr workspaces, the worktrees, the state (set aside, not deleted) and the registration. */
+export async function resetLocal(ctx: Pick<Context, 'userDir' | 'ids' | 'herdr'>, paths: TeamPaths, log: (m: string) => void): Promise<void> {
   // The runs' workspaces, and the watcher's own: what a person would otherwise close by hand.
-  const view = readFactoryState(paths);
+  const view = readTeamState(paths);
   const runs = Object.values<any>(view.state.runs || {}).filter((r) => r.workspaceId);
   try { view.store?.close(); } catch { /* read-only */ }
   let closed = 0;
@@ -293,7 +293,7 @@ export async function resetLocal(ctx: Pick<Context, 'userDir' | 'ids' | 'herdr'>
     try { await ctx.herdr.closeWorkspaceOf(r.workspaceId, { label: r.workspaceLabel ?? null, repo: paths.repo, agentName: r.agentName ?? null }); closed++; }
     catch (e: any) { log(`could not close workspace ${r.workspaceId}: ${e.message}`); }
   }
-  const regFile = path.join(registrationsDir(ctx.userDir), `${factoryId(ctx.ids.hostId, paths.repo)}.json`);
+  const regFile = path.join(registrationsDir(ctx.userDir), `${teamId(ctx.ids.hostId, paths.repo)}.json`);
   try {
     const reg = JSON.parse(fs.readFileSync(regFile, 'utf8'));
     if (reg.workspaceId) { await ctx.herdr.closeWorkspace(reg.workspaceId); closed++; }
@@ -310,7 +310,7 @@ export async function resetLocal(ctx: Pick<Context, 'userDir' | 'ids' | 'herdr'>
     fs.renameSync(paths.stateDir, aside);
     log(`state set aside in ${aside}`);
   }
-  removeRegistration(registrationsDir(ctx.userDir), factoryId(ctx.ids.hostId, paths.repo));
+  removeRegistration(registrationsDir(ctx.userDir), teamId(ctx.ids.hostId, paths.repo));
 }
 
 function git(cwd: string, args: string[]): string {

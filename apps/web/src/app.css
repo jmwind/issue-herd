@@ -1,4 +1,4 @@
-/* Factory Floor. Factorio's GUI idiom: bevelled grey frames, inset content panes, orange headings,
+/* Team Room. Factorio's GUI idiom: bevelled grey frames, inset content panes, orange headings,
    green confirm / red cancel buttons, machine status lights, module slots. One dark theme, by design. */
 :root{
   --ground:#171717; --frame:#313131; --frame-2:#3B3B3B; --inset:#242424; --inset-2:#1D1D1D;
@@ -128,7 +128,7 @@ button{font:inherit;color:inherit}
 @keyframes swing{from{transform:rotate(-70deg)}to{transform:rotate(50deg)}}
 .gear{width:14px;height:14px;animation:spin 5s linear infinite;color:var(--muted)}
 @keyframes spin{to{transform:rotate(360deg)}}
-/* the index: one plant per factory, a belt running from each down to the next. A working plant
+/* the index: one plant per team, a belt running from each down to the next. A working plant
    turns its gears, lights its slots and shows a craft bar; an idle one stands still; one
    whose watcher is gone is dark with a red light. */
 .plants{display:flex;flex-direction:column}
@@ -249,16 +249,16 @@ button{font:inherit;color:inherit}
 .opt.stale .m{color:var(--red-2)}
 .pill{white-space:nowrap;font:600 12px var(--font);padding:0 7px;background:var(--inset);color:var(--text);box-shadow:inset 1px 1px 0 var(--lo),inset -1px -1px 0 var(--hi)}
 .pill.hot{background:var(--red);color:#fff;box-shadow:none}
-.team{display:flex;flex-direction:column;gap:5px;font-size:13px}
-.team div{display:grid;grid-template-columns:80px 1fr;gap:8px;align-items:baseline}
-.team b{color:var(--orange-2)}
-.team span{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.team span em{font-style:normal;color:var(--text)}
-/* the factory card at the top of the overview: what it reads, which rules pick issues up, how the watcher is */
-.factory .fmeta{font-size:13px;color:var(--muted)}
-.factory .fmeta.stale{color:var(--red-2)}
-.factory .team span{white-space:normal;overflow:visible}
-.factory .team code{display:block;font:12px/1.4 ui-monospace,Menlo,monospace;color:var(--muted);overflow-wrap:anywhere}
+.rules{display:flex;flex-direction:column;gap:5px;font-size:13px}
+.rules div{display:grid;grid-template-columns:80px 1fr;gap:8px;align-items:baseline}
+.rules b{color:var(--orange-2)}
+.rules span{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rules span em{font-style:normal;color:var(--text)}
+/* the team card at the top of the overview: what it reads, which rules pick issues up, how the watcher is */
+.team .fmeta{font-size:13px;color:var(--muted)}
+.team .fmeta.stale{color:var(--red-2)}
+.team .rules span{white-space:normal;overflow:visible}
+.team .rules code{display:block;font:12px/1.4 ui-monospace,Menlo,monospace;color:var(--muted);overflow-wrap:anywhere}
 /* unlock */
 .lock{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px 20px;text-align:center}
 .lock .pad{width:60px;height:60px}
@@ -274,7 +274,7 @@ button{font:inherit;color:inherit}
 .lock .note.bad{color:var(--red-2)}
 .toast{position:fixed;left:50%;bottom:max(16px,env(safe-area-inset-bottom));transform:translateX(-50%);padding:8px 14px;background:var(--frame);box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),0 0 0 1px var(--edge);font-weight:600;z-index:20}
 
-/* a factory whose owner is not running, and a page whose link is down: shown, and said */
+/* a team whose owner is not running, and a page whose link is down: shown, and said */
 .pill.stale { background: #3a2a10; color: var(--orange-2, #e39827); border-color: #6b4a14; }
 .tick em.stale { font-style: normal; opacity: .75; margin-left: .4em; }
 

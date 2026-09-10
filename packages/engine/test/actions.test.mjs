@@ -8,8 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { FactoryEngine } from '../dist/factory.js';
-import { factoryPaths } from '../dist/paths.js';
+import { TeamEngine } from '../dist/team.js';
+import { teamPaths } from '../dist/paths.js';
 import { loadConfig } from '../dist/config.js';
 import { SqliteStore, storePath } from '../dist/store/sqlite.js';
 import { markDone, undoDone, tidy, stopTask, tailTask, HERDR_AWAY } from '../dist/actions.js';
@@ -42,9 +42,9 @@ function fakeHerdr({ agents = {}, workspaces = [], stubborn = [], away = false, 
   return h;
 }
 function engine(dir, runs, herdr) {
-  const paths = factoryPaths(dir);
+  const paths = teamPaths(dir);
   const store = SqliteStore.open(storePath(paths.stateDir)); store.save({ runs, nudges: {} });
-  return { e: new FactoryEngine({ cfg: loadConfig({ paths, promptsRoot: PROMPTS }), tracker: null, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', factoryId: 'f' }, log: () => {} }), store };
+  return { e: new TeamEngine({ cfg: loadConfig({ paths, promptsRoot: PROMPTS }), tracker: null, herdr, paths, promptsRoot: PROMPTS, store, ids: { hostId: 'h', teamId: 'f' }, log: () => {} }), store };
 }
 const run = (key, role, rule, over = {}) => ({ rule, role, pass: 1, status: 'done', issueKey: key.split('@')[0], title: 'x', startedAt: '2026-09-08T10:00:00Z', finishedAt: '2026-09-08T11:00:00Z', agentName: key.toLowerCase().replace('@', '-'), workspaceId: `w-${role}`, notified: {}, worktree: 'none', result: { status: 'pr_open', prUrl: 'https://github.com/o/r/pull/1' }, ...over });
 

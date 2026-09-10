@@ -1,17 +1,17 @@
-// @weawr/engine — the factory: lifecycle, commands and observations, with injected dependencies.
-export { FactoryEngine, PINNED_POLICY, defaultGit, policyOf, trackerBanner, watchLabel } from './factory.js';
-export type { EngineOptions, EngineHooks, GitRunner, RegistrationTarget } from './factory.js';
+// @weawr/engine — the team: lifecycle, commands and observations, with injected dependencies.
+export { TeamEngine, PINNED_POLICY, defaultGit, policyOf, trackerBanner, watchLabel } from './team.js';
+export type { EngineOptions, EngineHooks, GitRunner, RegistrationTarget } from './team.js';
 export { DEFAULTS, EVENTS, configStamp, expandConfigPath, loadConfig, loadEnvFiles, pluginSpecs, templateOrigin } from './config.js';
 export { EMPTY_REGISTRY, PLUGIN_API, loadPlugins, parseEvery, resolvePlugin } from './plugins.js';
 export type { LoadedPlugin, PluginModule, PluginRegistry, PluginSources, PluginSpec, RolePreset, ScheduledTask, TaskContext } from './plugins.js';
-export type { ConfigSources, FactoryConfig, Rule } from './config.js';
+export type { ConfigSources, TeamConfig, Rule } from './config.js';
 export { briefVars, passLine, renderBrief } from './brief.js';
-export { factoryPaths, findRepoRoot, shortHash, userDir } from './paths.js';
-export type { FactoryPaths } from './paths.js';
-export { agentNameFor, attemptId, factoryId, hostId, roleRunId, taskId, trackerScope } from './identity.js';
+export { teamPaths, findRepoRoot, shortHash, userDir } from './paths.js';
+export type { TeamPaths } from './paths.js';
+export { agentNameFor, attemptId, teamId, hostId, roleRunId, taskId, trackerScope } from './identity.js';
 export type { Identities } from './identity.js';
 export { JsonStateStore, readJson, writeJsonAtomic } from './state.js';
-export type { FactoryState, StateStore, NudgeEntry } from './state.js';
+export type { TeamState, StateStore, NudgeEntry } from './state.js';
 export { acquireOwnership, currentOwner, describeHolder, processStartedAt, readCard } from './ownership.js';
 export type { AcquireResult, OwnerCard, Ownership } from './ownership.js';
 export { isStale, listRegistrations, readLegacyRegistry, registrationsDir, removeRegistration, writeRegistration } from './registration.js';
@@ -22,8 +22,8 @@ export { SqliteStore, UnsupportedSchemaError, SCHEMA_VERSION, storePath } from '
 export type { AttemptRecord, EventRecord, OperationRecord, PendingAction, Acknowledgement } from './store/sqlite.js';
 export { inventory, migrateLegacyState } from './store/migrate.js';
 export type { Inventory, MigrationResult } from './store/migrate.js';
-export { isDurable, openOwnerStore, readFactoryState, storeStatus } from './store/index.js';
-export { factoryView, humanWaitMs, indexSnapshot, ownsPr, production, productionWindows, runState, segments, timelineOf, watchWorkspaces, SETTLE_MS } from './projection.js';
+export { isDurable, openOwnerStore, readTeamState, storeStatus } from './store/index.js';
+export { teamView, humanWaitMs, indexSnapshot, ownsPr, production, productionWindows, runState, segments, timelineOf, watchWorkspaces, SETTLE_MS } from './projection.js';
 export type { HerdrIndex, ProjectionInput, TimelineEvent } from './projection.js';
 export { projectOffline } from './offline.js';
 export { Enricher } from './enrich.js';

@@ -28,8 +28,8 @@ test('the built page is a static site: html, css, js, the client, and the brand 
 
 test('a fixture host that speaks the protocol is all the page needs: the client in Node reads it end to end', async (t) => {
   const { WeawrClient } = await import('@weawr/client');
-  const snapshot = { protocolVersion: 1, hostname: 'fixture', version: '0.0.0', herdr: { connected: true, version: '9' }, generatedAt: new Date().toISOString(), factories: [{
-    protocolVersion: 1, factoryId: 'fx', id: 'app', name: 'app', repo: '/nowhere', tracker: 'github', generatedAt: new Date().toISOString(), revision: 12,
+  const snapshot = { protocolVersion: 1, hostname: 'fixture', version: '0.0.0', herdr: { connected: true, version: '9' }, generatedAt: new Date().toISOString(), teams: [{
+    protocolVersion: 1, teamId: 'fx', id: 'app', name: 'app', repo: '/nowhere', tracker: 'github', generatedAt: new Date().toISOString(), revision: 12,
     owner: { status: 'online', pid: 1, version: '0.0.0', hostname: 'fixture', heartbeatAt: null, observedAt: new Date().toISOString() }, freshness: { herdrAt: null, trackerAt: null, trackerError: null },
     recipeRevision: 2, roles: ['impl'], rules: [{ name: 'impl', role: 'impl', match: 'label:ai', agent: 'claude', model: null, effort: null, basedOn: null, passes: 1, maxConcurrent: 2 }], maxConcurrent: 3, pollSeconds: 30,
     watcher: { version: '0.0.0', lastPoll: null, stale: false, workspaceId: null, pid: 1 }, counts: { running: 0, working: 0, alerts: 0, inflight: 0, merged: 0, done: 1 }, humanWaitMs: 0,
@@ -46,7 +46,7 @@ test('a fixture host that speaks the protocol is all the page needs: the client 
   t.after(() => server.close());
   const client = new WeawrClient({ baseUrl: `http://127.0.0.1:${server.address().port}` });
   const s = await client.hostSnapshot();
-  assert.equal(s.factories[0].name, 'app'); assert.equal(client.last.snapshot.factories[0].revision, 12);
+  assert.equal(s.teams[0].name, 'app'); assert.equal(client.last.snapshot.teams[0].revision, 12);
 });
 
 test('six themes ship: Factorio (the default, overriding nothing) and five flat palettes, each scoped to its own body attribute', () => {
@@ -74,7 +74,7 @@ test('six themes ship: Factorio (the default, overriding nothing) and five flat 
 
 test('the page never declares a function and a variable under one name (the belt once ate the connection state)', () => {
   // `var link = …` for the connection and `function link()` for the belt between two plants shared
-  // a scope; with two factories on the floor the belt was called on the state object and rendering
+  // a scope; with two teams on the floor the belt was called on the state object and rendering
   // died, which the console showed as "connecting…" for ever. A hoisted function and a var of the
   // same name is legal JavaScript, so it is checked here.
   const src = fs.readFileSync(path.join(SRC, 'app.js'), 'utf8');

@@ -5,7 +5,7 @@
 weawr is issue-herd renamed ([#71](https://github.com/jmwind/weawr/issues/71)). The config shape,
 the state files, the rule language and the tracker labels are what they were; what changed is the
 name, and with it every path, variable and file that carried the name. This page is the whole list
-and the order to do it in. It assumes one person and one machine, and it asks for a factory with
+and the order to do it in. It assumes one person and one machine, and it asks for a team with
 **nothing in flight** before anything moves — step 1 says why, and it is the one hard rule.
 
 ## What changed name
@@ -73,11 +73,11 @@ the checkout itself, which this migration does not move.
 
    Renaming the checkout directory (`~/Code/issue-herd` → `~/Code/weawr`) is not part of this
    migration. The console's registry (`factories.json`) and its marked-done notes (`console.json`)
-   are keyed by the checkout's path, so a moved checkout is a new factory with no history to the
+   are keyed by the checkout's path, so a moved checkout is a new team with no history to the
    console, and every worktree git knows is registered by absolute path. If you want the directory
    renamed anyway, do it as a separate job later under the same rule as step 1 — nothing in
    flight, watcher and console down — then `git worktree repair` from the new location, and expect
-   the console to list it as a new factory.
+   the console to list it as a new team.
 
 4. **Merge the rename and pull it.** The tracked half of the config directory arrives as `.weawr/`
    (`config.json`, `instructions.md`, `.gitignore`) and git removes the tracked files from
@@ -105,7 +105,7 @@ the checkout itself, which this migration does not move.
    weawr --version
    ```
 
-6. **Move the per-user files.** Tokens, the console passcode, the factory registry and the
+6. **Move the per-user files.** Tokens, the console passcode, the team registry and the
    console's own notes all live in one directory; moving it keeps every login and every "marked
    done".
 
@@ -137,9 +137,9 @@ the checkout itself, which this migration does not move.
 ## If something is off afterwards
 
 - `no .weawr/config.json` — step 4 has not happened in this repository, or you are in a worktree
-  cut before the rename (those have `.issue-herd/`; they are not factories and never were).
+  cut before the rename (those have `.issue-herd/`; they are not teams and never were).
 - `no GitHub credentials` — step 6 was skipped; run `weawr login github`.
-- The console lists no factory — the registry is stamped by the watcher every poll; start the
+- The console lists no team — the registry is stamped by the watcher every poll; start the
   watcher (step 8) and it appears on the first one.
 - A run that came back `stopped` on the restart although its PR is open — it was live when
   step 4 ran, and its result sat at a path that moved. The PR and the issue's claim are untouched;

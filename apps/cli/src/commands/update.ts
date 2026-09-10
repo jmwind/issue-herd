@@ -34,5 +34,5 @@ export async function update(ctx: Context, args: string[] = []): Promise<void> {
   const now = execFileSync('weawr', ['--version'], { encoding: 'utf8' }).trim();
   console.log(`now ${now}`);
   console.log(`rollback: weawr update --to v${ctx.version}`);
-  console.log('watchers that are running keep the code they started with (and the recipe files they had, which never change once shipped); restart each one — Ctrl-C in its pane, then `weawr` again — to run the new version. A watcher started by the new version migrates any older factory state on first start.');
+  console.log('watchers that are running keep the code they started with (and the recipe files they had, which never change once shipped); restart each one — Ctrl-C in its pane, then `weawr` again — to run the new version. A watcher started by the new version migrates any older team state on first start.');
 }
