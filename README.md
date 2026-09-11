@@ -6,15 +6,17 @@
   <br><sub>pronounced <i>weaver</i></sub>
 </p>
 
-<p align="center">
-  <b>Give your agents a team and a game plan.</b>
-</p>
-
 ---
 
 weawr is a team and coordination layer that works on `herdr`. While `herdr` provides a great platform for agents to work. It doesn't provide the description of how a team works together and when and how humans are involved.
 
 weawr uses the tools humans use, and uses them with agents. The control plane is issues and pull requests. Work starts with an issue with context and updates for the team. The handoffs between agents are humans are the same as it's always been between humans.
+
+```
+This is an alpha release. For preview. Things will change.
+```
+
+https://github.com/user-attachments/assets/0fead16c-385e-4798-b5ac-a1716cc50845
 
 No webhook you have to expose. It is a Node script and
 the `herdr` CLI on your laptop. That's it.
@@ -22,22 +24,17 @@ the `herdr` CLI on your laptop. That's it.
 ## Why you'd want it
 
 - **The team lives in your repo, not in a service.** The tracker, the rules and the agent's briefing all
-  live in `.weawr/` inside the repository, committed and reviewed like code. Your token stays
-  on your machine. Nothing about your codebase leaves your laptop that you did not already send to
-  your agent.
-- **It never double-works an issue.** Three independent guards — a real claim label written to the
-  tracker, the pickup comment, and "somebody else is assigned" — checked with a fresh fetch right
-  before claiming. Restart it, delete its state, run it on a second machine: it still will not take
-  an issue twice.
+  live in `.weawr/` inside the repository.
 - **You can walk in on any agent.** Every run is a herdr workspace in the sidebar with the issue key
   on it. Step in, read the scrollback, take over, type. Nothing is hidden in a container you cannot
   reach.
+- **Answers their own questions** Using herdr APIs, agents can nudge each other with safeguards on how often and
+  resolve their reviews, questions themselves.
 - **A reviewer that is not the same eyes.** Roles let an implementer and a reviewer hold the same
   issue at once, on different providers and different models, with the reviewer's worktree cut from
   the implementer's actual branch.
 - **It knows when it is done.** After the PR opens the run keeps watching it. When it merges you get
-  told, and it tears down only what you asked it to. If the issue said the PR may be merged once
-  reviewed, the implementer merges it itself — once every reviewer has said OK, and never without one.
+  told, and it tears down only what you asked it to.
 - **It keeps its PRs mergeable.** While a PR waits on you, other PRs land. When GitHub says one has
   drifted into conflicts, the implementer is sent back to merge the base in and push, so what you
   open to review is still something you can merge.
@@ -48,19 +45,8 @@ the `herdr` CLI on your laptop. That's it.
 ## Install
 
 ```bash
-npm install -g --allow-scripts=weawr github:jmwind/weawr
+npm install -g github:jmwind/weawr
 ```
-
-(`--allow-scripts` is what npm 11 needs to run the build that installing from git involves; older
-npm ignores it.) You need **Node 22.13+**, the `herdr` CLI (0.8.2 or newer) with its server running,
-an agent on your PATH and logged in (`claude`, `codex`, …), and `gh` logged in so agents can open
-pull requests. Update with `weawr update` (it installs a release tag and tells you how to roll
-back); the watcher tells you when there is a new version. The installed tool has no runtime
-dependencies; its state lives in one SQLite file per repository (`node:sqlite`, built into Node).
-
-Already running an older weawr? The first watcher the new version starts moves that repository's
-`state.json` into the durable store, under its lock, keeping the old file as a backup — see
-[How it works](docs/how-it-works.md#upgrading-a-team).
 
 ## Set up a repository
 
@@ -82,14 +68,35 @@ Then edit the two files `init` wrote, and commit them:
 
 Create the label your rules trigger on (`ai`, say). The claim label is created for you.
 
-Now run the watcher, inside herdr, from the repo:
+Now run the watcher, inside herdr, from the repo the team is working in:
 
 ```bash
-herdr tab create --label weawr --cwd "$PWD" --no-focus
-herdr pane run <pane-id> "weawr"
+weawr
 ```
 
-One watcher per repository. Leave the pane alone — herdr keeps it alive when you detach.
+One watcher per repository. Leave the pane alone — herdr keeps it alive when you detach. You can watch agents coming as going as work is assigned to the team. You'll also want to silence those `herdr` sounds as the agents will be working, pausing, nudging... like a real team. The micro-agent handoffs are in issues and pull request. For now, the only time I just into an actual agent session is when something went wrong or there's permission block.
+
+## Scheduled tasks
+
+Coming soon...
+
+## Console
+
+After a few weeks of using weawr there are two ways that I liked to interact with the tool. The first, is by having a group of lead agents in Grok / Muse that supervise the team for me and give me updates as needed. It's also a great voice interface for creating and assigning issues. 
+
+<p align="center">
+<img width="233" height="566" alt="IMG_6421" src="https://github.com/user-attachments/assets/ebc2815b-02eb-4cbb-9cae-e7f0fe6441a2" />
+</p>
+
+But when the team is cooking on a lot more tasks, it's also fun to track their work a bit more. So you can run the console for a local web view of the teams and their status. 
+
+```bash
+weawr console
+```
+<p align="center">
+<img width="233" height="566" alt="Screenshot 2026-09-11 at 8 11 01 AM" src="https://github.com/user-attachments/assets/169ef450-c630-4caa-9a78-074d25c8aa85" />
+<img width="230" height="590" alt="Screenshot 2026-09-11 at 8 10 36 AM" src="https://github.com/user-attachments/assets/6dbb9856-a038-4efc-9493-388009446499" />
+</p>
 
 ## Example teams
 
@@ -99,7 +106,7 @@ Every key is explained in the [configuration reference](docs/configuration.md).
 
 ### One agent, one label
 
-The whole thing. Label an issue `ai`, get a pull request.
+The whole thing. Label an issue `ai`, get a pull request. This is the simplest, but more risky.
 
 ```json
 {
@@ -113,17 +120,6 @@ The whole thing. Label an issue `ai`, get a pull request.
 ### Two shifts: a builder, and a reviewer who is not the same model
 
 A second opinion is only a second opinion if it is not the same eyes.
-
-`roles` lets both agents hold the same issue at once, each with its own claim, branch and worktree.
-`basedOn` cuts the reviewer's worktree from the *implementer's* branch, so it is reading the actual
-change and can run the tests. `passes` gives it three turns — review, confirm the fix, sign off —
-and each later turn is granted only when the issue has really moved on, so a reviewer can never be
-woken by its own comment. A reviewer also needs its own brief: the built-in one tells an agent to
-implement the issue, which is not the job. `prompts/review-lead.md` ships with the tool, alongside
-usability and security briefs — a rule can name one without copying it. And the two talk to each
-other: a review that says "not yet" nudges the implementer, whose fix nudges the reviewer back,
-each nudge a new turn in the other's pane with the ask in its brief — up to `maxNudges` per issue
-(six), after which a person is asked in.
 
 ```json
 {
@@ -160,28 +156,9 @@ falls through to the general rule.
 }
 ```
 
-### The night shift, on one machine only
+## Issue rules
 
-`.weawr/config.local.json` is gitignored, has the same shape, and is layered over
-`config.json`: top-level keys replace, `defaults` merge key by key, rules merge by `name`. This is
-where "my laptop runs it differently" goes without touching what the team committed.
-
-Here that machine runs six at a time, takes only urgent and high priority, leaves docs issues to
-somebody else, and stamps its own claim label on what it takes so the issue records which machine
-did the work.
-
-```json
-{
-  "maxConcurrent": 6,
-  "defaults": { "claimLabel": "herdr-jml-mbp" },
-  "rules": [
-    { "name": "docs", "enabled": false },
-    { "name": "ai", "match": "label:ai and priority<=2" }
-  ]
-}
-```
-
-## Rules
+The issue rules determine how to assign to your agent team. There is support for Linear and Github for now. It's easy to add new issue providers.
 
 ```
 label:ai and team:ENG and not state:started
@@ -219,18 +196,6 @@ the [configuration reference](docs/configuration.md#the-rule-language).
 | `weawr demo [list\|<scenario>\|reset]` | a team to try weawr on: file a scenario's issues on the demo repository, run, reset — see [Trying it out](docs/how-it-works.md#trying-it-out-weawr-demo) |
 | `weawr init [--tracker linear\|github]` | scaffold `.weawr/` in the current repo |
 | `weawr update` | reinstall from GitHub; prints the old and new version |
-
-## Docs
-
-| | |
-|---|---|
-| [Configuration](docs/configuration.md) | `config.json` reference, the rule language, per-machine overrides |
-| [Issue trackers](docs/trackers.md) | Linear and GitHub Issues, what the fields map to, signing in, adding a tracker |
-| [Roles](docs/roles.md) | several agents on one issue, a reviewer on another provider, `basedOn`, `passes`, nudges between roles |
-| [How it works](docs/how-it-works.md) | the guards, a run start to finish, what happens when the PR merges, the console, troubleshooting |
-| [Maintainers](docs/maintainers.md) | cutting a release, hacking on the tool |
-| [Migrating from issue-herd](docs/migrating.md) | the rename: what changed name, and the order to move an install and its repositories over |
-| [The mark](assets/logo/README.md) | the logo, and the rules for using it |
 
 ## License
 
