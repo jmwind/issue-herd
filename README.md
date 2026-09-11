@@ -1,13 +1,3 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/weawr-logo-reverse.svg">
-    <img src="assets/logo/weawr-logo.svg" alt="weawr" width="360">
-  </picture>
-  <br><sub>pronounced <i>weaver</i></sub>
-</p>
-
----
-
 weawr is a team and coordination layer that works on `herdr`. While `herdr` provides a great platform for agents to work. It doesn't provide the description of how a team works together and when and how humans are involved.
 
 weawr uses the tools humans use, and uses them with agents. The control plane is issues and pull requests. Work starts with an issue with context and updates for the team. The handoffs between agents are humans are the same as it's always been between humans.
